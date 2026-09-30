@@ -70,8 +70,8 @@ public final class PortalRules {
         if (condition == null) {
             return false;
         }
-        String field = norm(condition.getField());
-        String option = norm(condition.getOption());
+        String field = tidy(condition.getField());
+        String option = tidy(condition.getOption());
         if (field.isEmpty() || option.isEmpty()) {
             return false;
         }
@@ -79,13 +79,10 @@ public final class PortalRules {
             if (answer == null || norm(answer.value).isEmpty()) {
                 continue;
             }
-            boolean sameField = field.equals(norm(answer.label))
-                    || field.equals(norm(answer.id))
-                    || field.equals(norm(answer.name));
-            if (!sameField) {
+            if (!sameField(field, answer)) {
                 continue;
             }
-            if (option.equals(norm(answer.text)) || option.equals(norm(answer.value))) {
+            if (option.equals(tidy(answer.text)) || option.equals(tidy(answer.value))) {
                 return true;
             }
         }
@@ -112,5 +109,26 @@ public final class PortalRules {
             return "";
         }
         return value.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
+
+    static String tidy(String value) {
+        String plain = value == null ? "" : value;
+        plain = plain.replace('\u2013', '-').replace('\u2014', '-').replace('\u2212', '-');
+        plain = plain.replaceAll("\\([^)]{0,40}\\)", " ");
+        plain = plain.replaceAll("(?i)необязательно", " ");
+        plain = plain.replaceAll("(?i)\\boptional\\b", " ");
+        plain = plain.replace('*', ' ').replace(':', ' ');
+        return norm(plain);
+    }
+
+    private static boolean sameField(String field, Answer answer) {
+        if (field.isEmpty() || answer == null) {
+            return false;
+        }
+        String label = tidy(answer.label);
+        if (field.equals(label) || field.equals(norm(answer.id)) || field.equals(norm(answer.name))) {
+            return true;
+        }
+        return label.startsWith(field + " ");
     }
 }

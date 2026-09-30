@@ -860,20 +860,24 @@ select, input[type="text"] { font: inherit; font-weight: 400; padding: 6px 8px; 
 <body><main>
 <h1>%s</h1>
 <p>%s</p>
-<form id="request-form">
-<label for="demo-place">Площадка <span>(необязательно)</span>
-<select id="demo-place" name="demo-place">
-<option value="">—</option>
-<option value="a">Пункт А</option>
-<option value="b">Пункт Б</option>
+<form id="request-form" class="vp-request-form">
+<div class="field-group">
+<label>Площадка <span class="vp-optional">(необязательно)</span></label>
+<select id="customfield_10100" name="customfield_10100">
+<option value="">Не выбрано</option>
+<option value="10122" selected>Пункт А</option>
+<option value="10123">Пункт Б</option>
 </select>
-</label>
-<label for="demo-dept">Отделение
-<select id="demo-dept" name="demo-dept">
-<option value="">—</option>
-<option value="a">Пункт А</option>
+</div>
+<div class="field-group">
+<label>Отделение</label>
+<div class="field-value">
+<select id="customfield_10101" name="customfield_10101">
+<option value="">Не выбрано</option>
+<option value="10130">Пункт А</option>
 </select>
-</label>
+</div>
+</div>
 <div id="asset-slot"></div>
 </form>
 </main>
@@ -932,7 +936,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.47",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.48",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,

@@ -38,6 +38,15 @@ public class PortalRulesTest {
     }
 
     @Test
+    public void portalLabelWithOptionalMarkMatchesTheFieldName() {
+        PortalRuleDto place = rule(1, 10, condition("Филиал", "Усть-Лабинск"));
+        PortalRules.Answer answer = new PortalRules.Answer(
+                "Филиал (необязательно)", "customfield_10100", "customfield_10100", "Усть-Лабинск", "10400");
+        assertEquals(10, PortalRules.choose(Collections.singletonList(place), Collections.singletonList(answer),
+                Collections.<Integer, Integer>emptyMap()).getAssetId());
+    }
+
+    @Test
     public void optionIdMatchesAsWellAsTheLabel() {
         PortalRuleDto place = rule(1, 10, condition("customfield_10010", "10100"));
         PortalRules.Answer answer = new PortalRules.Answer("Площадка", "customfield_10010", "customfield_10010", "Пункт А", "10100");

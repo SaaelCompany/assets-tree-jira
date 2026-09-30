@@ -33,7 +33,11 @@
     }
 
     function norm(value) {
-        return String(value || '').replace(/^\s+|\s+$/g, '').replace(/\s+/g, ' ').toLowerCase();
+        return String(value || '')
+            .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/g, '-')
+            .replace(/^\s+|\s+$/g, '')
+            .replace(/\s+/g, ' ')
+            .toLowerCase();
     }
 
     function ownText(node) {
@@ -47,17 +51,30 @@
     }
 
     function fieldCaption(control) {
-        var labels;
-        var i;
-        if (control.id) {
-            labels = document.getElementsByTagName('label');
-            for (i = 0; i < labels.length; i++) {
-                if (labels[i].htmlFor === control.id) {
-                    var direct = tidy(ownText(labels[i]));
-                    if (direct) return direct;
-                }
+        var linked = captionFor(control);
+        if (linked) return linked;
+        var wrapped = captionWrapped(control);
+        if (wrapped) return wrapped;
+        var boxed = captionInBox(control);
+        if (boxed) return boxed;
+        var beside = captionBefore(control);
+        if (beside) return beside;
+        return tidy(control.getAttribute('aria-label') || control.name || control.id || '');
+    }
+
+    function captionFor(control) {
+        if (!control.id) return '';
+        var labels = document.getElementsByTagName('label');
+        for (var i = 0; i < labels.length; i++) {
+            if (labels[i].htmlFor === control.id) {
+                var direct = tidy(ownText(labels[i]));
+                if (direct) return direct;
             }
         }
+        return '';
+    }
+
+    function captionWrapped(control) {
         var node = control.parentNode;
         var guard = 0;
         while (node && guard < 6) {
@@ -69,13 +86,85 @@
             node = node.parentNode;
             guard++;
         }
-        return tidy(control.name || control.id || '');
+        return '';
+    }
+
+    function fieldBox(control) {
+        var node = control.parentNode;
+        var guard = 0;
+        while (node && guard < 8) {
+            var cls = node.className && typeof node.className === 'string' ? (' ' + node.className + ' ') : '';
+            if (cls.indexOf(' field-container ') !== -1 || cls.indexOf(' field-group ') !== -1
+                || cls.indexOf(' js-request-field ') !== -1
+                || (node.getAttribute && (node.getAttribute('data-field-id') || node.getAttribute('data-field-name')))) {
+                return node;
+            }
+            if (node.tagName && node.tagName.toLowerCase() === 'form') break;
+            node = node.parentNode;
+            guard++;
+        }
+        return null;
+    }
+
+    function captionInBox(control) {
+        var box = fieldBox(control);
+        if (!box || !box.getElementsByTagName) return '';
+        var labels = box.getElementsByTagName('label');
+        for (var i = 0; i < labels.length; i++) {
+            var text = tidy(ownText(labels[i]));
+            if (text) return text;
+        }
+        return tidy(box.getAttribute('data-field-name') || '');
+    }
+
+    function captionBefore(control) {
+        var node = control;
+        var guard = 0;
+        while (node && guard < 5) {
+            var prev = node.previousSibling;
+            while (prev && prev.nodeType !== 1) prev = prev.previousSibling;
+            if (prev && prev.tagName && prev.tagName.toLowerCase() === 'label') {
+                var text = tidy(ownText(prev));
+                if (text) return text;
+            }
+            if (node.tagName && node.tagName.toLowerCase() === 'form') break;
+            node = node.parentNode;
+            guard++;
+        }
+        return '';
     }
 
     function tidy(value) {
         return norm(String(value || '')
-            .replace(/\((?:необязательно|optional)\)/gi, ' ')
+            .replace(/\([^)]{0,40}\)/g, ' ')
+            .replace(/необязательно/gi, ' ')
+            .replace(/\boptional\b/gi, ' ')
             .replace(/[*:]/g, ' '));
+    }
+
+    function blankChoice(text, value) {
+        var shown = norm(text);
+        var stored = norm(value);
+        if (!shown && !stored) return true;
+        var blanks = {
+            '': true, '—': true, '-': true, 'none': true, 'n/a': true,
+            'не выбрано': true, 'выберите': true, 'select': true, 'please select': true
+        };
+        return !!(blanks[shown] && (!stored || stored === '-1' || blanks[stored]));
+    }
+
+    function sameName(ruleField, answer) {
+        var field = tidy(ruleField);
+        var label = tidy(answer.label);
+        if (!field) return false;
+        if (field === label || field === norm(answer.id) || field === norm(answer.name)) return true;
+        return label.indexOf(field + ' ') === 0;
+    }
+
+    function sameOption(ruleOption, answer) {
+        var option = norm(ruleOption);
+        if (!option) return false;
+        return option === norm(answer.text) || option === norm(answer.value);
     }
 
     function formOf(node) {
@@ -97,21 +186,43 @@
     function readAnswers(picker) {
         var form = formOf(picker);
         var answers = [];
-        var selects = form.querySelectorAll('select');
+        var controls = form.querySelectorAll('select, input, textarea');
         var i;
-        for (i = 0; i < selects.length; i++) {
-            var select = selects[i];
-            if (insidePicker(select) || !select.value) continue;
-            var chosen = select.options[select.selectedIndex];
-            answers.push({
-                label: fieldCaption(select),
-                id: norm(select.id),
-                name: norm(select.name),
-                text: chosen ? (chosen.text || '') : '',
-                value: select.value
-            });
+        for (i = 0; i < controls.length; i++) {
+            var control = controls[i];
+            if (insidePicker(control) || control.getAttribute('data-asset-tree') === '1') continue;
+            var tag = control.tagName ? control.tagName.toLowerCase() : '';
+            if (tag === 'select') {
+                if (!control.options || control.selectedIndex < 0) continue;
+                var chosen = control.options[control.selectedIndex];
+                var text = chosen ? (chosen.text || '') : '';
+                if (blankChoice(text, control.value)) continue;
+                answers.push(answerOf(control, text, control.value || text));
+                continue;
+            }
+            var type = (control.type || '').toLowerCase();
+            if (type === 'hidden' || type === 'password' || type === 'file' || type === 'submit' || type === 'button' || type === 'image' || type === 'search') continue;
+            if (type === 'radio' || type === 'checkbox') {
+                if (!control.checked) continue;
+                var choice = captionFor(control) || control.value;
+                if (blankChoice(choice, control.value)) continue;
+                answers.push(answerOf(control, choice, control.value || choice));
+                continue;
+            }
+            if (blankChoice(control.value, control.value)) continue;
+            answers.push(answerOf(control, control.value, control.value));
         }
         return answers;
+    }
+
+    function answerOf(control, text, value) {
+        return {
+            label: fieldCaption(control),
+            id: norm(control.id),
+            name: norm(control.name),
+            text: text || '',
+            value: value || ''
+        };
     }
 
     /* Same precedence as PortalRules.choose: more conditions win, then the deeper place. */
@@ -126,9 +237,8 @@
                 var option = norm(condition.option);
                 if (!field || !option) return false;
                 return answers.some(function (answer) {
-                    if (!norm(answer.value)) return false;
-                    var sameField = field === norm(answer.label) || field === norm(answer.id) || field === norm(answer.name);
-                    return sameField && (option === norm(answer.text) || option === norm(answer.value));
+                    if (!norm(answer.value) && !norm(answer.text)) return false;
+                    return sameName(condition.field, answer) && sameOption(condition.option, answer);
                 });
             });
             if (!ok) return;
@@ -576,10 +686,14 @@
         }
         if (!watch.started && window.MutationObserver) {
             watch.started = true;
-            var observer = new MutationObserver(function () { boot(); });
+            var observer = new MutationObserver(function () {
+                boot();
+                refresh();
+            });
             observer.observe(document.body, { childList: true, subtree: true });
         }
         boot();
+        refresh();
     }
 
     function refresh() {
