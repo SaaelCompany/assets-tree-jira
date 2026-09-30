@@ -7,6 +7,42 @@
     }
 
     var PALETTE = ['#0052CC', '#00875A', '#6554C0', '#FF991F', '#DE350B', '#00A3BF', '#172B4D', '#36B37E'];
+    var DEFAULT_PLACE_ICON = 'building';
+    var DEFAULT_OBJECT_ICON = 'device';
+    var TYPE_ICONS = [
+        { key: 'building', d: 'M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v4h4a1 1 0 0 1 1 1v11H4zM7 8h2V6H7v2zm4 0h2V6h-2v2zm-4 4h2v-2H7v2zm4 0h2v-2h-2v2zm6 0h2v-2h-2v2zM7 16h2v-2H7v2zm10 0h2v-2h-2v2zm-7 5h4v-4h-4v4z' },
+        { key: 'warehouse', d: 'M2 21V9l10-5 10 5v12H2zm4-2h5v-4H6v4zm7 0h5v-4h-5v4zm-4-6h6v-3H9v3z' },
+        { key: 'department', d: 'M5 3h14v18H5V3zm2 2v14h6V5H7zm4 6h1.5v2H11v-2z' },
+        { key: 'office', d: 'M9 4h6a1 1 0 0 1 1 1v2h4a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h4V5a1 1 0 0 1 1-1zm1 3h4V6h-4v1zM3 12h18v1.5H3V12z' },
+        { key: 'hospital', d: 'M3 21V7a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v14H3zm7.5-12v2.5H8v3h2.5V17h3v-2.5H16v-3h-2.5V9h-3z' },
+        { key: 'factory', d: 'M3 21V9l5 3V9l5 3V9l5 3V4h3v17H3zm3-4h2v-2H6v2zm5 0h2v-2h-2v2zm5 0h2v-2h-2v2z' },
+        { key: 'store', d: 'M3 4h18v3l-1.5 3H4.5L3 7V4zm1 8h16v9H4v-9zm2 2v5h5v-5H6zm7 0v5h3v-5h-3z' },
+        { key: 'home', d: 'M12 3l9 8h-2.5v10h-5v-6h-3v6h-5V11H3l9-8z' },
+        { key: 'device', d: 'M7 7h10v10H7V7zm2 2v6h6V9H9zm2-7h2v3h-2V2zm0 17h2v3h-2v-3zM2 11h3v2H2v-2zm17 0h3v2h-3v-2zM6 2h2v3H6V2zm10 0h2v3h-2V2zM6 19h2v3H6v-3zm10 0h2v3h-2v-3zM2 6h3v2H2V6zm17 0h3v2h-3V6zM2 16h3v2H2v-2zm17 0h3v2h-3v-2z' },
+        { key: 'desktop', d: 'M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-7v2h4v2H6v-2h4v-2H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm1 2v9h16V6H4z' },
+        { key: 'laptop', d: 'M4 5h16a1 1 0 0 1 1 1v10H3V6a1 1 0 0 1 1-1zm1 2v7h14V7H5zM2 18h20v1.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V18z' },
+        { key: 'monitor', d: 'M2 5a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5zm2 1v10h16V6H4zm4 14h8v1.5H8V20z' },
+        { key: 'server', d: 'M3 4h18v5H3V4zm0 6h18v5H3v-5zm0 6h18v5H3v-5zm2-10.5v2h2v-2H5zm0 6v2h2v-2H5zm0 6v2h2v-2H5z' },
+        { key: 'printer', d: 'M7 3h10v4H7V3zM4 8h16a1 1 0 0 1 1 1v8h-4v4H7v-4H3V9a1 1 0 0 1 1-1zm5 6v5h6v-5H9zm9-3h-2v1.5h2V11z' },
+        { key: 'scanner', d: 'M5 4l14 6.5H5V4zM3 12h18a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zm14 3v2h3v-2h-3z' },
+        { key: 'phone', d: 'M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm1 3v13h8V5H8zm3 14v1.5h2V19h-2z' },
+        { key: 'tablet', d: 'M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm2 2v13h12V5H6zm5 14.5v1h2v-1h-2z' },
+        { key: 'camera', d: 'M9 4h6l1.5 2H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3.5L9 4zm3 5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z' },
+        { key: 'network', d: 'M9 3h6v5H9V3zm2 5h2v3h-2V8zM4 11h16v2H4v-2zm0 2h2v3H4v-3zm7 0h2v3h-2v-3zm7 0h2v3h-2v-3zM2 16h6v5H2v-5zm7 0h6v5H9v-5zm7 0h6v5h-6v-5z' },
+        { key: 'wifi', d: 'M12 20a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm-4.6-5.4l-2.1-2.1a9.5 9.5 0 0 1 13.4 0l-2.1 2.1a6.5 6.5 0 0 0-9.2 0zM3.5 9.5L1.4 7.4a15 15 0 0 1 21.2 0l-2.1 2.1a12 12 0 0 0-17 0z' },
+        { key: 'storage', d: 'M12 3c5 0 9 1.3 9 3v3c0 1.7-4 3-9 3S3 10.7 3 9V6c0-1.7 4-3 9-3zm0 11c5 0 9-1.3 9-3v4c0 1.7-4 3-9 3s-9-1.3-9-3v-4c0 1.7 4 3 9 3zm0 6c5 0 9-1.3 9-3v1c0 1.7-4 3-9 3s-9-1.3-9-3v-1c0 1.7 4 3 9 3z' },
+        { key: 'keyboard', d: 'M2 6h20a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zm2 3v2h2V9H4zm4 0v2h2V9H8zm4 0v2h2V9h-2zm4 0v2h2V9h-2zM4 14v2h12v-2H4zm14 0v2h2v-2h-2z' },
+        { key: 'projector', d: 'M2 8h13a5 5 0 0 1 0 8h-1v2h-2v-2H7v2H5v-2H2a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zm13 1.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM3 11h6v2H3v-2zm16-5h4v1.5h-4V6zm0 4h4v1.5h-4V10zm0 4h4v1.5h-4V14z' },
+        { key: 'battery', d: 'M13 2L4 14h6l-1 8 9-12h-6l1-8z' },
+        { key: 'medical', d: 'M12 21s-8-5.3-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 5.7-8 11-8 11zm-1.25-13v2.25H8.5v2.5h2.25V15h2.5v-2.25h2.25v-2.5h-2.25V8h-2.5z' },
+        { key: 'microscope', d: 'M9 2h6v2h-1v5.5l5.5 9.2A1.5 1.5 0 0 1 18.2 21H5.8a1.5 1.5 0 0 1-1.3-2.3L10 9.5V4H9V2z' },
+        { key: 'tool', d: 'M21.7 6.3a5.5 5.5 0 0 1-7.1 6.9L7.4 20.4a2 2 0 0 1-2.8-2.8l7.2-7.2a5.5 5.5 0 0 1 6.9-7.1l-3.2 3.2 2.8 2.8 3.4-3z' },
+        { key: 'vehicle', d: 'M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11h1a1 1 0 0 1 1 1v5h-2v2h-3v-2H8v2H5v-2H3v-5a1 1 0 0 1 1-1h1zm2.2 0h9.6l-1-3H8.2l-1 3zM6 13.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm12 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z' },
+        { key: 'furniture', d: 'M6 3h12a1 1 0 0 1 1 1v8h-2v-2H7v2H5V4a1 1 0 0 1 1-1zM4 13h16a1 1 0 0 1 1 1v3h-2v4h-2v-4H7v4H5v-4H3v-3a1 1 0 0 1 1-1z' },
+        { key: 'box', d: 'M12 3l9 4v10l-9 4-9-4V7l9-4zm0 2.2L6.5 7.6 12 10l5.5-2.4L12 5.2zM5 9.1v6.9l6 2.7v-6.9L5 9.1zm14 0l-6 2.7v6.9l6-2.7V9.1z' },
+        { key: 'document', d: 'M6 2h8l6 6v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zm7 1.5V9h5.5L13 3.5zM8 12h8v1.5H8V12zm0 4h8v1.5H8V16z' },
+        { key: 'tag', d: 'M3 3h8.6a1 1 0 0 1 .7.3l8.4 8.4a1 1 0 0 1 0 1.4l-7.6 7.6a1 1 0 0 1-1.4 0L3.3 12.3A1 1 0 0 1 3 11.6V3zm4.5 3A1.5 1.5 0 1 0 7.5 9a1.5 1.5 0 0 0 0-3z' }
+    ];
     var STATUSES = ['in_stock', 'in_use', 'repair', 'reserve', 'maintenance', 'written_off'];
     var CATEGORIES = ['todo', 'progress', 'done', 'blue', 'orange', 'red', 'purple', 'teal', 'gray', 'pink', 'lime', 'brown'];
     var state = {
@@ -198,6 +234,18 @@
             }
         }
         return { typeKey: typeKey, label: typeKey || '', color: '#5D6B82', systemType: false, assetCount: 0 };
+    }
+
+    /* Type of an asset; falls back to what the server sent with the asset when the type is not loaded (other projects). */
+    function typeFor(asset) {
+        if (!asset) return typeOf('');
+        for (var i = 0; i < state.types.length; i++) {
+            if (state.types[i].typeKey === asset.typeKey) return state.types[i];
+        }
+        return {
+            typeKey: asset.typeKey, label: asset.typeLabel || asset.typeKey || '',
+            color: asset.color || '#5D6B82', icon: asset.icon, systemType: false, assetCount: 0
+        };
     }
 
     function builtinStatusLabel(status) {
@@ -1377,9 +1425,7 @@
         chevron.disabled = true;
         row.appendChild(chevron);
         var name = el('span', 'asset-tree-name', type.label);
-        var dot = el('i', 'asset-tree-type-dot');
-        dot.style.background = type.color || '#5D6B82';
-        name.insertBefore(dot, name.firstChild);
+        name.insertBefore(typeTile(type, 'sm'), name.firstChild);
         row.appendChild(name);
         var count = equipmentIn(placeId, type.typeKey).length;
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
@@ -1824,6 +1870,118 @@
         return svg;
     }
 
+    function iconShape(key) {
+        for (var i = 0; i < TYPE_ICONS.length; i++) {
+            if (TYPE_ICONS[i].key === key) return TYPE_ICONS[i];
+        }
+        return null;
+    }
+
+    function iconKeyOf(type) {
+        if (!type) return DEFAULT_OBJECT_ICON;
+        if (iconShape(type.icon)) return type.icon;
+        return type.location ? DEFAULT_PLACE_ICON : DEFAULT_OBJECT_ICON;
+    }
+
+    function iconLabel(key) {
+        return t('icon' + key.charAt(0).toUpperCase() + key.slice(1));
+    }
+
+    function iconGlyph(key) {
+        var shape = iconShape(key) || iconShape(DEFAULT_OBJECT_ICON);
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', shape.d);
+        path.setAttribute('fill', 'currentColor');
+        path.setAttribute('fill-rule', 'evenodd');
+        svg.appendChild(path);
+        return svg;
+    }
+
+    /* Colored tile with a white glyph: the same shape Jira uses for request type icons. */
+    function typeTile(type, size, iconKey, color) {
+        var tile = el('span', 'asset-tree-type-icon' + (size ? ' is-' + size : ''));
+        tile.style.background = color || (type && type.color) || '#5D6B82';
+        tile.appendChild(iconGlyph(iconKey || iconKeyOf(type)));
+        if (type && type.label) tile.title = type.label;
+        return tile;
+    }
+
+    function typeBadge(type, label, size) {
+        var wrap = el('span', 'asset-tree-type-badge');
+        wrap.appendChild(typeTile(type, size || 'sm'));
+        wrap.appendChild(el('span', 'asset-tree-type-badge-label', label || (type && type.label) || ''));
+        return wrap;
+    }
+
+    /* Palette row. Returns the container; call container.set(color) to move the selection. */
+    function colorSwatches(initial, onPick) {
+        var colors = el('div', 'asset-tree-swatches');
+        var buttons = {};
+        PALETTE.forEach(function (color) {
+            var swatch = el('button', 'asset-tree-swatch');
+            swatch.type = 'button';
+            swatch.style.background = color;
+            swatch.setAttribute('aria-label', color);
+            swatch.addEventListener('click', function () {
+                colors.set(color);
+                onPick(color);
+            });
+            buttons[color] = swatch;
+            colors.appendChild(swatch);
+        });
+        colors.set = function (color) {
+            Object.keys(buttons).forEach(function (key) {
+                if (key === color) buttons[key].classList.add('is-selected');
+                else buttons[key].classList.remove('is-selected');
+            });
+        };
+        colors.set(initial);
+        return colors;
+    }
+
+    /* Icon grid. Returns the container; call grid.set(key) or grid.paint(color) to update it. */
+    function iconPicker(initialKey, initialColor, onPick) {
+        var grid = el('div', 'asset-tree-icon-grid');
+        grid.setAttribute('role', 'listbox');
+        var tiles = {};
+        var currentColor = initialColor || PALETTE[0];
+        TYPE_ICONS.forEach(function (shape) {
+            var pick = el('button', 'asset-tree-icon-pick');
+            pick.type = 'button';
+            pick.title = iconLabel(shape.key);
+            pick.setAttribute('aria-label', pick.title);
+            pick.setAttribute('role', 'option');
+            var tile = typeTile(null, 'lg', shape.key, currentColor);
+            pick.appendChild(tile);
+            pick.addEventListener('click', function () {
+                grid.set(shape.key);
+                onPick(shape.key);
+            });
+            tiles[shape.key] = { button: pick, tile: tile };
+            grid.appendChild(pick);
+        });
+        grid.set = function (key) {
+            Object.keys(tiles).forEach(function (name) {
+                var on = name === key;
+                if (on) tiles[name].button.classList.add('is-selected');
+                else tiles[name].button.classList.remove('is-selected');
+                tiles[name].button.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+        };
+        grid.paint = function (color) {
+            currentColor = color || currentColor;
+            Object.keys(tiles).forEach(function (name) {
+                tiles[name].tile.style.background = currentColor;
+            });
+        };
+        grid.set(initialKey);
+        return grid;
+    }
+
     function toolButton(label, icon, onClick) {
         var node = button('', 'asset-tree-tool', onClick);
         node.appendChild(toolIcon(icon));
@@ -1956,7 +2114,7 @@
         main.appendChild(ops);
         if (asset.parentId && crumbs(asset)) main.appendChild(el('p', 'asset-tree-crumb', crumbs(asset)));
 
-        var placeItems = [detailItem(t('type'), el('strong', null, full.typeLabel || typeOf(full.typeKey).label || ''))];
+        var placeItems = [detailItem(t('type'), typeBadge(typeFor(full), full.typeLabel || typeOf(full.typeKey).label || ''))];
         if (full.parentId && byId()[full.parentId]) {
             placeItems.push(detailItem(t('parent'), el('span', null, byId()[full.parentId].name)));
         }
@@ -1973,7 +2131,7 @@
                 places.appendChild(linkLine(place.name, place.typeLabel || typeOf(place.typeKey).label || '', function () {
                     state.pane = 'list';
                     selectAsset(place.id);
-                }, typeOf(place.typeKey).color));
+                }, typeOf(place.typeKey).color, typeOf(place.typeKey)));
             });
             main.appendChild(moduleBlock(t('placeInside'), places));
         }
@@ -1987,7 +2145,7 @@
                 gear.forEach(function (item) { if (item.typeKey === type.typeKey) count++; });
                 typeBlock.appendChild(linkLine(type.label, t('childCount', count), function () {
                     selectTypeGroup(asset.id, type.typeKey, 'under');
-                }, type.color));
+                }, type.color, type));
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
@@ -2030,9 +2188,9 @@
         return mark;
     }
 
-    function linkLine(label, summary, onClick, color) {
+    function linkLine(label, summary, onClick, color, type) {
         var row = el('div', 'asset-tree-issue');
-        row.appendChild(issueMark(color));
+        row.appendChild(type && type.typeKey ? typeTile(type, 'sm') : issueMark(color));
         var title = button(label, 'asset-tree-linkish', onClick);
         row.appendChild(title);
         if (summary) row.appendChild(el('span', 'asset-tree-issuelink-summary', summary));
@@ -2123,7 +2281,7 @@
                     selectAsset(child.id);
                 }),
                 child.objectKey || '',
-                child.typeLabel || typeOf(child.typeKey).label,
+                typeBadge(typeFor(child), child.typeLabel || typeOf(child.typeKey).label),
                 nested && !projectFiltering() && !remote ? t('childCount', nested) : lozenge(child.status),
                 who || t('custodianNone')
             ];
@@ -2792,7 +2950,7 @@
         main.appendChild(ops);
         if (crumbs(asset)) main.appendChild(el('p', 'asset-tree-crumb', crumbs(asset)));
 
-        var items = [detailItem(t('type'), el('strong', null, asset.typeLabel || typeOf(asset.typeKey).label || ''))];
+        var items = [detailItem(t('type'), typeBadge(typeFor(asset), asset.typeLabel || typeOf(asset.typeKey).label || ''))];
         items.push(detailItem(t('status'), statusPicker(asset)));
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
         items.push(detailItem(t('parent'), el('span', null, place)));
@@ -3397,21 +3555,25 @@
             treeToggle.title = t('showInTreeHint');
             creator.appendChild(treeToggle);
             var chosenColor = PALETTE[0];
-            var colors = el('div', 'asset-tree-swatches');
-            PALETTE.forEach(function (color) {
-                var swatch = el('button', 'asset-tree-swatch' + (color === chosenColor ? ' is-selected' : ''));
-                swatch.type = 'button';
-                swatch.style.background = color;
-                swatch.setAttribute('aria-label', color);
-                swatch.addEventListener('click', function () {
-                    chosenColor = color;
-                    var all = colors.querySelectorAll('.asset-tree-swatch');
-                    for (var i = 0; i < all.length; i++) all[i].classList.remove('is-selected');
-                    swatch.classList.add('is-selected');
-                });
-                colors.appendChild(swatch);
+            var chosenIcon = '';
+            function effectiveIcon() {
+                return chosenIcon || (locationBox.checked ? DEFAULT_PLACE_ICON : DEFAULT_OBJECT_ICON);
+            }
+            var icons = iconPicker(effectiveIcon(), chosenColor, function (key) {
+                chosenIcon = key;
             });
-            creator.appendChild(field(t('color'), colors, true));
+            var colors = colorSwatches(chosenColor, function (color) {
+                chosenColor = color;
+                icons.paint(color);
+            });
+            locationBox.addEventListener('change', function () {
+                if (!chosenIcon) icons.set(effectiveIcon());
+            });
+            var look = el('div', 'asset-tree-appearance');
+            look.appendChild(field(t('color'), colors, true));
+            look.appendChild(field(t('icon'), icons, true));
+            look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+            creator.appendChild(look);
             var draftList = el('div', 'asset-tree-drafts');
             draftList.id = 'create-drafts';
             creator.appendChild(draftList);
@@ -3739,6 +3901,7 @@
                 ajax('POST', '/types', {
                     label: typeLabel.trim(),
                     color: chosenColor,
+                    icon: effectiveIcon(),
                     projectKey: state.projectKey,
                     location: place,
                     showInTree: place || !!treeBox.checked
@@ -3891,9 +4054,15 @@
             if (state.view === 'settings') {
                 closeAllModals();
                 renderFrame();
-            } else {
-                openTypes();
+                return;
             }
+            // The tree and the open card list types too, so repaint them behind the dialog.
+            if (state.dirty) {
+                renderNodes();
+            } else {
+                renderFrame();
+            }
+            openTypes();
         });
     }
 
@@ -4000,9 +4169,7 @@
                 repaintSchema();
             });
             pick.setAttribute('data-name', type.label || '');
-            var swatch = el('span', 'asset-tree-dot');
-            swatch.style.background = type.color || '#5D6B82';
-            pick.appendChild(swatch);
+            pick.appendChild(typeTile(type, 'sm'));
             pick.appendChild(el('span', 'asset-tree-type-name', type.label || ''));
             var count = el('span', 'asset-tree-key', String((type.fields || []).length));
             count.title = t('schemaFieldCount', (type.fields || []).length);
@@ -4030,9 +4197,7 @@
         var wrap = el('div', 'asset-tree-type-detail');
         var head = el('div', 'asset-tree-type-head');
         var title = el('div', 'asset-tree-type-title');
-        var swatch = el('span', 'asset-tree-dot');
-        swatch.style.background = type.color || '#5D6B82';
-        title.appendChild(swatch);
+        title.appendChild(typeTile(type, 'lg'));
         title.appendChild(el('h3', null, type.label || ''));
         head.appendChild(title);
         var meta = type.systemType ? t('systemType') : t('schemaFieldCount', (type.fields || []).length);
@@ -4050,6 +4215,26 @@
             }));
         }
         wrap.appendChild(head);
+        if (state.canConfigure) {
+            var look = el('div', 'asset-tree-appearance');
+            var saveLook = function (patch) {
+                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey), patch, function (status, payload) {
+                    if (status >= 200 && status < 300) refreshSchema();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            };
+            var icons = iconPicker(iconKeyOf(type), type.color, function (key) {
+                saveLook({ icon: key });
+            });
+            var colors = colorSwatches(type.color, function (color) {
+                icons.paint(color);
+                saveLook({ color: color });
+            });
+            look.appendChild(field(t('color'), colors, true));
+            look.appendChild(field(t('icon'), icons, true));
+            look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+            wrap.appendChild(look);
+        }
         if (!type.location) {
             var treeToggle = el('label', 'asset-tree-check');
             treeToggle.title = t('showInTreeHint');
@@ -4135,22 +4320,26 @@
             treeInput.disabled = locationInput.checked;
             if (locationInput.checked) treeInput.checked = false;
         });
-        var colors = el('div', 'asset-tree-swatches');
         var chosen = PALETTE[0];
-        PALETTE.forEach(function (color) {
-            var swatch = el('button', 'asset-tree-swatch' + (color === chosen ? ' is-selected' : ''));
-            swatch.type = 'button';
-            swatch.style.background = color;
-            swatch.setAttribute('aria-label', color);
-            swatch.addEventListener('click', function () {
-                chosen = color;
-                var all = colors.querySelectorAll('.asset-tree-swatch');
-                for (var i = 0; i < all.length; i++) all[i].classList.remove('is-selected');
-                swatch.classList.add('is-selected');
-            });
-            colors.appendChild(swatch);
+        var chosenIcon = '';
+        function effectiveIcon() {
+            return chosenIcon || (locationInput.checked ? DEFAULT_PLACE_ICON : DEFAULT_OBJECT_ICON);
+        }
+        var icons = iconPicker(effectiveIcon(), chosen, function (key) {
+            chosenIcon = key;
         });
-        form.appendChild(field(t('color'), colors, true));
+        var colors = colorSwatches(chosen, function (color) {
+            chosen = color;
+            icons.paint(color);
+        });
+        locationInput.addEventListener('change', function () {
+            if (!chosenIcon) icons.set(effectiveIcon());
+        });
+        var look = el('div', 'asset-tree-appearance');
+        look.appendChild(field(t('color'), colors, true));
+        look.appendChild(field(t('icon'), icons, true));
+        look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+        form.appendChild(look);
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
         form.appendChild(error);
@@ -4165,6 +4354,7 @@
             ajax('POST', '/types', {
                 label: label.trim(),
                 color: chosen,
+                icon: effectiveIcon(),
                 projectKey: state.projectKey,
                 location: place,
                 showInTree: place || treeInput.checked
@@ -4653,6 +4843,7 @@
             var line = button(row.label, 'asset-tree-dash-link', function () {
                 focusMatches({ field: 'type', op: 'eq', value: row.key });
             });
+            line.insertBefore(typeTile({ color: row.color, icon: row.icon, label: row.label }, 'sm'), line.firstChild);
             var track = el('span', 'asset-tree-bar');
             var fill = el('span');
             fill.style.width = Math.round(100 * row.count / max) + '%';

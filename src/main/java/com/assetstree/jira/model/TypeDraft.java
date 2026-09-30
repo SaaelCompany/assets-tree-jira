@@ -7,9 +7,10 @@ import javax.xml.bind.annotation.XmlAccessorType;
 public class TypeDraft {
     private String label;
     private String color;
+    private String icon;
     private String projectKey;
     private boolean location;
-    private boolean showInTree;
+    private Boolean showInTree;
 
     public String getLabel() {
         return label;
@@ -25,6 +26,14 @@ public class TypeDraft {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public String getProjectKey() {
@@ -43,11 +52,12 @@ public class TypeDraft {
         this.location = location;
     }
 
-    public boolean isShowInTree() {
+    /** Null when the request did not mention the flag, so a partial update leaves it alone. */
+    public Boolean getShowInTree() {
         return showInTree;
     }
 
-    public void setShowInTree(boolean showInTree) {
+    public void setShowInTree(Boolean showInTree) {
         this.showInTree = showInTree;
     }
 }

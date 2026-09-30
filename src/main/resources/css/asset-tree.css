@@ -1219,6 +1219,160 @@ html.asset-tree-dragging * {
     box-shadow: 0 0 0 2px var(--accent);
 }
 
+#asset-tree-app button.asset-tree-swatch,
+.asset-tree-backdrop button.asset-tree-swatch {
+    border: 2px solid #ffffff !important;
+    border-radius: 50% !important;
+    box-shadow: 0 0 0 1px #d5dbe6;
+}
+
+#asset-tree-app button.asset-tree-swatch.is-selected,
+.asset-tree-backdrop button.asset-tree-swatch.is-selected {
+    box-shadow: 0 0 0 2px #0052cc;
+}
+
+/* Type icon: a colored square tile with a white glyph, like request type icons in Jira. */
+.asset-tree-type-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    background: #5d6b82;
+    color: #ffffff;
+    vertical-align: middle;
+}
+
+.asset-tree-type-icon svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+.asset-tree-type-icon.is-sm {
+    width: 16px;
+    height: 16px;
+    border-radius: 2px;
+}
+
+.asset-tree-type-icon.is-sm svg {
+    width: 11px;
+    height: 11px;
+}
+
+.asset-tree-type-icon.is-lg {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+}
+
+.asset-tree-type-icon.is-lg svg {
+    width: 22px;
+    height: 22px;
+}
+
+.asset-tree-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    vertical-align: middle;
+}
+
+.asset-tree-type-badge-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.asset-tree-detail-value .asset-tree-type-badge-label {
+    font-weight: 600;
+}
+
+#asset-tree-app .asset-tree-row.is-type .asset-tree-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+#asset-tree-app .asset-tree-row.is-type .asset-tree-type-icon {
+    margin-right: 0;
+}
+
+.asset-tree-appearance {
+    margin: 8px 0;
+}
+
+.asset-tree-appearance .asset-tree-hint {
+    margin: 4px 0 0;
+}
+
+.asset-tree-icon-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 132px;
+    padding: 4px;
+    overflow-y: auto;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fafbfc;
+}
+
+#asset-tree-app button.asset-tree-icon-pick,
+.asset-tree-backdrop button.asset-tree-icon-pick {
+    display: inline-flex !important;
+    visibility: visible !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0;
+    padding: 0 !important;
+    border: 2px solid transparent !important;
+    border-radius: 6px;
+    background: transparent !important;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+#asset-tree-app button.asset-tree-icon-pick:hover,
+.asset-tree-backdrop button.asset-tree-icon-pick:hover {
+    background: rgba(9, 30, 66, 0.08) !important;
+}
+
+#asset-tree-app button.asset-tree-icon-pick.is-selected,
+.asset-tree-backdrop button.asset-tree-icon-pick.is-selected {
+    border-color: #0052cc !important;
+    background: #deebff !important;
+}
+
+#asset-tree-app button.asset-tree-icon-pick:focus,
+.asset-tree-backdrop button.asset-tree-icon-pick:focus {
+    outline: 2px solid #4c9aff;
+    outline-offset: 1px;
+}
+
+#asset-tree-app button.asset-tree-dash-link .asset-tree-type-icon {
+    flex: 0 0 auto;
+}
+
+#asset-tree-app .asset-tree-issue .asset-tree-type-icon {
+    flex: 0 0 auto;
+}
+
 .asset-tree-type-row {
     grid-template-columns: auto 1fr auto auto;
     padding: 6px 0;
@@ -1332,7 +1486,8 @@ html.asset-tree-dragging * {
 
 #asset-tree-app button.asset-tree-nest,
 #asset-tree-app button.asset-tree-chevron,
-#asset-tree-app button.asset-tree-swatch {
+#asset-tree-app button.asset-tree-swatch,
+.asset-tree-backdrop button.asset-tree-swatch {
     display: inline-flex !important;
     visibility: visible !important;
     flex: 0 0 auto;
@@ -2359,6 +2514,11 @@ html.asset-tree-dragging * {
 .asset-tree-type-title .asset-tree-dot {
     width: 10px;
     height: 10px;
+}
+
+.asset-tree-type-pick .asset-tree-type-icon,
+.asset-tree-type-title .asset-tree-type-icon {
+    flex: 0 0 auto;
 }
 
 .asset-tree-field-list .asset-tree-type-field,

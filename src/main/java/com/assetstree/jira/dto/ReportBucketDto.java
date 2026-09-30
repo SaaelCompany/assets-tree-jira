@@ -8,6 +8,7 @@ public class ReportBucketDto {
     private String key;
     private String label;
     private String color;
+    private String icon;
     private int count;
 
     public ReportBucketDto() {
@@ -42,6 +43,14 @@ public class ReportBucketDto {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public int getCount() {

@@ -12,6 +12,7 @@ public class AssetTypeDto {
     private String projectKey;
     private String label;
     private String color;
+    private String icon;
     private boolean systemType;
     private boolean location;
     private boolean showInTree;
@@ -40,6 +41,14 @@ public class AssetTypeDto {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public boolean isSystemType() {

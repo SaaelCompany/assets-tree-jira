@@ -15,6 +15,7 @@ public class AssetDto {
     private String typeKey;
     private String typeLabel;
     private String color;
+    private String icon;
     private String status;
     private Integer parentId;
     private int sortOrder;
@@ -88,6 +89,14 @@ public class AssetDto {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public String getStatus() {

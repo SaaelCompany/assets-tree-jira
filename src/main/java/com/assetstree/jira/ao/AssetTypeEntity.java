@@ -28,6 +28,11 @@ public interface AssetTypeEntity extends Entity {
 
     void setColor(String color);
 
+    @StringLength(40)
+    String getIcon();
+
+    void setIcon(String icon);
+
     boolean isSystemType();
 
     void setSystemType(boolean systemType);

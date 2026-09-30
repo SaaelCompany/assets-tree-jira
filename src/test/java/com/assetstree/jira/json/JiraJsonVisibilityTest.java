@@ -20,6 +20,7 @@ import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -33,7 +34,7 @@ public class JiraJsonVisibilityTest {
     public void metaSerializesPublicProperties() throws Exception {
         MetaDto meta = new MetaDto();
         meta.setCanEdit(true);
-        meta.setVersion("1.2.40");
+        meta.setVersion("1.2.41");
         meta.setLocale("ru-RU");
         meta.setDisplayName("Admin");
         meta.setUserKey("admin");
@@ -46,7 +47,7 @@ public class JiraJsonVisibilityTest {
 
         String json = mapper().writeValueAsString(meta);
 
-        assertTrue(json.contains("\"version\":\"1.2.40\""));
+        assertTrue(json.contains("\"version\":\"1.2.41\""));
         assertTrue(json.contains("\"locale\":\"ru-RU\""));
         assertTrue(json.contains("\"displayName\":\"Admin\""));
         assertTrue(json.contains("\"userKey\":\"admin\""));
@@ -72,21 +73,29 @@ public class JiraJsonVisibilityTest {
         assertEquals("A-1", attribute.getValue());
 
         TypeDraft type = mapper.readValue(
-                "{\"label\":\"Филиал\",\"projectKey\":\"MED\",\"location\":true,\"showInTree\":false}",
+                "{\"label\":\"Филиал\",\"projectKey\":\"MED\",\"location\":true,\"showInTree\":false,\"icon\":\"hospital\"}",
                 TypeDraft.class);
         assertEquals("Филиал", type.getLabel());
         assertEquals("MED", type.getProjectKey());
         assertTrue(type.isLocation());
-        assertFalse(type.isShowInTree());
+        assertEquals(Boolean.FALSE, type.getShowInTree());
+        assertEquals("hospital", type.getIcon());
+
+        TypeDraft partial = mapper.readValue("{\"icon\":\"printer\"}", TypeDraft.class);
+        assertEquals("printer", partial.getIcon());
+        assertNull(partial.getShowInTree());
+        assertNull(partial.getColor());
 
         AssetTypeDto stored = new AssetTypeDto();
         stored.setTypeKey("pc");
         stored.setLabel("Компьютер");
         stored.setLocation(false);
         stored.setShowInTree(false);
+        stored.setIcon("desktop");
         String typeJson = mapper.writeValueAsString(stored);
         assertTrue(typeJson.contains("\"showInTree\":false"));
         assertTrue(typeJson.contains("\"location\":false"));
+        assertTrue(typeJson.contains("\"icon\":\"desktop\""));
 
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",

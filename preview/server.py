@@ -37,6 +37,25 @@ CATEGORY_COLOR = {
     "teal": "#00a3bf", "gray": "#6b778c", "pink": "#cd519d", "lime": "#36b37e", "brown": "#974f0c",
 }
 GROUPS = ["jira-administrators", "jira-servicedesk-users", "asset-keepers"]
+ICONS = [
+    "building", "warehouse", "department", "office", "hospital", "factory", "store", "home",
+    "device", "desktop", "laptop", "monitor", "server", "printer", "scanner", "phone", "tablet",
+    "camera", "network", "wifi", "storage", "keyboard", "projector", "battery",
+    "medical", "microscope", "tool", "vehicle", "furniture", "box", "document", "tag",
+]
+
+
+def default_icon(location):
+    return "building" if location else "device"
+
+
+def resolve_icon(raw, location):
+    icon = str(raw or "").strip().lower()
+    if not icon:
+        return default_icon(location)
+    if icon not in ICONS:
+        return None
+    return icon
 CAP_ORDER = ["view", "create", "edit", "move", "remove", "comment", "schema", "access"]
 STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
@@ -53,10 +72,10 @@ ISSUES = {
 }
 ISSUES_BY_ID = {item["issueId"]: item for item in ISSUES.values()}
 SEEDS = [
-    ("warehouse", "#175CD3", 0, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
-    ("branch", "#0E7090", 1, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
-    ("department", "#6554C0", 2, True, [("phone", "asset-tree.field.phone", "text", False)]),
-    ("equipment", "#0F6E56", 3, False, [("inventory", "asset-tree.field.inventory", "text", False), ("serial", "asset-tree.field.serial", "text", False)]),
+    ("warehouse", "#175CD3", "warehouse", 0, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
+    ("branch", "#0E7090", "building", 1, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
+    ("department", "#6554C0", "department", 2, True, [("phone", "asset-tree.field.phone", "text", False)]),
+    ("equipment", "#0F6E56", "device", 3, False, [("inventory", "asset-tree.field.inventory", "text", False), ("serial", "asset-tree.field.serial", "text", False)]),
 ]
 
 LOCK = threading.Lock()
@@ -235,12 +254,12 @@ def status_known(project_key, status, text):
 
 
 def seed_types(project_key):
-    for base, color, order, location, fields in SEEDS:
+    for base, color, icon, order, location, fields in SEEDS:
         type_key = "%s-%s" % (project_key.lower(), base)
         if type_key not in STATE["types"]:
             STATE["types"][type_key] = {
                 "typeKey": type_key, "projectKey": project_key, "baseKey": base, "label": base,
-                "color": color, "systemType": True, "location": location, "showInTree": location,
+                "color": color, "icon": icon, "systemType": True, "location": location, "showInTree": location,
                 "sortOrder": order,
                 "fields": [{"fieldKey": item[0], "label": item[1], "kind": item[2], "required": item[3], "position": index} for index, item in enumerate(fields)],
             }
@@ -355,6 +374,7 @@ def type_dto(row, text, rows):
     count = len([asset for asset in rows if asset["typeKey"] == row["typeKey"]])
     return {
         "typeKey": row["typeKey"], "projectKey": row["projectKey"], "label": label, "color": row["color"],
+        "icon": row.get("icon") if row.get("icon") in ICONS else default_icon(row["location"]),
         "systemType": row["systemType"], "location": row["location"],
         "showInTree": bool(row.get("location") or row.get("showInTree")), "assetCount": count,
         "fields": [{
@@ -367,7 +387,7 @@ def type_dto(row, text, rows):
 def asset_dto(asset, text, with_issues):
     row = type_row(asset["typeKey"]) or {"label": asset["typeKey"], "color": "#5D6B82", "fields": [], "systemType": False, "baseKey": "", "location": False, "projectKey": asset["projectKey"]}
     typed = type_dto(row, text, project_assets(asset["projectKey"])) if asset["typeKey"] in STATE["types"] else {
-        "label": asset["typeKey"], "color": "#5D6B82", "fields": [], "location": False
+        "label": asset["typeKey"], "color": "#5D6B82", "icon": default_icon(False), "fields": [], "location": False
     }
     attributes = []
     for field in typed["fields"]:
@@ -378,7 +398,7 @@ def asset_dto(asset, text, with_issues):
     holder = USERS.get(asset.get("custodianKey") or "")
     dto = {
         "id": asset["id"], "objectKey": asset["objectKey"], "name": asset["name"], "description": asset["description"],
-        "typeKey": asset["typeKey"], "typeLabel": typed["label"], "color": typed["color"],
+        "typeKey": asset["typeKey"], "typeLabel": typed["label"], "color": typed["color"], "icon": typed["icon"],
         "status": canonical(asset["status"]), "parentId": normalize_parent(asset["parentId"]),
         "sortOrder": asset["sortOrder"], "created": asset["created"], "updated": asset["updated"],
         "createdBy": USERS["ivanov"]["displayName"], "updatedBy": USERS["ivanov"]["displayName"], "projectKey": asset["projectKey"],
@@ -774,7 +794,7 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.40",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.41",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -1193,12 +1213,15 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         if project_key not in {item["key"] for item in PROJECTS}:
             return 400, {"message": text["asset-tree.error.project.required"]}
         color = (body or {}).get("color") or PALETTE[0]
+        location = bool((body or {}).get("location"))
+        icon = resolve_icon((body or {}).get("icon"), location)
+        if icon is None:
+            return 400, {"message": text["asset-tree.error.type.icon"]}
         taken = set(STATE["types"])
         key = unique_key(slug(label) or "type", taken)
         order = max([item["sortOrder"] for item in self.project_types(project_key)] or [-1]) + 1
-        location = bool((body or {}).get("location"))
         STATE["types"][key] = {
-            "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color,
+            "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color, "icon": icon,
             "systemType": False, "location": location,
             "showInTree": location or bool((body or {}).get("showInTree")),
             "sortOrder": order, "fields": [],
@@ -1209,10 +1232,19 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         row = STATE["types"].get(type_key)
         if not row:
             return 404, {"message": text["asset-tree.error.type.notFound"]}
-        if row.get("location"):
-            row["showInTree"] = True
-        else:
-            row["showInTree"] = bool((body or {}).get("showInTree"))
+        body = body or {}
+        if body.get("showInTree") is not None:
+            row["showInTree"] = bool(row.get("location")) or bool(body.get("showInTree"))
+        if body.get("icon") is not None:
+            icon = resolve_icon(body.get("icon"), bool(row.get("location")))
+            if icon is None:
+                return 400, {"message": text["asset-tree.error.type.icon"]}
+            row["icon"] = icon
+        if body.get("color") is not None:
+            color = str(body.get("color")).strip()
+            if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+                return 400, {"message": text["asset-tree.error.type.color"]}
+            row["color"] = color
         return 200, type_dto(row, text, project_assets(row["projectKey"]))
 
     def add_field(self, type_key, body, text):
@@ -1306,7 +1338,8 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
                 continue
             count = len([asset for asset in equipment if asset["typeKey"] == row["typeKey"]])
             if count:
-                by_type.append({"key": row["typeKey"], "label": type_dto(row, text, rows)["label"], "color": row["color"], "count": count})
+                typed = type_dto(row, text, rows)
+                by_type.append({"key": row["typeKey"], "label": typed["label"], "color": row["color"], "icon": typed["icon"], "count": count})
         places = []
         for asset in rows:
             if asset["typeKey"] not in location_keys:
