@@ -6,6 +6,7 @@ import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.TypeDraft;
 import org.codehaus.jackson.map.AnnotationIntrospector;
 import org.codehaus.jackson.map.DeserializationConfig;
@@ -34,7 +35,7 @@ public class JiraJsonVisibilityTest {
     public void metaSerializesPublicProperties() throws Exception {
         MetaDto meta = new MetaDto();
         meta.setCanEdit(true);
-        meta.setVersion("1.2.43");
+        meta.setVersion("1.2.44");
         meta.setLocale("ru-RU");
         meta.setDisplayName("Admin");
         meta.setUserKey("admin");
@@ -47,7 +48,7 @@ public class JiraJsonVisibilityTest {
 
         String json = mapper().writeValueAsString(meta);
 
-        assertTrue(json.contains("\"version\":\"1.2.43\""));
+        assertTrue(json.contains("\"version\":\"1.2.44\""));
         assertTrue(json.contains("\"locale\":\"ru-RU\""));
         assertTrue(json.contains("\"displayName\":\"Admin\""));
         assertTrue(json.contains("\"userKey\":\"admin\""));
@@ -96,6 +97,14 @@ public class JiraJsonVisibilityTest {
         assertTrue(typeJson.contains("\"showInTree\":false"));
         assertTrue(typeJson.contains("\"location\":false"));
         assertTrue(typeJson.contains("\"icon\":\"desktop\""));
+
+        PortalRuleDraft portal = mapper.readValue(
+                "{\"assetId\":4,\"conditions\":[{\"field\":\"Площадка\",\"option\":\"Пункт А\"},{\"field\":\"Отделение\",\"option\":\"Пункт А\"}]}",
+                PortalRuleDraft.class);
+        assertEquals(4, portal.getAssetId());
+        assertEquals(2, portal.getConditions().size());
+        assertEquals("Площадка", portal.getConditions().get(0).getField());
+        assertEquals("Пункт А", portal.getConditions().get(1).getOption());
 
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",

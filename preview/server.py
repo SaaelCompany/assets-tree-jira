@@ -82,6 +82,7 @@ SEEDS = [
 LOCK = threading.Lock()
 STATE = {
     "seq": 1, "assets": {}, "types": {}, "links": [], "checks": {},
+    "portal_rules": [], "portal_seq": 1, "portal_demo": False,
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
 }
@@ -252,6 +253,57 @@ def status_dtos(project_key, text):
 def status_known(project_key, status, text):
     key = canonical(status)
     return any(row["statusKey"] == key for row in ensure_statuses(project_key, text))
+
+
+def ensure_portal_demo():
+    if STATE.get("portal_demo"):
+        return
+    STATE["portal_demo"] = True
+
+    def ensure_type(key, label, location, icon, order):
+        if key not in STATE["types"]:
+            STATE["types"][key] = {
+                "typeKey": key, "projectKey": "TEST", "baseKey": key, "label": label,
+                "color": "#0052CC", "icon": icon, "systemType": False, "location": location,
+                "showInTree": location, "sortOrder": order, "fields": [],
+            }
+
+    ensure_type("test-place", "Площадка", True, "building", 10)
+    ensure_type("test-dept", "Отделение", True, "department", 11)
+    ensure_type("test-device", "Оборудование", False, "device", 12)
+    place_a = add_asset("TEST", "test-place", "Площадка А", None, "in_use", None, {})
+    place_b = add_asset("TEST", "test-place", "Площадка Б", None, "in_use", None, {})
+    department = add_asset("TEST", "test-dept", "Отделение А", place_a, "in_use", None, {})
+    add_asset("TEST", "test-device", "Аппарат", department, "in_use", None, {})
+    add_asset("TEST", "test-device", "Принтер Б", place_b, "in_use", None, {})
+    STATE["portal_rules"] = [
+        {"id": 1, "assetId": place_a, "position": 1, "conditions": [{"field": "Площадка", "option": "Пункт А"}]},
+        {"id": 2, "assetId": place_b, "position": 2, "conditions": [{"field": "Площадка", "option": "Пункт Б"}]},
+        {"id": 3, "assetId": department, "position": 3, "conditions": [
+            {"field": "Площадка", "option": "Пункт А"},
+            {"field": "Отделение", "option": "Пункт А"},
+        ]},
+    ]
+    STATE["portal_seq"] = 4
+
+
+def portal_rule_dto(rule):
+    asset = STATE["assets"].get(rule["assetId"])
+    names = []
+    cursor = asset
+    guard = 0
+    while cursor and guard < 40:
+        names.insert(0, cursor["name"])
+        cursor = STATE["assets"].get(cursor.get("parentId")) if cursor.get("parentId") else None
+        guard += 1
+    return {
+        "id": rule["id"],
+        "assetId": rule["assetId"],
+        "assetName": asset["name"] if asset else "",
+        "assetPath": " / ".join(names),
+        "position": rule["position"],
+        "conditions": rule["conditions"],
+    }
 
 
 def seed_types(project_key):
@@ -767,28 +819,49 @@ p { color: #5d6b82; }
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
     def serve_portal(self, query):
-        project = (query.get("project") or [""])[0]
+        ensure_portal_demo()
+        project = (query.get("project") or ["TEST"])[0] or "TEST"
+        wait = self.text().get("asset-tree.ui.portalWait", "")
         html = """<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Портал</title>
 <link rel="stylesheet" href="/download/resources/asset-tree/asset-field.css">
 <style>
 body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
 main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
+form { display: flex; flex-direction: column; gap: 16px; }
+label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+select { font: inherit; font-weight: 400; padding: 6px 8px; }
 </style></head>
 <body><main>
 <h1>%s</h1>
 <p>%s</p>
-<div class="asset-tree-picker" data-project="%s">
+<form>
+<label>Площадка
+<select id="demo-place">
+<option value="">—</option>
+<option value="a">Пункт А</option>
+<option value="b">Пункт Б</option>
+</select>
+</label>
+<label>Отделение
+<select id="demo-dept">
+<option value="">—</option>
+<option value="a">Пункт А</option>
+</select>
+</label>
+<div class="asset-tree-picker" data-project="%s" data-wait="%s">
 <input type="hidden" class="asset-tree-picker-value" value="">
 <div class="asset-tree-picker-levels"></div>
 <p class="asset-tree-picker-current"></p>
 </div>
+</form>
 </main>
 <script src="/download/resources/asset-tree/asset-field.js"></script>
 </body></html>""" % (
             self.text().get("asset-tree.ui.portalTitle", "Asset"),
             self.text().get("asset-tree.ui.portalHint", ""),
             project,
+            wait.replace('"', "&quot;"),
         )
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
@@ -834,7 +907,7 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.43",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.44",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -882,6 +955,46 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
+        if match and method == "DELETE":
+            ensure_portal_demo()
+            rule_id = int(match.group(2))
+            before = len(STATE["portal_rules"])
+            STATE["portal_rules"] = [rule for rule in STATE["portal_rules"] if rule["id"] != rule_id]
+            if len(STATE["portal_rules"]) == before:
+                return 404, {"message": text["asset-tree.error.portal.missing"]}
+            return 204, None
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules", path)
+        if match and method == "GET":
+            ensure_portal_demo()
+            if match.group(1) != "TEST":
+                return 200, []
+            return 200, [portal_rule_dto(rule) for rule in STATE["portal_rules"]]
+        if match and method == "POST":
+            ensure_portal_demo()
+            body = self.read_json() or {}
+            asset = STATE["assets"].get(int(body.get("assetId") or 0))
+            conditions = []
+            seen = set()
+            for item in body.get("conditions") or []:
+                field = " ".join((item.get("field") or "").split())
+                option = " ".join((item.get("option") or "").split())
+                if not field or not option:
+                    continue
+                key = field.lower()
+                if key in seen:
+                    return 400, {"message": text["asset-tree.error.portal.field"]}
+                seen.add(key)
+                conditions.append({"field": field, "option": option})
+            if not asset or asset["projectKey"] != match.group(1):
+                return 400, {"message": text["asset-tree.error.portal.target"]}
+            if not conditions:
+                return 400, {"message": text["asset-tree.error.portal.conditions"]}
+            rule_id = STATE["portal_seq"]
+            STATE["portal_seq"] += 1
+            rule = {"id": rule_id, "assetId": asset["id"], "position": rule_id, "conditions": conditions}
+            STATE["portal_rules"].append(rule)
+            return 201, portal_rule_dto(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/picker", path)
         if match and method == "GET":
             rows = project_assets(match.group(1))

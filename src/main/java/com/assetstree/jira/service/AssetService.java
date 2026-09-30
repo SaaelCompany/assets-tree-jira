@@ -21,7 +21,9 @@ import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
+import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.TypeDraft;
 
@@ -97,6 +99,12 @@ public interface AssetService {
     InventoryRowDto markInventory(ApplicationUser user, int id, boolean checked);
 
     List<PickerNodeDto> picker(ApplicationUser user, String projectKey);
+
+    List<PortalRuleDto> listPortalRules(ApplicationUser user, String projectKey);
+
+    PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
+
+    void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 

@@ -1,6 +1,10 @@
-<div class="asset-tree-picker" data-project="$textutils.htmlEncode($projectKey)">
+#set($portalWait = "")
+#if($i18n)
+  #set($portalWait = $i18n.getText("asset-tree.ui.portalWait"))
+#end
+<div class="asset-tree-picker" data-project="$textutils.htmlEncode($projectKey)" data-wait="$textutils.htmlEncode($portalWait)">
     <input type="hidden" class="asset-tree-picker-value" name="$customField.id" value="$textutils.htmlEncode($!value)" />
     <div class="asset-tree-picker-levels"></div>
     <p class="asset-tree-picker-current"></p>
 </div>
-<script src="$baseurl/download/resources/com.assetstree.jira.asset-tree:asset-tree-field/asset-field.js?v=1.2.43"></script>
+<script src="$baseurl/download/resources/com.assetstree.jira.asset-tree:asset-tree-field/asset-field.js?v=1.2.44"></script>

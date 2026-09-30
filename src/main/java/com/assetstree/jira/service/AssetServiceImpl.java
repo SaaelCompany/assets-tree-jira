@@ -34,6 +34,8 @@ import com.assetstree.jira.ao.AssetFieldEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
 import com.assetstree.jira.ao.InventoryMarkEntity;
+import com.assetstree.jira.ao.PortalRuleConditionEntity;
+import com.assetstree.jira.ao.PortalRuleEntity;
 import com.assetstree.jira.ao.ProjectGrantEntity;
 import com.assetstree.jira.ao.ProjectStatusEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
@@ -52,6 +54,7 @@ import com.assetstree.jira.dto.IssueContextDto;
 import com.assetstree.jira.dto.IssueRefDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.PickerNodeDto;
+import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.dto.ReportBucketDto;
 import com.assetstree.jira.dto.ReportDto;
@@ -69,6 +72,8 @@ import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PortalConditionDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
@@ -85,6 +90,7 @@ import org.slf4j.LoggerFactory;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -550,6 +556,7 @@ public class AssetServiceImpl implements AssetService {
                     ao().deleteWithSQL(AssetCommentEntity.class, "ASSET_ID = ?", assetId);
                     ao().deleteWithSQL(AssetFileEntity.class, "ASSET_ID = ?", assetId);
                     ao().deleteWithSQL(AssetActivityEntity.class, "ASSET_ID = ?", assetId);
+                    deletePortalRulesFor(assetId.intValue());
                 }
                 for (Integer fileId : fileIds) {
                     AssetFileStore.delete(fileId.intValue());
@@ -1325,6 +1332,186 @@ public class AssetServiceImpl implements AssetService {
                 return nodes;
             }
         });
+    }
+
+    @Override
+    public List<PortalRuleDto> listPortalRules(ApplicationUser user, String projectKey) {
+        final Project project = requireVisibleProject(user, projectKey);
+        return ao().executeInTransaction(new TransactionCallback<List<PortalRuleDto>>() {
+            @Override
+            public List<PortalRuleDto> doInTransaction() {
+                return portalRules(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getAssetId() <= 0) {
+            throw new AssetException(400, "asset-tree.error.portal.target");
+        }
+        final List<PortalConditionDraft> conditions = cleanConditions(draft.getConditions());
+        return ao().executeInTransaction(new TransactionCallback<PortalRuleDto>() {
+            @Override
+            public PortalRuleDto doInTransaction() {
+                AssetEntity asset = ao().get(AssetEntity.class, draft.getAssetId());
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.portal.target");
+                }
+                int position = 1;
+                for (PortalRuleEntity existing : ao().find(PortalRuleEntity.class, Query.select().where("PROJECT_KEY = ?", project.getKey()))) {
+                    if (existing.getPosition() >= position) {
+                        position = existing.getPosition() + 1;
+                    }
+                }
+                PortalRuleEntity rule = ao().create(PortalRuleEntity.class,
+                        new DBParam("PROJECT_KEY", project.getKey()),
+                        new DBParam("ASSET_ID", draft.getAssetId()),
+                        new DBParam("POSITION", position));
+                for (int i = 0; i < conditions.size(); i++) {
+                    PortalConditionDraft condition = conditions.get(i);
+                    ao().create(PortalRuleConditionEntity.class,
+                            new DBParam("RULE_ID", rule.getID()),
+                            new DBParam("POSITION", i),
+                            new DBParam("FIELD_NAME", condition.getField()),
+                            new DBParam("OPTION_NAME", condition.getOption()));
+                }
+                return toPortalRule(rule);
+            }
+        });
+    }
+
+    @Override
+    public void deletePortalRule(ApplicationUser user, String projectKey, int ruleId) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                PortalRuleEntity rule = ao().get(PortalRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.portal.missing");
+                }
+                ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", ruleId);
+                ao().delete(rule);
+                return null;
+            }
+        });
+    }
+
+    private void deletePortalRulesFor(int assetId) {
+        PortalRuleEntity[] rules = ao().find(PortalRuleEntity.class, Query.select().where("ASSET_ID = ?", assetId));
+        for (PortalRuleEntity rule : rules) {
+            ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", rule.getID());
+            ao().delete(rule);
+        }
+    }
+
+    private List<PortalConditionDraft> cleanConditions(List<PortalConditionDraft> raw) {
+        List<PortalConditionDraft> conditions = new ArrayList<PortalConditionDraft>();
+        if (raw != null) {
+            for (PortalConditionDraft item : raw) {
+                if (item == null) {
+                    continue;
+                }
+                String field = item.getField() == null ? "" : item.getField().trim().replaceAll("\\s+", " ");
+                String option = item.getOption() == null ? "" : item.getOption().trim().replaceAll("\\s+", " ");
+                if (field.isEmpty() || option.isEmpty()) {
+                    continue;
+                }
+                if (field.length() > 255 || option.length() > 255) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+                boolean duplicate = false;
+                for (PortalConditionDraft kept : conditions) {
+                    if (kept.getField().equalsIgnoreCase(field)) {
+                        duplicate = true;
+                    }
+                }
+                if (duplicate) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+                PortalConditionDraft clean = new PortalConditionDraft();
+                clean.setField(field);
+                clean.setOption(option);
+                conditions.add(clean);
+                if (conditions.size() > 6) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+            }
+        }
+        if (conditions.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.portal.conditions");
+        }
+        return conditions;
+    }
+
+    private List<PortalRuleDto> portalRules(String projectKey) {
+        PortalRuleEntity[] rows = ao().find(PortalRuleEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        Arrays.sort(rows, new Comparator<PortalRuleEntity>() {
+            @Override
+            public int compare(PortalRuleEntity left, PortalRuleEntity right) {
+                int byPosition = left.getPosition() - right.getPosition();
+                if (byPosition != 0) {
+                    return byPosition;
+                }
+                return left.getID() - right.getID();
+            }
+        });
+        List<PortalRuleDto> result = new ArrayList<PortalRuleDto>();
+        for (PortalRuleEntity row : rows) {
+            result.add(toPortalRule(row));
+        }
+        return result;
+    }
+
+    private PortalRuleDto toPortalRule(PortalRuleEntity rule) {
+        PortalRuleDto dto = new PortalRuleDto();
+        dto.setId(rule.getID());
+        dto.setAssetId(rule.getAssetId());
+        dto.setPosition(rule.getPosition());
+        AssetEntity asset = ao().get(AssetEntity.class, rule.getAssetId());
+        if (asset != null) {
+            dto.setAssetName(asset.getName());
+            dto.setAssetPath(portalPath(asset));
+        }
+        PortalRuleConditionEntity[] conditions = ao().find(PortalRuleConditionEntity.class,
+                Query.select().where("RULE_ID = ?", rule.getID()));
+        Arrays.sort(conditions, new Comparator<PortalRuleConditionEntity>() {
+            @Override
+            public int compare(PortalRuleConditionEntity left, PortalRuleConditionEntity right) {
+                return left.getPosition() - right.getPosition();
+            }
+        });
+        List<PortalConditionDraft> items = new ArrayList<PortalConditionDraft>();
+        for (PortalRuleConditionEntity condition : conditions) {
+            PortalConditionDraft item = new PortalConditionDraft();
+            item.setField(condition.getFieldName());
+            item.setOption(condition.getOptionName());
+            items.add(item);
+        }
+        dto.setConditions(items);
+        return dto;
+    }
+
+    private String portalPath(AssetEntity entity) {
+        List<String> names = new ArrayList<String>();
+        AssetEntity cursor = entity;
+        int guard = 0;
+        while (cursor != null && guard < 40) {
+            names.add(0, cursor.getName());
+            Integer parentId = TreeLogic.normalizeParent(cursor.getParentId());
+            cursor = parentId == null ? null : ao().get(AssetEntity.class, parentId.intValue());
+            guard++;
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) {
+                builder.append(" / ");
+            }
+            builder.append(names.get(i));
+        }
+        return builder.toString();
     }
 
     @Override

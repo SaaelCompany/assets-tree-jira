@@ -31,9 +31,19 @@
     background: white;
 }
 
-.asset-tree-picker-current {
+.asset-tree-picker-current,
+.asset-tree-picker-root {
     margin: 0;
     color: #172b4d;
+}
+
+.asset-tree-picker-root {
+    font-weight: 600;
+}
+
+.asset-tree-picker-wait {
+    margin: 0;
+    color: #6b778c;
 }
 
 .asset-tree-picker button {

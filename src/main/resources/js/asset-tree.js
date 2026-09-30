@@ -74,6 +74,7 @@
         types: [],
         statuses: [],
         grants: null,
+        portalRules: null,
         selectedId: null,
         dirty: false,
         expanded: {},
@@ -4463,6 +4464,7 @@
         state.projectKey = match ? match.key : '';
         applyRights(match);
         state.grants = null;
+        state.portalRules = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -4490,6 +4492,7 @@
         var project = currentProject();
         applyRights(project);
         state.grants = null;
+        state.portalRules = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -5246,6 +5249,7 @@
         if (state.canConfigure) {
             sections.push(['statuses', t('statusSection'), (state.statuses || []).length]);
             sections.push(['types', t('typesSection'), state.types.length]);
+            sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
@@ -5278,6 +5282,8 @@
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
+        } else if (state.schemaTab === 'portal') {
+            renderPortalSettings(panel);
         } else if (state.schemaTab === 'access') {
             renderAccessSettings(panel);
         } else {
@@ -5290,6 +5296,142 @@
         reloadTree(function () {
             renderFrame();
         });
+    }
+
+    function assetPath(asset) {
+        var names = [];
+        var cursor = asset;
+        var index = byId();
+        var guard = 0;
+        while (cursor && guard < 40) {
+            names.unshift(cursor.name);
+            cursor = cursor.parentId ? index[cursor.parentId] : null;
+            guard++;
+        }
+        return names.join(' / ');
+    }
+
+    function renderPortalSettings(panel) {
+        var block = el('div', 'asset-tree-settings-block');
+        block.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
+        if (state.portalRules === null) {
+            state.portalRules = [];
+            block.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            panel.appendChild(block);
+            var projectKey = state.projectKey;
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/portal-rules', null, function (status, payload) {
+                if (state.view !== 'settings' || state.projectKey !== projectKey) return;
+                if (status === 200) state.portalRules = payload || [];
+                else {
+                    state.portalRules = [];
+                    notify((payload && payload.message) || t('errorTitle'));
+                }
+                if (state.schemaTab === 'portal') renderFrame();
+            });
+            return;
+        }
+        var list = el('div', 'asset-tree-portal-list');
+        if (!state.portalRules.length) {
+            list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
+        }
+        state.portalRules.forEach(function (rule) {
+            var row = el('div', 'asset-tree-portal-rule');
+            var text = (rule.conditions || []).map(function (condition) {
+                return (condition.field || '') + ' = ' + (condition.option || '');
+            }).join('  ·  ');
+            row.appendChild(el('span', 'asset-tree-portal-when', text));
+            row.appendChild(el('span', 'asset-tree-portal-target', rule.assetPath || rule.assetName || ''));
+            row.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
+                ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules/' + rule.id, null, function (status, payload) {
+                    if (status >= 200 && status < 300) {
+                        state.portalRules = null;
+                        renderFrame();
+                    } else {
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            }));
+            list.appendChild(row);
+        });
+        block.appendChild(list);
+
+        var conditions = [{ field: '', option: '' }];
+        var conditionBox = el('div', 'asset-tree-portal-conditions');
+        var error = el('div', 'asset-tree-form-error');
+        error.hidden = true;
+
+        function paintConditions() {
+            conditionBox.innerHTML = '';
+            conditions.forEach(function (condition, index) {
+                var line = el('div', 'asset-tree-portal-condition');
+                var fieldInput = input('', condition.field, false);
+                fieldInput.placeholder = t('portalField');
+                fieldInput.addEventListener('input', function () { condition.field = fieldInput.value; });
+                var optionInput = input('', condition.option, false);
+                optionInput.placeholder = t('portalOption');
+                optionInput.addEventListener('input', function () { condition.option = optionInput.value; });
+                line.appendChild(fieldInput);
+                line.appendChild(optionInput);
+                if (conditions.length > 1) {
+                    line.appendChild(button('×', 'asset-tree-btn', function () {
+                        conditions.splice(index, 1);
+                        paintConditions();
+                    }));
+                }
+                conditionBox.appendChild(line);
+            });
+        }
+        paintConditions();
+
+        var target = el('select');
+        var emptyOption = el('option', null, '—');
+        emptyOption.value = '';
+        target.appendChild(emptyOption);
+        state.assets.slice().sort(function (left, right) {
+            return assetPath(left).localeCompare(assetPath(right));
+        }).forEach(function (asset) {
+            var option = el('option', null, assetPath(asset));
+            option.value = String(asset.id);
+            target.appendChild(option);
+        });
+
+        var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(conditionBox);
+        form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
+            if (conditions.length >= 6) return;
+            conditions.push({ field: '', option: '' });
+            paintConditions();
+        }));
+        form.appendChild(field(t('portalTarget'), target, true));
+        form.appendChild(error);
+        form.appendChild(button(t('portalAddRule'), 'asset-tree-btn primary', function () {
+            var cleaned = [];
+            conditions.forEach(function (condition) {
+                var fieldName = condition.field.replace(/^\s+|\s+$/g, '');
+                var optionName = condition.option.replace(/^\s+|\s+$/g, '');
+                if (fieldName && optionName) cleaned.push({ field: fieldName, option: optionName });
+            });
+            if (!cleaned.length || !target.value) {
+                error.hidden = false;
+                error.textContent = t('portalConditionRequired');
+                return;
+            }
+            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules', {
+                assetId: parseInt(target.value, 10),
+                conditions: cleaned
+            }, function (status, payload) {
+                if (status >= 200 && status < 300) {
+                    state.portalRules = null;
+                    renderFrame();
+                } else {
+                    error.hidden = false;
+                    error.textContent = (payload && payload.message) || t('errorTitle');
+                }
+            });
+        }));
+        form.addEventListener('submit', function (event) { event.preventDefault(); });
+        block.appendChild(form);
+        panel.appendChild(block);
     }
 
     function renderStatusSettings(panel) {

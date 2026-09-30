@@ -3458,3 +3458,39 @@ html.asset-tree-dragging * {
         grid-template-columns: 1fr;
     }
 }
+
+#asset-tree-app .asset-tree-portal-rule {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #ebecf0;
+}
+
+#asset-tree-app .asset-tree-portal-when {
+    flex: 1.2;
+    min-width: 0;
+}
+
+#asset-tree-app .asset-tree-portal-target {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+}
+
+#asset-tree-app .asset-tree-portal-conditions,
+#asset-tree-app .asset-tree-portal-add {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+#asset-tree-app .asset-tree-portal-condition {
+    display: flex;
+    gap: 8px;
+}
+
+#asset-tree-app .asset-tree-portal-condition input {
+    flex: 1;
+}

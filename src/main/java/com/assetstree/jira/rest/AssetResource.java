@@ -13,6 +13,7 @@ import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.InventoryDraft;
 import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.TypeDraft;
 import com.assetstree.jira.service.AssetBridge;
@@ -383,6 +384,42 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.picker(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/portal-rules")
+    public Response portalRules(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listPortalRules(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/portal-rules")
+    public Response addPortalRule(@PathParam("projectKey") final String projectKey, final PortalRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED)
+                        .entity(assetService.addPortalRule(user(), projectKey, draft))
+                        .build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/portal-rules/{ruleId}")
+    public Response deletePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deletePortalRule(user(), projectKey, ruleId);
+                return Response.noContent().build();
             }
         });
     }
