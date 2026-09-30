@@ -99,6 +99,7 @@
         detail: null,
         typeGroup: null,
         schemaTab: 'statuses',
+        importResult: null,
         schemaTypeKey: '',
         schemaAdding: false,
         statusQuery: '',
@@ -4517,6 +4518,7 @@
         loadSavedFilters();
         state.dirty = false;
         state.report = null;
+        state.importResult = null;
         reportToken++;
         state.treeReady = false;
         state.holderUser = null;
@@ -5293,11 +5295,14 @@
         var name = project ? (project.name || project.key) : state.projectKey;
         panel.appendChild(el('h2', null, t('settingsProject', name)));
         panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
-        if (!state.canConfigure && !state.canGrant) {
+        if (!state.canConfigure && !state.canGrant && !state.canObjects) {
             panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
             return panel;
         }
         var sections = [];
+        if (state.canObjects) {
+            sections.push(['exchange', t('exchangeSection'), null]);
+        }
         if (state.canConfigure) {
             sections.push(['statuses', t('statusSection'), (state.statuses || []).length]);
             sections.push(['types', t('typesSection'), state.types.length]);
@@ -5305,6 +5310,10 @@
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
+        }
+        if (!sections.length) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
+            return panel;
         }
         var allowed = {};
         sections.forEach(function (item) {
@@ -5334,6 +5343,8 @@
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
+        } else if (state.schemaTab === 'exchange') {
+            renderExchangeSettings(panel);
         } else if (state.schemaTab === 'portal') {
             renderPortalSettings(panel);
         } else if (state.schemaTab === 'access') {
@@ -5342,6 +5353,85 @@
             renderStatusSettings(panel);
         }
         return panel;
+    }
+
+    function renderExchangeSettings(panel) {
+        var block = el('div', 'asset-tree-settings-block');
+        block.appendChild(el('p', 'asset-tree-hint', t('exchangeHint')));
+        var file = el('input', 'asset-tree-import-file');
+        file.type = 'file';
+        file.id = 'asset-tree-import-file';
+        file.accept = '.csv,text/csv,text/plain';
+        block.appendChild(file);
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('exchangeExport'), 'asset-tree-btn', function () {
+            var frame = document.createElement('iframe');
+            frame.hidden = true;
+            frame.src = state.rest + '/projects/' + encodeURIComponent(state.projectKey) + '/equipment.csv';
+            document.body.appendChild(frame);
+            setTimeout(function () {
+                if (frame.parentNode) frame.parentNode.removeChild(frame);
+            }, 60000);
+        }));
+        actions.appendChild(button(t('exchangeImport'), 'asset-tree-btn primary', function () {
+            var chosen = file.files && file.files[0];
+            if (!chosen) {
+                notify(t('exchangePick'));
+                return;
+            }
+            var reader = new FileReader();
+            reader.onload = function () {
+                var text = decodeSheet(reader.result);
+                setBusy(true);
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/equipment', { csv: text }, function (status, payload) {
+                    setBusy(false);
+                    if (status < 200 || status >= 300) {
+                        state.importResult = null;
+                        notify((payload && payload.message) || t('errorTitle'));
+                        return;
+                    }
+                    state.importResult = payload;
+                    state.report = null;
+                    state.mineAssets = null;
+                    reportToken++;
+                    reloadTree(function () {
+                        renderFrame();
+                        var created = payload.created || 0;
+                        var updated = payload.updated || 0;
+                        notify(t('exchangeCreated', created) + ' ' + t('exchangeUpdated', updated));
+                    });
+                });
+            };
+            reader.readAsArrayBuffer(chosen);
+        }));
+        block.appendChild(actions);
+        var result = state.importResult;
+        if (result) {
+            var summary = el('p', 'asset-tree-hint');
+            summary.appendChild(document.createTextNode(t('exchangeCreated', result.created || 0) + ' ' + t('exchangeUpdated', result.updated || 0)));
+            block.appendChild(summary);
+            var errors = result.errors || [];
+            if (errors.length) {
+                var list = el('ul', 'asset-tree-import-errors');
+                errors.forEach(function (error) {
+                    list.appendChild(el('li', null, t('exchangeRow', error.row) + ' ' + (error.message || '')));
+                });
+                block.appendChild(list);
+            }
+        }
+        panel.appendChild(block);
+    }
+
+    function decodeSheet(buffer) {
+        var bytes = new Uint8Array(buffer || []);
+        if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) {
+            return new TextDecoder('utf-16le').decode(bytes);
+        }
+        try {
+            return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch (error) {
+            return new TextDecoder('windows-1251').decode(bytes);
+        }
     }
 
     function refreshSettings() {
@@ -5932,7 +6022,11 @@
                 return;
             }
             state.i18n = payload.i18n || {};
-            state.canManage = payload.canConfigure === undefined ? !!payload.canEdit : !!payload.canConfigure;
+            var manageable = !!payload.canConfigure || !!payload.canGrant;
+            (payload.projects || []).forEach(function (project) {
+                if (project.canObjects || project.canAssets || project.canAdmin) manageable = true;
+            });
+            state.canManage = payload.canConfigure === undefined ? !!payload.canEdit : manageable;
             state.projects = payload.projects || [];
             state.locale = payload.locale || 'ru';
             state.userKey = payload.userKey || '';

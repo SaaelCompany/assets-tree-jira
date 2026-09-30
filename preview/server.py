@@ -5,12 +5,14 @@ This is not the Jira plugin. It serves the same page and REST contract.
 Projects are not invented here: in Jira the list comes from the instance.
 """
 
+import csv
 import datetime
 import json
 import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -680,6 +682,207 @@ def parse_multipart(body, content_type):
     return None
 
 
+def equipment_headers(text):
+    return [
+        text.get("asset-tree.ui.keyLabel", "Key"),
+        text.get("asset-tree.ui.name", "Name"),
+        text.get("asset-tree.ui.type", "Type"),
+        text.get("asset-tree.ui.status", "Status"),
+        text.get("asset-tree.ui.exchangePlace", "Place"),
+        text.get("asset-tree.ui.custodian", "Custodian"),
+        text.get("asset-tree.ui.description", "Description"),
+    ]
+
+
+def equipment_csv(project_key, text):
+    headers = equipment_headers(text)
+    statuses = {row["statusKey"]: row["label"] for row in status_dtos(project_key, text)}
+    types = {row["typeKey"]: row for row in STATE["types"].values() if row["projectKey"] == project_key}
+    rows = [asset for asset in project_assets(project_key) if not (types.get(asset["typeKey"]) or {}).get("location")]
+    rows.sort(key=lambda item: item["objectKey"])
+    buffer = StringIO()
+    buffer.write("\ufeff")
+    writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
+    writer.writerow(headers)
+    for asset in rows:
+        kind = types.get(asset["typeKey"]) or {}
+        person = USERS.get(asset.get("custodianKey") or "")
+        writer.writerow([
+            asset["objectKey"],
+            asset["name"],
+            kind.get("label") or asset["typeKey"],
+            statuses.get(canonical(asset.get("status")), asset.get("status") or ""),
+            location_of(asset),
+            person["displayName"] if person else "",
+            asset.get("description") or "",
+        ])
+    return buffer.getvalue()
+
+
+def parse_sheet(source):
+    text = source or ""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    sample = text.splitlines()[0] if text.splitlines() else ""
+    delimiter = ";" if sample.count(";") >= sample.count(",") and ";" in sample else ","
+    rows = list(csv.reader(StringIO(text), delimiter=delimiter))
+    while rows and not any(cell.strip() for cell in rows[0]):
+        rows.pop(0)
+    if not rows:
+        return [], []
+    headers = [cell.strip() for cell in rows[0]]
+    records = []
+    for index, cells in enumerate(rows[1:], start=2):
+        if any(cell.strip() for cell in cells):
+            records.append((index, cells))
+    return headers, records
+
+
+def sheet_role(header):
+    name = " ".join((header or "").strip().lower().replace("ё", "е").split())
+    roles = {
+        "key": "key", "ключ": "key",
+        "name": "name", "название": "name", "имя": "name",
+        "type": "type", "тип": "type",
+        "status": "status", "статус": "status",
+        "place": "place", "площадка": "place", "место": "place",
+        "custodian": "custodian", "ответственный": "custodian", "мол": "custodian",
+        "description": "description", "описание": "description",
+    }
+    return roles.get(name)
+
+
+def find_preview_user(raw):
+    text = (raw or "").strip().lower()
+    if not text:
+        return None
+    matches = []
+    for user in USERS.values():
+        if text in {user["userKey"].lower(), user["username"].lower(), user["email"].lower(), user["displayName"].lower()}:
+            matches.append(user["userKey"])
+    if len(matches) == 1:
+        return matches[0]
+    return ""
+
+
+def find_preview_place(project_key, path):
+    parts = [part.strip() for part in (path or "").split("/") if part.strip()]
+    if not parts:
+        return None
+    parent = None
+    types = {row["typeKey"]: row for row in STATE["types"].values()}
+    for part in parts:
+        matches = []
+        for asset in project_assets(project_key):
+            kind = types.get(asset["typeKey"]) or {}
+            if not kind.get("location") or asset["name"].lower() != part.lower():
+                continue
+            if normalize_parent(asset["parentId"]) == parent:
+                matches.append(asset)
+        if len(matches) != 1:
+            return None
+        parent = matches[0]["id"]
+    return parent
+
+
+def import_equipment(project_key, source, text):
+    headers, records = parse_sheet(source)
+    roles = {}
+    for index, header in enumerate(headers):
+        role = sheet_role(header)
+        if role:
+            roles[role] = index
+    if "name" not in roles:
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.header", "Header")}]}
+    if not records:
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]}
+    types = [row for row in STATE["types"].values() if row["projectKey"] == project_key]
+    statuses = status_dtos(project_key, text)
+    by_key = {asset["objectKey"].lower(): asset for asset in project_assets(project_key)}
+    created = 0
+    updated = 0
+    errors = []
+    seen = set()
+
+    def cell(cells, role):
+        index = roles.get(role)
+        if index is None or index >= len(cells):
+            return ""
+        return cells[index].strip()
+
+    for row_number, cells in records:
+        name = cell(cells, "name")
+        key = cell(cells, "key")
+        type_name = cell(cells, "type")
+        status_name = cell(cells, "status")
+        place = cell(cells, "place")
+        custodian_name = cell(cells, "custodian")
+        description = cell(cells, "description")
+        has_custodian = "custodian" in roles
+        has_description = "description" in roles
+        if not name:
+            errors.append({"row": row_number, "message": text.get("asset-tree.error.import.name", "Name")})
+            continue
+        existing = None
+        if key:
+            marker = key.lower()
+            if marker in seen:
+                errors.append({"row": row_number, "message": text.get("asset-tree.error.import.key.duplicate", "Duplicate").replace("{0}", key)})
+                continue
+            seen.add(marker)
+            existing = by_key.get(marker)
+            if not existing:
+                errors.append({"row": row_number, "message": text.get("asset-tree.error.import.key", "Key").replace("{0}", key)})
+                continue
+        kind = None
+        for item in types:
+            if not item.get("location") and type_name.lower() in {item["label"].lower(), item["typeKey"].lower()}:
+                kind = item
+                break
+        if not kind:
+            errors.append({"row": row_number, "message": text.get("asset-tree.error.import.type", "Type").replace("{0}", type_name)})
+            continue
+        status_key = ""
+        if not status_name:
+            status_key = "in_use"
+        else:
+            for status in statuses:
+                if status_name.lower() in {status["label"].lower(), status["statusKey"].lower()}:
+                    status_key = status["statusKey"]
+                    break
+        if not status_key:
+            errors.append({"row": row_number, "message": text.get("asset-tree.error.import.status", "Status").replace("{0}", status_name)})
+            continue
+        parent = find_preview_place(project_key, place)
+        if not parent:
+            message = text.get("asset-tree.error.import.place.required" if not place else "asset-tree.error.import.place", "Place")
+            errors.append({"row": row_number, "message": message.replace("{0}", place)})
+            continue
+        custodian = None
+        if custodian_name:
+            custodian = find_preview_user(custodian_name)
+            if not custodian:
+                errors.append({"row": row_number, "message": text.get("asset-tree.error.import.user", "User").replace("{0}", custodian_name)})
+                continue
+        if existing:
+            existing["name"] = name
+            existing["typeKey"] = kind["typeKey"]
+            existing["status"] = status_key
+            existing["parentId"] = parent
+            existing["updated"] = now_stamp()
+            if has_description:
+                existing["description"] = description
+            if has_custodian:
+                existing["custodianKey"] = custodian
+            updated += 1
+        else:
+            asset_id = add_asset(project_key, kind["typeKey"], name, parent, status_key, custodian, {})
+            STATE["assets"][asset_id]["description"] = description
+            by_key[STATE["assets"][asset_id]["objectKey"].lower()] = STATE["assets"][asset_id]
+            created += 1
+    return {"created": created, "updated": updated, "errors": errors}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AssetTreePreview/1.1"
 
@@ -716,7 +919,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/download/resources/"):
             return self.serve_static(path.rsplit("/", 1)[-1])
         if path.startswith("/rest/asset-tree/1.0/"):
-            return self.serve_api(method, path[len("/rest/asset-tree/1.0"):], query)
+            rest = path[len("/rest/asset-tree/1.0"):]
+            if method == "GET" and re.fullmatch(r"/projects/[A-Za-z0-9]+/equipment\.csv", rest):
+                project_key = rest.split("/")[2]
+                body = equipment_csv(project_key, self.text()).encode("utf-8")
+                return self.respond(200, body, "text/csv; charset=utf-8", {
+                    "Content-Disposition": 'attachment; filename="equipment-%s.csv"' % project_key,
+                })
+            return self.serve_api(method, rest, query)
         if path == "/plugins/servlet/asset-tree-file":
             return self.serve_file(method, query)
         self.send_error(404)
@@ -937,7 +1147,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.50",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.51",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -982,6 +1192,12 @@ setTimeout(function () {
         match = re.fullmatch(r"/assets/(\d+)/inventory", path)
         if match and method == "POST":
             return self.mark_inventory(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/equipment", path)
+        if match and method == "POST":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            body = self.read_json() or {}
+            return 200, import_equipment(match.group(1), body.get("csv") or "", text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)

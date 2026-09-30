@@ -2460,6 +2460,18 @@ html.asset-tree-dragging * {
     max-width: 980px;
 }
 
+.asset-tree-import-file {
+    display: block;
+    margin: 8px 0 12px;
+    font: inherit;
+}
+
+.asset-tree-import-errors {
+    margin: 8px 0 0;
+    padding-left: 18px;
+    color: #bf2600;
+}
+
 .asset-tree-schema {
     display: grid;
     grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);

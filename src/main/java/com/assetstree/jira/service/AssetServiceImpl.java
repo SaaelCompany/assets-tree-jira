@@ -48,6 +48,8 @@ import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
+import com.assetstree.jira.dto.ImportIssueDto;
+import com.assetstree.jira.dto.ImportResultDto;
 import com.assetstree.jira.dto.InventoryDto;
 import com.assetstree.jira.dto.InventoryRowDto;
 import com.assetstree.jira.dto.IssueContextDto;
@@ -67,6 +69,8 @@ import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.AssetValidator;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.DefaultTypes;
+import com.assetstree.jira.model.EquipmentExchange;
+import com.assetstree.jira.model.EquipmentSheet;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
@@ -1225,6 +1229,32 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public String exportEquipment(ApplicationUser user, String projectKey) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        return ao().executeInTransaction(new TransactionCallback<String>() {
+            @Override
+            public String doInTransaction() {
+                return buildEquipmentCsv(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final String csv) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        if (csv != null && csv.length() > 1500000) {
+            throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+        }
+        final String source = csv == null ? "" : csv;
+        return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
+            @Override
+            public ImportResultDto doInTransaction() {
+                return applyEquipmentCsv(user, project.getKey(), source);
+            }
+        });
+    }
+
+    @Override
     public InventoryDto inventory(ApplicationUser user, String projectKey) {
         Project project = requireReadableProject(user, projectKey);
         return ao().executeInTransaction(new TransactionCallback<InventoryDto>() {
@@ -1710,6 +1740,313 @@ public class AssetServiceImpl implements AssetService {
                 return assets;
             }
         });
+    }
+
+    private String buildEquipmentCsv(String projectKey) {
+        ensureStatuses(projectKey);
+        AssetEntity[] rows = assetsIn(projectKey);
+        List<AssetTypeDto> types = typeDtos(projectKey, rows);
+        Map<String, AssetTypeDto> typeIndex = indexTypes(types);
+        Map<Integer, AssetEntity> index = indexAssets(rows);
+        List<StatusDto> statuses = statusDtos(projectKey, rows);
+        Map<String, String> statusLabels = new HashMap<String, String>();
+        for (StatusDto status : statuses) {
+            statusLabels.put(status.getStatusKey(), status.getLabel());
+        }
+        I18nHelper labels = i18n();
+        List<String> headers = new ArrayList<String>();
+        headers.add(labels.getText("asset-tree.ui.keyLabel"));
+        headers.add(labels.getText("asset-tree.ui.name"));
+        headers.add(labels.getText("asset-tree.ui.type"));
+        headers.add(labels.getText("asset-tree.ui.status"));
+        headers.add(labels.getText("asset-tree.ui.exchangePlace"));
+        headers.add(labels.getText("asset-tree.ui.custodian"));
+        headers.add(labels.getText("asset-tree.ui.description"));
+        List<FieldDto> columns = new ArrayList<FieldDto>();
+        Set<String> taken = new HashSet<String>();
+        for (String header : headers) {
+            taken.add(EquipmentExchange.norm(header));
+        }
+        for (AssetTypeDto type : types) {
+            if (type.isLocation() || type.getFields() == null) {
+                continue;
+            }
+            for (FieldDto field : type.getFields()) {
+                String marker = EquipmentExchange.norm(field.getLabel());
+                if (marker.isEmpty() || !taken.add(marker)) {
+                    continue;
+                }
+                columns.add(field);
+                headers.add(field.getLabel());
+            }
+        }
+        List<AssetEntity> equipment = new ArrayList<AssetEntity>();
+        for (AssetEntity row : rows) {
+            AssetTypeDto type = typeIndex.get(row.getTypeKey());
+            if (type != null && !type.isLocation()) {
+                equipment.add(row);
+            }
+        }
+        Collections.sort(equipment, new Comparator<AssetEntity>() {
+            @Override
+            public int compare(AssetEntity left, AssetEntity right) {
+                String leftKey = left.getObjectKey() == null ? "" : left.getObjectKey();
+                String rightKey = right.getObjectKey() == null ? "" : right.getObjectKey();
+                return leftKey.compareToIgnoreCase(rightKey);
+            }
+        });
+        List<List<String>> lines = new ArrayList<List<String>>();
+        for (AssetEntity row : equipment) {
+            AssetTypeDto type = typeIndex.get(row.getTypeKey());
+            Map<String, String> values = attributeValues(row.getID());
+            List<String> line = new ArrayList<String>();
+            line.add(row.getObjectKey());
+            line.add(row.getName());
+            line.add(type == null ? row.getTypeKey() : type.getLabel());
+            String status = Statuses.canonical(row.getStatus());
+            line.add(statusLabels.containsKey(status) ? statusLabels.get(status) : status);
+            line.add(location(row, index));
+            line.add(displayName(row.getCustodianKey()));
+            line.add(row.getDescription() == null ? "" : row.getDescription());
+            for (FieldDto field : columns) {
+                String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
+                if (FieldKinds.USER.equals(field.getKind()) && value != null && !value.isEmpty()) {
+                    value = displayName(value);
+                }
+                line.add(value == null ? "" : value);
+            }
+            lines.add(line);
+        }
+        return EquipmentSheet.write(headers, lines);
+    }
+
+    private ImportResultDto applyEquipmentCsv(ApplicationUser user, String projectKey, String csv) {
+        ensureStatuses(projectKey);
+        AssetEntity[] rows = assetsIn(projectKey);
+        List<AssetTypeDto> typeDtos = typeDtos(projectKey, rows);
+        List<EquipmentExchange.TypeRef> types = new ArrayList<EquipmentExchange.TypeRef>();
+        for (AssetTypeDto type : typeDtos) {
+            List<EquipmentExchange.FieldRef> fields = new ArrayList<EquipmentExchange.FieldRef>();
+            if (type.getFields() != null) {
+                for (FieldDto field : type.getFields()) {
+                    fields.add(new EquipmentExchange.FieldRef(field.getFieldKey(), field.getLabel(), field.getKind(), field.isRequired()));
+                }
+            }
+            types.add(new EquipmentExchange.TypeRef(type.getTypeKey(), type.getLabel(), type.isLocation(), fields));
+        }
+        List<StatusDto> statusDtos = statusDtos(projectKey, rows);
+        List<EquipmentExchange.Named> statuses = new ArrayList<EquipmentExchange.Named>();
+        for (StatusDto status : statusDtos) {
+            statuses.add(new EquipmentExchange.Named(status.getStatusKey(), status.getLabel()));
+        }
+        Map<String, Boolean> locationByType = new HashMap<String, Boolean>();
+        for (AssetTypeDto type : typeDtos) {
+            locationByType.put(type.getTypeKey(), Boolean.valueOf(type.isLocation()));
+        }
+        List<EquipmentExchange.Node> nodes = new ArrayList<EquipmentExchange.Node>();
+        Map<Integer, AssetEntity> index = indexAssets(rows);
+        for (AssetEntity row : rows) {
+            Boolean location = locationByType.get(row.getTypeKey());
+            nodes.add(new EquipmentExchange.Node(row.getID(), TreeLogic.normalizeParent(row.getParentId()), row.getName(),
+                    row.getObjectKey(), location != null && location.booleanValue()));
+        }
+        I18nHelper labels = i18n();
+        Map<String, String> headerLabels = new LinkedHashMap<String, String>();
+        headerLabels.put("key", labels.getText("asset-tree.ui.keyLabel"));
+        headerLabels.put("name", labels.getText("asset-tree.ui.name"));
+        headerLabels.put("type", labels.getText("asset-tree.ui.type"));
+        headerLabels.put("status", labels.getText("asset-tree.ui.status"));
+        headerLabels.put("place", labels.getText("asset-tree.ui.exchangePlace"));
+        headerLabels.put("custodian", labels.getText("asset-tree.ui.custodian"));
+        headerLabels.put("description", labels.getText("asset-tree.ui.description"));
+        EquipmentExchange.Plan plan = EquipmentExchange.plan(EquipmentSheet.read(csv), types, statuses, nodes,
+                Statuses.IN_USE, headerLabels, new EquipmentExchange.Directory() {
+                    @Override
+                    public EquipmentExchange.Person find(String raw) {
+                        return lookupPerson(raw);
+                    }
+                });
+        ImportResultDto result = new ImportResultDto();
+        List<ImportIssueDto> errors = new ArrayList<ImportIssueDto>();
+        for (EquipmentExchange.Issue issue : plan.getIssues()) {
+            errors.add(translateIssue(labels, issue));
+        }
+        int created = 0;
+        int updated = 0;
+        boolean headerOnly = false;
+        for (EquipmentExchange.Issue issue : plan.getIssues()) {
+            if (issue.getRow() <= 1 && plan.getChanges().isEmpty()) {
+                headerOnly = true;
+            }
+        }
+        if (!headerOnly) {
+            for (EquipmentExchange.Change change : plan.getChanges()) {
+                try {
+                    if (change.getExistingId() == null) {
+                        createImported(user, projectKey, change);
+                        created++;
+                    } else {
+                        updateImported(user, change, index);
+                        updated++;
+                    }
+                } catch (AssetException ex) {
+                    String text = ex.getArgs() == null || ex.getArgs().length == 0
+                            ? labels.getText(ex.getMessageKey())
+                            : labels.getText(ex.getMessageKey(), ex.getArgs());
+                    errors.add(new ImportIssueDto(change.getRow(), text));
+                }
+            }
+        }
+        result.setCreated(created);
+        result.setUpdated(updated);
+        result.setErrors(errors);
+        return result;
+    }
+
+    private void createImported(ApplicationUser user, String projectKey, EquipmentExchange.Change change) {
+        Date now = new Date();
+        Integer parentId = Integer.valueOf(change.getParentId());
+        AssetEntity entity = ao().create(AssetEntity.class,
+                new DBParam("NAME", change.getName()),
+                new DBParam("OBJECT_KEY", nextKey()),
+                new DBParam("DESCRIPTION", change.getDescription() == null ? "" : change.getDescription()),
+                new DBParam("TYPE_KEY", change.getTypeKey()),
+                new DBParam("STATUS", change.getStatusKey()),
+                new DBParam("SORT_ORDER", nextSort(parentId, projectKey)),
+                new DBParam("CREATED", now),
+                new DBParam("UPDATED", now),
+                new DBParam("CREATED_BY", user.getKey()),
+                new DBParam("UPDATED_BY", user.getKey()),
+                new DBParam("PROJECT_KEY", projectKey));
+        entity.setParentId(parentId);
+        entity.setCustodianKey(change.getCustodianKey());
+        entity.save();
+        replaceAttributes(entity, drafts(change));
+        logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
+    }
+
+    private void updateImported(ApplicationUser user, EquipmentExchange.Change change, Map<Integer, AssetEntity> index) {
+        AssetEntity entity = index.get(change.getExistingId());
+        if (entity == null) {
+            entity = ao().get(AssetEntity.class, change.getExistingId().intValue());
+        }
+        if (entity == null) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        String oldName = entity.getName() == null ? "" : entity.getName();
+        String oldDescription = entity.getDescription() == null ? "" : entity.getDescription();
+        String oldType = entity.getTypeKey() == null ? "" : entity.getTypeKey();
+        String oldStatus = Statuses.canonical(entity.getStatus());
+        String oldCustodian = entity.getCustodianKey() == null ? "" : entity.getCustodianKey();
+        Integer oldParent = TreeLogic.normalizeParent(entity.getParentId());
+        Map<String, String> oldAttributes = attributeValues(entity.getID());
+        String newDescription = change.getDescription() == null ? oldDescription : change.getDescription();
+        String newCustodian = change.isCustodianPresent()
+                ? (change.getCustodianKey() == null ? "" : change.getCustodianKey())
+                : oldCustodian;
+        entity.setName(change.getName());
+        entity.setDescription(newDescription);
+        entity.setTypeKey(change.getTypeKey());
+        entity.setStatus(change.getStatusKey());
+        entity.setCustodianKey(newCustodian.isEmpty() ? null : newCustodian);
+        entity.setParentId(Integer.valueOf(change.getParentId()));
+        entity.setUpdated(new Date());
+        entity.setUpdatedBy(user.getKey());
+        entity.save();
+        replaceAttributes(entity, drafts(change, oldAttributes));
+        int id = entity.getID();
+        logActivity(id, user.getKey(), "name", "", oldName, change.getName());
+        logActivity(id, user.getKey(), "description", "", clip(oldDescription), clip(newDescription));
+        logActivity(id, user.getKey(), "type", "", oldType, change.getTypeKey());
+        logActivity(id, user.getKey(), "status", "", oldStatus, change.getStatusKey());
+        logActivity(id, user.getKey(), "custodian", "", displayName(oldCustodian), displayName(newCustodian));
+        if (oldParent == null || oldParent.intValue() != change.getParentId()) {
+            AssetEntity previous = oldParent == null ? null : index.get(oldParent);
+            AssetEntity next = index.get(Integer.valueOf(change.getParentId()));
+            logActivity(id, user.getKey(), "move", "", previous == null ? "" : previous.getName(), next == null ? "" : next.getName());
+        }
+        logAttributeChanges(id, user.getKey(), change.getTypeKey(), oldAttributes);
+    }
+
+    private List<AttributeDraft> drafts(EquipmentExchange.Change change) {
+        return drafts(change, null);
+    }
+
+    private List<AttributeDraft> drafts(EquipmentExchange.Change change, Map<String, String> kept) {
+        List<AttributeDraft> attributes = new ArrayList<AttributeDraft>();
+        Set<String> present = new HashSet<String>();
+        for (EquipmentExchange.Value value : change.getAttributes()) {
+            AttributeDraft draft = new AttributeDraft();
+            draft.setFieldKey(value.getFieldKey());
+            draft.setValue(value.getValue());
+            attributes.add(draft);
+            present.add(value.getFieldKey());
+        }
+        if (kept != null) {
+            for (Map.Entry<String, String> entry : kept.entrySet()) {
+                if (present.contains(entry.getKey())) {
+                    continue;
+                }
+                AttributeDraft draft = new AttributeDraft();
+                draft.setFieldKey(entry.getKey());
+                draft.setValue(entry.getValue());
+                attributes.add(draft);
+            }
+        }
+        return attributes;
+    }
+
+    private ImportIssueDto translateIssue(I18nHelper labels, EquipmentExchange.Issue issue) {
+        String text = issue.getArgument() == null || issue.getArgument().isEmpty()
+                ? labels.getText(issue.getMessageKey())
+                : labels.getText(issue.getMessageKey(), issue.getArgument());
+        if (text == null || text.equals(issue.getMessageKey())) {
+            text = issue.getMessageKey();
+        }
+        return new ImportIssueDto(issue.getRow(), text);
+    }
+
+    private EquipmentExchange.Person lookupPerson(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return EquipmentExchange.Person.blank();
+        }
+        String text = raw.trim();
+        ApplicationUser direct = userManager().getUserByKey(text);
+        if (direct == null) {
+            direct = userManager().getUserByName(text);
+        }
+        if (direct != null) {
+            return EquipmentExchange.Person.found(direct.getKey());
+        }
+        if (text.length() < 2) {
+            return EquipmentExchange.Person.missing();
+        }
+        List<ApplicationUser> found = userSearchService().findUsers(text, UserSearchParams.LIMITED_ACTIVE_USERS_IGNORE_EMPTY_QUERY);
+        List<ApplicationUser> exact = new ArrayList<ApplicationUser>();
+        if (found != null) {
+            for (ApplicationUser match : found) {
+                if (samePerson(match, text)) {
+                    exact.add(match);
+                }
+            }
+        }
+        if (exact.size() == 1) {
+            return EquipmentExchange.Person.found(exact.get(0).getKey());
+        }
+        if (exact.size() > 1) {
+            return EquipmentExchange.Person.ambiguous();
+        }
+        return EquipmentExchange.Person.missing();
+    }
+
+    private boolean samePerson(ApplicationUser match, String text) {
+        if (match == null) {
+            return false;
+        }
+        return text.equalsIgnoreCase(match.getName())
+                || text.equalsIgnoreCase(match.getKey())
+                || (match.getEmailAddress() != null && text.equalsIgnoreCase(match.getEmailAddress()))
+                || (match.getDisplayName() != null && text.equalsIgnoreCase(match.getDisplayName()));
     }
 
     private String nextKey() {

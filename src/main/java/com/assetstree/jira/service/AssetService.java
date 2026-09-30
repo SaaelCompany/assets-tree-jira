@@ -9,6 +9,7 @@ import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
+import com.assetstree.jira.dto.ImportResultDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.InventoryDto;
 import com.assetstree.jira.dto.InventoryRowDto;
@@ -93,6 +94,10 @@ public interface AssetService {
     IssueContextDto issueContext(ApplicationUser user, long issueId);
 
     ReportDto report(ApplicationUser user, String projectKey);
+
+    String exportEquipment(ApplicationUser user, String projectKey);
+
+    ImportResultDto importEquipment(ApplicationUser user, String projectKey, String csv);
 
     InventoryDto inventory(ApplicationUser user, String projectKey);
 

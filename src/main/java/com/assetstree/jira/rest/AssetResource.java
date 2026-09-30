@@ -10,6 +10,7 @@ import com.assetstree.jira.model.CommentDraft;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
+import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.model.InventoryDraft;
 import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
@@ -279,6 +280,34 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.report(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/equipment.csv")
+    @Produces("text/csv")
+    public Response exportEquipment(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                String csv = assetService.exportEquipment(user(), projectKey);
+                String file = "equipment-" + projectKey + ".csv";
+                return Response.ok(csv, "text/csv;charset=UTF-8")
+                        .header("Content-Disposition", "attachment; filename=\"" + file + "\"")
+                        .build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/equipment")
+    public Response importEquipment(@PathParam("projectKey") final String projectKey, final ImportDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                String csv = draft == null ? "" : draft.getCsv();
+                return Response.ok(assetService.importEquipment(user(), projectKey, csv)).build();
             }
         });
     }
