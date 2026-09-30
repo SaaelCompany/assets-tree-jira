@@ -4,11 +4,22 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Rights stored on a project group. View is included whenever any other right is set.
- * Older rows keep a single level and expand to the same bundle they had before.
+ * Access kinds stored on a project group.
+ * A place is a branch, department, or room. A type is an object type.
+ * An object is the equipment itself. Assets is every kind inside one project.
+ * Administrator covers every project.
+ * Older rows used view, create, edit, move, schema, and access. Those expand
+ * to the same kind of work they allowed before.
  */
 public final class GrantCaps {
     public static final String VIEW = "view";
+    public static final String PLACES = "places";
+    public static final String TYPES = "types";
+    public static final String OBJECT = "object";
+    public static final String ASSETS = "assets";
+    public static final String ADMIN = "admin";
+    public static final String ALL_PROJECTS = "*";
+
     public static final String CREATE = "create";
     public static final String EDIT = "edit";
     public static final String MOVE = "move";
@@ -18,7 +29,7 @@ public final class GrantCaps {
     public static final String ACCESS = "access";
 
     private static final String[] ORDER = new String[] {
-            VIEW, CREATE, EDIT, MOVE, REMOVE, COMMENT, SCHEMA, ACCESS
+            VIEW, PLACES, TYPES, OBJECT, ASSETS, ADMIN
     };
 
     private GrantCaps() {
@@ -26,12 +37,12 @@ public final class GrantCaps {
 
     public static String fromLevel(String level) {
         if ("manage".equals(level)) {
-            return "view,create,edit,move,remove,comment,schema,access";
+            return normalize(ASSETS);
         }
         if ("edit".equals(level)) {
-            return "view,create,edit,move,remove,comment";
+            return normalize(PLACES + "," + OBJECT);
         }
-        if ("view".equals(level)) {
+        if ("view".equals(level) || VIEW.equals(level)) {
             return VIEW;
         }
         return "";
@@ -42,18 +53,19 @@ public final class GrantCaps {
         if (raw != null) {
             String[] parts = raw.split(",");
             for (int i = 0; i < parts.length; i++) {
-                String token = parts[i] == null ? "" : parts[i].trim();
-                if (allowed(token)) {
-                    chosen.add(token);
-                }
+                addToken(chosen, parts[i] == null ? "" : parts[i].trim());
             }
         }
         if (chosen.isEmpty()) {
             return "";
         }
-        if (chosen.contains(CREATE)) {
-            chosen.add(REMOVE);
-            chosen.add(COMMENT);
+        if (chosen.contains(ADMIN)) {
+            chosen.add(ASSETS);
+        }
+        if (chosen.contains(ASSETS)) {
+            chosen.add(PLACES);
+            chosen.add(TYPES);
+            chosen.add(OBJECT);
         }
         if (chosen.size() > 1 || !chosen.contains(VIEW)) {
             chosen.add(VIEW);
@@ -75,33 +87,57 @@ public final class GrantCaps {
         if (caps == null || cap == null || cap.isEmpty()) {
             return false;
         }
-        String[] parts = caps.split(",");
-        boolean create = false;
-        for (int i = 0; i < parts.length; i++) {
-            String token = parts[i].trim();
-            if (cap.equals(token)) {
-                return true;
-            }
-            if (CREATE.equals(token)) {
-                create = true;
-            }
+        String normalized = normalize(caps);
+        if (SCHEMA.equals(cap)) {
+            return contains(normalized, TYPES);
         }
-        return create && (REMOVE.equals(cap) || COMMENT.equals(cap));
+        if (ACCESS.equals(cap)) {
+            return contains(normalized, ASSETS);
+        }
+        if (CREATE.equals(cap) || EDIT.equals(cap) || MOVE.equals(cap) || REMOVE.equals(cap) || COMMENT.equals(cap)) {
+            return contains(normalized, PLACES) || contains(normalized, OBJECT);
+        }
+        return contains(normalized, cap);
     }
 
     public static String levelOf(String caps) {
-        if (has(caps, SCHEMA) || has(caps, ACCESS)) {
-            return "manage";
+        if (has(caps, ADMIN)) {
+            return ADMIN;
         }
-        if (has(caps, CREATE) || has(caps, EDIT) || has(caps, MOVE) || has(caps, REMOVE) || has(caps, COMMENT)) {
+        if (has(caps, ASSETS)) {
+            return ASSETS;
+        }
+        if (has(caps, PLACES) || has(caps, TYPES) || has(caps, OBJECT)) {
             return "edit";
         }
         return VIEW;
     }
 
-    private static boolean allowed(String token) {
-        for (int i = 0; i < ORDER.length; i++) {
-            if (ORDER[i].equals(token)) {
+    private static void addToken(Set<String> chosen, String token) {
+        if (VIEW.equals(token) || PLACES.equals(token) || TYPES.equals(token)
+                || OBJECT.equals(token) || ASSETS.equals(token) || ADMIN.equals(token)) {
+            chosen.add(token);
+            return;
+        }
+        if (CREATE.equals(token) || EDIT.equals(token) || MOVE.equals(token)
+                || REMOVE.equals(token) || COMMENT.equals(token)) {
+            chosen.add(PLACES);
+            chosen.add(OBJECT);
+            return;
+        }
+        if (SCHEMA.equals(token)) {
+            chosen.add(TYPES);
+            return;
+        }
+        if (ACCESS.equals(token)) {
+            chosen.add(ASSETS);
+        }
+    }
+
+    private static boolean contains(String caps, String cap) {
+        String[] parts = caps.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            if (cap.equals(parts[i])) {
                 return true;
             }
         }

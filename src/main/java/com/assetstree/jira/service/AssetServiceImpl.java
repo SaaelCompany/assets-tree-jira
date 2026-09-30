@@ -316,7 +316,9 @@ public class AssetServiceImpl implements AssetService {
         if (error != null) {
             throw new AssetException(400, error);
         }
-        Project project = requireProjectCap(user, draft.getProjectKey(), GrantCaps.CREATE);
+        AssetTypeEntity previewType = findType(draft.getTypeKey());
+        String createCap = previewType != null && previewType.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
+        Project project = requireProjectCap(user, draft.getProjectKey(), createCap);
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
@@ -420,7 +422,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public CommentDto addComment(ApplicationUser user, int id, String body) {
-        requireAssetCap(user, id, GrantCaps.COMMENT);
+        requireAssetCap(user, id, kindCap(requireAsset(id)));
         String text = body == null ? "" : body.trim();
         if (text.isEmpty()) {
             throw new AssetException(400, "asset-tree.error.comment.required");
@@ -445,7 +447,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public void deleteComment(ApplicationUser user, int assetId, int commentId) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         AssetCommentEntity comment = ao().get(AssetCommentEntity.class, commentId);
         if (comment == null || comment.getAssetId() != assetId) {
             throw new AssetException(404, "asset-tree.error.notFound");
@@ -456,7 +458,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public FileDto storeFile(ApplicationUser user, int assetId, String fileName, String contentType, byte[] data) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         if (data == null || data.length == 0) {
             throw new AssetException(400, "asset-tree.error.file.required");
         }
@@ -522,7 +524,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public void deleteFile(ApplicationUser user, int assetId, int fileId) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         AssetFileEntity file = ao().get(AssetFileEntity.class, fileId);
         if (file == null || file.getAssetId() != assetId) {
             throw new AssetException(404, "asset-tree.error.notFound");
@@ -537,7 +539,7 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                AssetEntity entity = requireAssetCap(user, id, GrantCaps.REMOVE);
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
                 AssetEntity[] all = assetsIn(entity.getProjectKey());
                 List<Integer> descendants = TreeLogic.descendants(childrenMap(all), id);
                 if (!descendants.isEmpty() && !cascade) {
@@ -581,7 +583,7 @@ public class AssetServiceImpl implements AssetService {
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
-                AssetEntity moving = requireAssetCap(user, id, GrantCaps.MOVE);
+                AssetEntity moving = requireAssetCap(user, id, kindCap(requireAsset(id)));
                 Integer parentId = TreeLogic.normalizeParent(move.getParentId());
                 if (parentId != null) {
                     AssetEntity parent = requireReadable(user, parentId.intValue());
@@ -938,13 +940,31 @@ public class AssetServiceImpl implements AssetService {
         if (!groupExists(groupName)) {
             throw new AssetException(400, "asset-tree.error.group");
         }
+        final boolean administrator = GrantCaps.has(caps, GrantCaps.ADMIN);
+        if (administrator && !hasCap(user, project, GrantCaps.ADMIN)) {
+            throw new AssetException(403, "asset-tree.error.forbidden");
+        }
         return ao().executeInTransaction(new TransactionCallback<GrantDto>() {
             @Override
             public GrantDto doInTransaction() {
-                ProjectGrantEntity row = findGrant(project.getKey(), groupName);
+                ProjectGrantEntity global = findGrant(GrantCaps.ALL_PROJECTS, groupName);
+                if (global != null && GrantCaps.has(global.getCaps(), GrantCaps.ADMIN) && !hasCap(user, project, GrantCaps.ADMIN)) {
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                String storedKey = administrator ? GrantCaps.ALL_PROJECTS : project.getKey();
+                if (administrator) {
+                    ProjectGrantEntity local = findGrant(project.getKey(), groupName);
+                    if (local != null) {
+                        ao().delete(local);
+                    }
+                } else if (global != null) {
+                    ao().delete(global);
+                    global = null;
+                }
+                ProjectGrantEntity row = findGrant(storedKey, groupName);
                 if (row == null) {
                     row = ao().create(ProjectGrantEntity.class,
-                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("PROJECT_KEY", storedKey),
                             new DBParam("GROUP_NAME", groupName),
                             new DBParam("LEVEL", level),
                             new DBParam("CAPS", caps));
@@ -967,11 +987,21 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                ProjectGrantEntity row = findGrant(project.getKey(), groupName.trim());
-                if (row == null) {
+                String name = groupName.trim();
+                ProjectGrantEntity row = findGrant(project.getKey(), name);
+                ProjectGrantEntity global = findGrant(GrantCaps.ALL_PROJECTS, name);
+                if (global != null && !hasCap(user, project, GrantCaps.ADMIN)) {
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                if (row == null && global == null) {
                     throw new AssetException(404, "asset-tree.error.group");
                 }
-                ao().delete(row);
+                if (row != null) {
+                    ao().delete(row);
+                }
+                if (global != null) {
+                    ao().delete(global);
+                }
                 return null;
             }
         });
@@ -1802,15 +1832,12 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private AssetEntity requireWritable(ApplicationUser user, int id) {
-        AssetEntity entity = requireAsset(id);
-        Project project = project(entity.getProjectKey());
-        if (!canWrite(user, project)) {
-            if (!canOpen(user, project)) {
-                throw new AssetException(404, "asset-tree.error.notFound");
-            }
-            throw new AssetException(403, "asset-tree.error.forbidden");
-        }
-        return entity;
+        return requireAssetCap(user, id, kindCap(requireAsset(id)));
+    }
+
+    private String kindCap(AssetEntity entity) {
+        AssetTypeEntity type = entity == null ? null : findType(entity.getTypeKey());
+        return type != null && type.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
     }
 
     private AssetEntity requireAsset(int id) {
@@ -1935,37 +1962,55 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private boolean canWrite(ApplicationUser user, Project project) {
-        return hasCap(user, project, GrantCaps.EDIT);
+        return hasCap(user, project, GrantCaps.OBJECT);
     }
 
     private boolean canConfigure(ApplicationUser user, Project project) {
-        return hasCap(user, project, GrantCaps.SCHEMA);
+        return hasCap(user, project, GrantCaps.TYPES);
     }
 
     private void applyRights(ProjectDto dto, ApplicationUser user, Project project) {
-        boolean change = hasCap(user, project, GrantCaps.EDIT);
-        dto.setCanEdit(change);
-        dto.setCanChange(change);
-        dto.setCanCreate(hasCap(user, project, GrantCaps.CREATE));
-        dto.setCanMove(hasCap(user, project, GrantCaps.MOVE));
-        dto.setCanRemove(hasCap(user, project, GrantCaps.REMOVE));
-        dto.setCanComment(hasCap(user, project, GrantCaps.COMMENT));
-        dto.setCanConfigure(hasCap(user, project, GrantCaps.SCHEMA));
-        dto.setCanGrant(hasCap(user, project, GrantCaps.ACCESS));
+        boolean places = hasCap(user, project, GrantCaps.PLACES);
+        boolean objects = hasCap(user, project, GrantCaps.OBJECT);
+        boolean types = hasCap(user, project, GrantCaps.TYPES);
+        boolean assets = hasCap(user, project, GrantCaps.ASSETS);
+        boolean admin = hasCap(user, project, GrantCaps.ADMIN);
+        dto.setCanPlaces(places);
+        dto.setCanObjects(objects);
+        dto.setCanTypes(types);
+        dto.setCanAssets(assets);
+        dto.setCanAdmin(admin);
+        dto.setCanEdit(objects);
+        dto.setCanChange(objects);
+        dto.setCanCreate(objects);
+        dto.setCanMove(places || objects);
+        dto.setCanRemove(places || objects);
+        dto.setCanComment(places || objects);
+        dto.setCanConfigure(types);
+        dto.setCanGrant(assets || admin);
     }
 
     private boolean hasCap(ApplicationUser user, Project project, String cap) {
         if (user == null || project == null) {
             return false;
         }
-        if (isAdmin(user) || permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
+        if (isAdmin(user)) {
+            return true;
+        }
+        if (grantHas(user, project, cap)) {
+            return true;
+        }
+        if (GrantCaps.ADMIN.equals(cap)) {
+            return false;
+        }
+        if (permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
             return true;
         }
         if (canOpen(user, project) && (hasGlobalManage(user)
                 || permissionManager().hasPermission(EDIT_ASSETS, project, user))) {
             return true;
         }
-        return grantHas(user, project, cap);
+        return false;
     }
 
     private Project requireProjectCap(ApplicationUser user, String projectKey, String cap) {
@@ -2321,8 +2366,20 @@ public class AssetServiceImpl implements AssetService {
     private List<GrantDto> grantDtos(String projectKey) {
         List<GrantDto> result = new ArrayList<GrantDto>();
         ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        ProjectGrantEntity[] global = ao().find(ProjectGrantEntity.class, Query.select().where("PROJECT_KEY = ?", GrantCaps.ALL_PROJECTS));
         for (ProjectGrantEntity row : rows) {
             result.add(toGrantDto(row));
+        }
+        for (ProjectGrantEntity row : global) {
+            boolean listed = false;
+            for (GrantDto existing : result) {
+                if (existing.getGroupName() != null && existing.getGroupName().equalsIgnoreCase(row.getGroupName())) {
+                    listed = true;
+                }
+            }
+            if (!listed) {
+                result.add(toGrantDto(row));
+            }
         }
         Collections.sort(result, new Comparator<GrantDto>() {
             @Override
@@ -2381,10 +2438,24 @@ public class AssetServiceImpl implements AssetService {
         try {
             ProjectGrantEntity[] grants = ao().find(ProjectGrantEntity.class);
             for (ProjectGrantEntity grant : grants) {
-                if (grant.getProjectKey() == null || found.containsKey(grant.getProjectKey())) {
+                if (grant.getProjectKey() == null || !inGroup(user, grant.getGroupName())) {
                     continue;
                 }
-                if (!inGroup(user, grant.getGroupName())) {
+                if (GrantCaps.ALL_PROJECTS.equals(grant.getProjectKey())) {
+                    String caps = grant.getCaps();
+                    if (caps == null || caps.trim().isEmpty()) {
+                        caps = GrantCaps.fromLevel(grant.getLevel());
+                    }
+                    if (GrantCaps.has(caps, GrantCaps.ADMIN)) {
+                        for (Project granted : projectManager().getProjects()) {
+                            if (granted != null && granted.getKey() != null) {
+                                found.put(granted.getKey(), granted);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (found.containsKey(grant.getProjectKey())) {
                     continue;
                 }
                 Project granted = project(grant.getProjectKey());
@@ -2402,25 +2473,32 @@ public class AssetServiceImpl implements AssetService {
             return false;
         }
         try {
-            ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class,
-                    Query.select().where("PROJECT_KEY = ?", project.getKey()));
-            for (int i = 0; i < rows.length; i++) {
-                ProjectGrantEntity row = rows[i];
-                if (!inGroup(user, row.getGroupName())) {
-                    continue;
-                }
-                String caps = row.getCaps();
-                if (caps == null || caps.trim().isEmpty()) {
-                    caps = GrantCaps.fromLevel(row.getLevel());
-                }
-                if (GrantCaps.has(caps, cap)) {
-                    return true;
-                }
+            if (grantRowsAllow(user, project.getKey(), cap)) {
+                return true;
             }
-            return false;
+            return grantRowsAllow(user, GrantCaps.ALL_PROJECTS, cap);
         } catch (RuntimeException ex) {
             return false;
         }
+    }
+
+    private boolean grantRowsAllow(ApplicationUser user, String projectKey, String cap) {
+        ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class,
+                Query.select().where("PROJECT_KEY = ?", projectKey));
+        for (int i = 0; i < rows.length; i++) {
+            ProjectGrantEntity row = rows[i];
+            if (!inGroup(user, row.getGroupName())) {
+                continue;
+            }
+            String caps = row.getCaps();
+            if (caps == null || caps.trim().isEmpty()) {
+                caps = GrantCaps.fromLevel(row.getLevel());
+            }
+            if (GrantCaps.has(caps, cap)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean inGroup(ApplicationUser user, String groupName) {

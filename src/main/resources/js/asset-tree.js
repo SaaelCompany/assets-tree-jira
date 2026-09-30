@@ -399,57 +399,90 @@
         return trigger;
     }
 
-    var CAP_KEYS = ['view', 'create', 'edit', 'move', 'remove', 'comment', 'schema', 'access'];
-    var CAP_CHOICES = ['view', 'create', 'edit', 'move', 'schema', 'access'];
+    var CAP_KEYS = ['view', 'places', 'types', 'object', 'assets', 'admin'];
+    var CAP_CHOICES = CAP_KEYS;
 
     function applyRights(project) {
         function present(name) {
             return project && project[name] !== undefined && project[name] !== null;
         }
-        state.canEdit = present('canChange') ? !!project.canChange : !!(project && project.canEdit);
-        state.canCreate = present('canCreate') ? !!project.canCreate : state.canEdit;
-        state.canMove = present('canMove') ? !!project.canMove : state.canEdit;
-        state.canRemove = present('canRemove') ? !!project.canRemove : state.canEdit;
-        state.canComment = present('canComment') ? !!project.canComment : state.canEdit;
-        state.canConfigure = present('canConfigure') ? !!project.canConfigure : state.canEdit;
-        state.canGrant = present('canGrant') ? !!project.canGrant : state.canConfigure;
+        var objects = present('canObjects') ? !!project.canObjects : (present('canChange') ? !!project.canChange : !!(project && project.canEdit));
+        var places = present('canPlaces') ? !!project.canPlaces : objects;
+        state.canObjects = objects;
+        state.canPlaces = places;
+        state.canTypes = present('canTypes') ? !!project.canTypes : (present('canConfigure') ? !!project.canConfigure : objects);
+        state.canAssets = present('canAssets') ? !!project.canAssets : false;
+        state.canAdmin = present('canAdmin') ? !!project.canAdmin : false;
+        state.canEdit = objects || places;
+        state.canCreate = objects;
+        state.canMove = places || objects;
+        state.canRemove = places || objects;
+        state.canComment = places || objects;
+        state.canConfigure = state.canTypes;
+        state.canGrant = present('canGrant') ? !!project.canGrant : (state.canAssets || state.canAdmin);
+    }
+
+    function mayEdit(asset) {
+        if (!asset) return !!(state.canPlaces || state.canObjects);
+        return isFolder(asset) ? !!state.canPlaces : !!state.canObjects;
     }
 
     function grantCaps(grant) {
         if (grant && grant.caps) {
-            return String(grant.caps).split(',').map(function (item) { return item.trim(); }).filter(Boolean);
+            return String(grant.caps).split(',').map(function (item) { return item.trim(); }).filter(function (item) {
+                return CAP_KEYS.indexOf(item) >= 0;
+            });
         }
-        if (grant && grant.level === 'manage') return CAP_KEYS.slice();
-        if (grant && grant.level === 'edit') return ['view', 'create', 'edit', 'move', 'remove', 'comment'];
+        if (grant && grant.level === 'admin') return CAP_KEYS.slice();
+        if (grant && grant.level === 'assets' || grant && grant.level === 'manage') return ['view', 'places', 'types', 'object', 'assets'];
+        if (grant && grant.level === 'edit') return ['view', 'places', 'object'];
         return ['view'];
     }
 
     function capLabel(key) {
         var names = {
-            view: 'capView',
-            create: 'capCreate',
-            edit: 'capEdit',
-            move: 'capMove',
-            remove: 'capRemove',
-            comment: 'capComment',
-            schema: 'capSchema',
-            access: 'capAccess'
+            view: 'roleView',
+            places: 'rolePlaces',
+            types: 'roleTypes',
+            object: 'roleObject',
+            assets: 'roleAssets',
+            admin: 'roleAdmin'
         };
-        return t(names[key] || 'capView');
+        return t(names[key] || 'roleView');
     }
 
     function capHint(key) {
         var names = {
-            view: 'capViewHint',
-            create: 'capCreateHint',
-            edit: 'capEditHint',
-            move: 'capMoveHint',
-            remove: 'capRemoveHint',
-            comment: 'capCommentHint',
-            schema: 'capSchemaHint',
-            access: 'capAccessHint'
+            view: 'roleViewHint',
+            places: 'rolePlacesHint',
+            types: 'roleTypesHint',
+            object: 'roleObjectHint',
+            assets: 'roleAssetsHint',
+            admin: 'roleAdminHint'
         };
-        return t(names[key] || 'capViewHint');
+        return t(names[key] || 'roleViewHint');
+    }
+
+    function roleOn(chosen, key, checked) {
+        if (checked) {
+            chosen[key] = true;
+            chosen.view = true;
+            if (key === 'assets' || key === 'admin') {
+                chosen.places = true;
+                chosen.types = true;
+                chosen.object = true;
+                chosen.assets = true;
+            }
+            if (key === 'admin') chosen.admin = true;
+            return;
+        }
+        if (key === 'view') {
+            chosen.view = true;
+            return;
+        }
+        chosen[key] = false;
+        if (key !== 'admin') chosen.assets = false;
+        chosen.admin = false;
     }
 
     function capsJoined(keys) {
@@ -457,21 +490,23 @@
         (keys || []).forEach(function (key) {
             if (CAP_KEYS.indexOf(key) >= 0) present[key] = true;
         });
-        if (present.create) {
-            present.remove = true;
-            present.comment = true;
+        if (present.admin || present.assets) {
+            present.view = true;
+            present.places = true;
+            present.types = true;
+            present.object = true;
+            present.assets = true;
         }
+        if (present.admin) present.admin = true;
         var other = CAP_KEYS.some(function (key) {
             return key !== 'view' && present[key];
         });
         if (other) present.view = true;
-        return CAP_KEYS.filter(function (key) { return present[key]; }).join(',');
-    }
-
-    function presetCaps(kind) {
-        if (kind === 'view') return 'view';
-        if (kind === 'tree') return 'view,create,edit,move,remove,comment';
-        return CAP_KEYS.join(',');
+        var visible = CAP_KEYS.filter(function (key) {
+            if (key === 'admin' && !state.canAdmin) return false;
+            return present[key];
+        });
+        return visible.join(',');
     }
 
     function rememberGrant(payload) {
@@ -520,6 +555,7 @@
     function capGrid(selected, onToggle) {
         var grid = el('div', 'asset-tree-caps');
         CAP_CHOICES.forEach(function (key) {
+            if (key === 'admin' && !state.canAdmin) return;
             grid.appendChild(capCheckbox(key, selected.indexOf(key) >= 0, function (checked) {
                 onToggle(key, checked);
             }));
@@ -1226,7 +1262,7 @@
         tools.appendChild(count);
         bar.appendChild(tools);
         var dragHint = el('p', 'asset-tree-draghint', t('dragHint'));
-        dragHint.hidden = !state.canMove;
+        dragHint.hidden = !state.canPlaces;
         bar.appendChild(dragHint);
         side.appendChild(bar);
         var scroll = el('div', 'asset-tree-scroll');
@@ -1338,7 +1374,8 @@
         nest.type = 'button';
         nest.title = t('addNode');
         nest.setAttribute('aria-label', nest.title);
-        if (!state.canCreate) {
+        var addingPlace = !parentId || (byId()[parentId] && isFolder(byId()[parentId]));
+        if (addingPlace ? !state.canPlaces : !state.canObjects) {
             nest.disabled = true;
         }
         nest.addEventListener('click', function (event) {
@@ -1374,7 +1411,7 @@
             if (matches && matches[asset.id]) {
                 row.classList.add('is-match');
             }
-            if (state.canMove && isFolder(asset)) {
+            if (state.canPlaces && isFolder(asset)) {
                 row.appendChild(dragGrip(asset));
             }
             var chevron = el('button', 'asset-tree-chevron', expandable ? (isExpanded(asset.id) ? '▾' : '▸') : '');
@@ -1430,7 +1467,7 @@
         row.appendChild(name);
         var count = equipmentIn(placeId, type.typeKey).length;
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (state.canCreate) {
+        if (state.canObjects) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
             nest.title = t('addObject');
@@ -1475,7 +1512,7 @@
         grip.setAttribute('aria-label', t('dragHint'));
         grip.appendChild(gripIcon());
         grip.addEventListener('pointerdown', function (event) {
-            if (event.button !== 0 || !state.canMove) return;
+            if (event.button !== 0 || !mayEdit(asset)) return;
             event.preventDefault();
             event.stopPropagation();
             if (grip.setPointerCapture) grip.setPointerCapture(event.pointerId);
@@ -1653,7 +1690,7 @@
     }
 
     function moveAsset(movingId, parentId, index) {
-        if (!state.canMove || movingId === null || movingId === undefined) {
+        if (movingId === null || movingId === undefined || !mayEdit(byId()[movingId])) {
             return;
         }
         if (state.dirty && !window.confirm(t('confirmDiscard'))) {
@@ -1791,7 +1828,7 @@
         if (place) titles.appendChild(el('p', 'asset-tree-crumb', crumbs(place)));
         head.appendChild(titles);
         var tools = el('div', 'asset-tree-inline-actions');
-        if (state.canCreate) {
+        if (state.canObjects) {
             tools.appendChild(button(t('addObject'), 'asset-tree-btn primary', function () {
                 openCreate(group.placeId, 'object', group.typeKey);
             }));
@@ -2069,7 +2106,7 @@
 
     function renderPlaceHome(asset) {
         var full = (state.detail && state.detail.id == asset.id) ? state.detail : asset;
-        if (state.editing && state.canEdit) {
+        if (state.editing && mayEdit(asset)) {
             var editor = el('section', 'asset-tree-detail is-issue');
             editor.id = 'asset-tree-detail';
             showDetail(full, full.issues == null, editor);
@@ -2095,7 +2132,7 @@
         main.appendChild(issueCrumb(full));
         main.appendChild(el('h1', 'asset-tree-issue-title', asset.name || ''));
         var ops = el('div', 'asset-tree-ops');
-        if (state.canEdit) {
+        if (mayEdit(asset)) {
             ops.appendChild(toolButton(t('edit'), 'edit', function () {
                 state.editing = true;
                 state.detail = full;
@@ -2155,7 +2192,7 @@
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
 
         var issues = el('div');
-        if (state.canEdit) {
+        if (mayEdit(full)) {
             var linker = el('div', 'asset-tree-linkrow');
             var issueInput = el('input');
             issueInput.placeholder = t('issuePlaceholder');
@@ -2232,7 +2269,7 @@
         head.appendChild(titles);
         var tools = el('div', 'asset-tree-inline-actions');
         var emptyRoot = !asset && !kids.length && !projectFiltering() && !remote;
-        if (state.canCreate && !emptyRoot) {
+        if (state.canPlaces && !emptyRoot) {
             tools.appendChild(button(asset && isFolder(asset) ? t('addHere') : t('addPlace'), 'asset-tree-btn', function () {
                 if (asset && isFolder(asset)) openCreate(parentId);
                 else openCreate(null, 'place');
@@ -2256,7 +2293,7 @@
                 steps.appendChild(el('li', null, line));
             });
             lead.appendChild(steps);
-            if (state.canCreate) {
+            if (state.canPlaces) {
                 lead.appendChild(button(t('addPlace'), 'asset-tree-btn primary', function () {
                     openCreate(null, 'place');
                 }));
@@ -2389,7 +2426,7 @@
     }
 
     function statusPicker(asset) {
-        if (!state.canEdit) {
+        if (!mayEdit(asset)) {
             return el('span', 'asset-tree-lozenge ' + statusClass(asset.status), statusLabel(asset.status));
         }
         var current = button(statusLabel(asset.status), 'asset-tree-lozenge asset-tree-status-btn ' + statusClass(asset.status), function (event) {
@@ -2506,7 +2543,7 @@
             host.innerHTML = '';
             var text = asset.description ? asset.description : t('descriptionHint');
             var view = el('div', 'asset-tree-desc' + (asset.description ? '' : ' is-empty'), text);
-            if (state.canEdit) view.addEventListener('click', inline ? editInline : editForm);
+            if (mayEdit(asset)) view.addEventListener('click', inline ? editInline : editForm);
             host.appendChild(view);
         }
         function editForm() {
@@ -2625,7 +2662,7 @@
         line.appendChild(el('span', 'asset-tree-comment-time', stamp(comment.created)));
         details.appendChild(line);
         details.appendChild(el('div', 'asset-tree-action-body', comment.body || ''));
-        if (state.canComment) {
+        if (mayEdit(asset)) {
             var links = el('div', 'asset-tree-action-links');
             links.appendChild(button(t('delete'), 'asset-tree-linkish', function () {
                 ajax('DELETE', '/assets/' + asset.id + '/comments/' + comment.id, null, function (status, payload) {
@@ -2755,7 +2792,7 @@
                 });
             }
         }
-        if (state.canComment) {
+        if (mayEdit(asset)) {
             var editor = el('div', 'asset-tree-comment-editor');
             editor.id = 'asset-tree-comment-editor';
             editor.hidden = true;
@@ -2803,7 +2840,7 @@
                 row.appendChild(link);
                 row.appendChild(el('span', 'asset-tree-file-meta', fileSize(file.size)));
                 if (file.authorName) row.appendChild(el('span', 'asset-tree-file-meta', file.authorName));
-                if (state.canComment) {
+                if (mayEdit(asset)) {
                     row.appendChild(button(t('delete'), 'asset-tree-linkish', function () {
                         ajax('DELETE', '/assets/' + asset.id + '/files/' + file.id, null, function (status, payload) {
                             if (status >= 200 && status < 300) selectAsset(asset.id, true);
@@ -2818,7 +2855,7 @@
         fileError.id = 'asset-tree-file-error';
         fileError.hidden = true;
         body.appendChild(fileError);
-        if (state.canComment) {
+        if (mayEdit(asset)) {
             var drop = el('label', 'asset-tree-drop');
             var input = el('input', 'asset-tree-file');
             input.type = 'file';
@@ -2925,17 +2962,15 @@
         main.appendChild(issueCrumb(asset));
         main.appendChild(el('h1', 'asset-tree-issue-title', asset.name || ''));
         var ops = el('div', 'asset-tree-ops');
-        if (state.canEdit) {
+        if (mayEdit(asset)) {
             ops.appendChild(toolButton(t('edit'), 'edit', function () {
                 state.editing = true;
                 showDetail(state.detail || asset, false);
             }));
-        }
-        if (state.canComment) {
             ops.appendChild(toolButton(t('addComment'), 'comment', openComment));
         }
         var extra = [];
-        if (state.canRemove) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
+        if (mayEdit(asset)) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
         if (childrenOf(asset.id).length || !showsInTree(asset)) {
             extra.push({
                 label: t('backToList'),
@@ -2967,7 +3002,7 @@
         main.appendChild(fileBlock(asset));
 
         var issues = el('div');
-        if (state.canEdit) {
+        if (mayEdit(asset)) {
             var linker = el('div', 'asset-tree-linkrow');
             var issueInput = el('input');
             issueInput.placeholder = t('issuePlaceholder');
@@ -3018,7 +3053,7 @@
         }
         state.detail = asset;
         var placePage = isFolder(asset);
-        if (!state.editing || !state.canEdit) {
+        if (!state.editing || !mayEdit(asset)) {
             if (placePage) {
                 state.editing = false;
                 replaceDetail();
@@ -3111,7 +3146,7 @@
 
         var issues = el('div', 'asset-tree-request-block');
         issues.appendChild(el('h3', null, t('issues')));
-        if (state.canEdit) {
+        if (mayEdit(asset)) {
             var linker = el('div', 'asset-tree-linkrow');
             var issueInput = el('input');
             issueInput.id = 'asset-field-issue';
@@ -3418,6 +3453,9 @@
     }
 
     function openCreate(parentId, kind, typeKey) {
+        if (kind === 'place' && !state.canPlaces) return;
+        if (kind === 'object' && !state.canObjects) return;
+        if (!kind && !state.canPlaces && !state.canConfigure) return;
         if (!kind && !parentId) {
             openCreate(null, 'place');
             return;
@@ -5580,18 +5618,12 @@
                 });
             }));
             row.appendChild(head);
-            row.appendChild(capPresets(function (caps) {
-                postGrant(grant.groupName, caps, null);
-            }));
             row.appendChild(capGrid(grantCaps(grant), function (key, checked) {
-                var current = grantCaps(grant);
-                var next = current.filter(function (item) { return item !== key; });
-                if (checked) next.push(key);
-                if (key === 'create' && !checked) {
-                    next = next.filter(function (item) { return item !== 'remove' && item !== 'comment'; });
-                }
-                var caps = capsJoined(next);
-                if (!caps || caps === capsJoined(current)) {
+                var chosen = {};
+                grantCaps(grant).forEach(function (item) { chosen[item] = true; });
+                roleOn(chosen, key, checked);
+                var caps = capsJoined(CAP_KEYS.filter(function (item) { return chosen[item]; }));
+                if (!caps || caps === capsJoined(grantCaps(grant))) {
                     renderFrame();
                     return;
                 }
@@ -5615,16 +5647,9 @@
                 if (boxes[key]) boxes[key].checked = !!chosen[key];
             });
         }
-        function applyDraft(caps) {
-            chosen = {};
-            String(caps || '').split(',').forEach(function (key) {
-                if (CAP_KEYS.indexOf(key) >= 0) chosen[key] = true;
-            });
-            if (!chosen.view) chosen.view = true;
-            paintChosen();
-        }
         var grid = el('div', 'asset-tree-caps');
         CAP_CHOICES.forEach(function (key) {
+            if (key === 'admin' && !state.canAdmin) return;
             var label = el('label', 'asset-tree-check');
             label.title = capHint(key);
             var box = document.createElement('input');
@@ -5632,31 +5657,13 @@
             box.checked = key === 'view';
             boxes[key] = box;
             box.addEventListener('change', function () {
-                if (box.checked) {
-                    chosen[key] = true;
-                    if (key !== 'view') chosen.view = true;
-                    if (key === 'create') {
-                        chosen.remove = true;
-                        chosen.comment = true;
-                    }
-                } else if (key === 'view') {
-                    chosen.view = true;
-                } else {
-                    chosen[key] = false;
-                    if (key === 'create') {
-                        chosen.remove = false;
-                        chosen.comment = false;
-                    }
-                }
+                roleOn(chosen, key, box.checked);
                 paintChosen();
             });
             label.appendChild(box);
             label.appendChild(document.createTextNode(capLabel(key)));
             grid.appendChild(label);
         });
-        form.appendChild(capPresets(function (caps) {
-            applyDraft(caps);
-        }));
         form.appendChild(grid);
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;

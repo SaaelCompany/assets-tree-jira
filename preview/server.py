@@ -56,7 +56,7 @@ def resolve_icon(raw, location):
     if icon not in ICONS:
         return None
     return icon
-CAP_ORDER = ["view", "create", "edit", "move", "remove", "comment", "schema", "access"]
+CAP_ORDER = ["view", "places", "types", "object", "assets", "admin"]
 STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 PROJECTS = [{"key": "TEST", "name": "test"}]
@@ -98,41 +98,56 @@ def project_rights():
         "canComment": True,
         "canConfigure": True,
         "canGrant": True,
+        "canPlaces": True,
+        "canObjects": True,
+        "canTypes": True,
+        "canAssets": True,
+        "canAdmin": True,
     }
 
 
 def caps_from_level(level):
-    if level == "manage":
+    if level in ("manage", "assets"):
+        return "view,places,types,object,assets"
+    if level == "admin":
         return ",".join(CAP_ORDER)
     if level == "edit":
-        return "view,create,edit,move,remove,comment"
+        return "view,places,object"
     if level == "view":
         return "view"
     return ""
 
 
 def normalize_caps(raw):
-    chosen = []
+    chosen = set()
     for token in str(raw or "").split(","):
         token = token.strip()
-        if token in CAP_ORDER and token not in chosen:
-            chosen.append(token)
+        if token in ("create", "edit", "move", "remove", "comment"):
+            chosen.update(("places", "object"))
+        elif token == "schema":
+            chosen.add("types")
+        elif token == "access":
+            chosen.add("assets")
+        elif token in CAP_ORDER:
+            chosen.add(token)
     if not chosen:
         return ""
-    if "create" in chosen and "remove" not in chosen:
-        chosen.append("remove")
-    if "create" in chosen and "comment" not in chosen:
-        chosen.append("comment")
-    if "view" not in chosen:
-        chosen.append("view")
+    if "admin" in chosen:
+        chosen.add("assets")
+    if "assets" in chosen:
+        chosen.update(("places", "types", "object"))
+    if chosen - {"view"}:
+        chosen.add("view")
     return ",".join(key for key in CAP_ORDER if key in chosen)
 
 
 def level_of(caps):
     parts = {item for item in str(caps or "").split(",") if item}
-    if "schema" in parts or "access" in parts:
-        return "manage"
-    if parts & {"create", "edit", "move", "remove", "comment"}:
+    if "admin" in parts:
+        return "admin"
+    if "assets" in parts:
+        return "assets"
+    if parts & {"places", "types", "object"}:
         return "edit"
     return "view"
 
@@ -907,7 +922,7 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.44",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.45",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
