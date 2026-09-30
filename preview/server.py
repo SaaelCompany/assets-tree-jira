@@ -1,0 +1,1459 @@
+#!/usr/bin/env python3
+"""In-memory preview of the asset tree.
+
+This is not the Jira plugin. It serves the same page and REST contract.
+Projects are not invented here: in Jira the list comes from the instance.
+"""
+
+import datetime
+import json
+import os
+import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, unquote, urlparse
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+RES = os.path.join(ROOT, "src", "main", "resources")
+PORT = 47121
+FILE_DIR = "/tmp/asset-tree-preview-files"
+MAX_FILE_BYTES = 10 * 1024 * 1024
+MAX_COMMENT = 10000
+MAX_DEPTH = 40
+PALETTE = ["#0F6E56", "#175CD3", "#6554C0", "#B54708", "#B42318", "#0E7090", "#363F72", "#087443"]
+STATUSES = {"in_stock", "in_use", "repair", "reserve", "maintenance", "written_off", "active", "inactive", "retired"}
+CANONICAL = {"active": "in_use", "inactive": "reserve", "retired": "written_off"}
+DEFAULT_STATUSES = [
+    ("in_stock", "asset-tree.ui.statusStock", "todo"),
+    ("in_use", "asset-tree.ui.statusInUse", "progress"),
+    ("repair", "asset-tree.ui.statusRepair", "progress"),
+    ("reserve", "asset-tree.ui.statusReserve", "todo"),
+    ("maintenance", "asset-tree.ui.statusMaintenance", "progress"),
+    ("written_off", "asset-tree.ui.statusWrittenOff", "done"),
+]
+CATEGORY_COLOR = {
+    "todo": "#4a6785", "progress": "#ffd351", "done": "#14892c",
+    "blue": "#0052cc", "orange": "#ff8b00", "red": "#de350b", "purple": "#6554c0",
+    "teal": "#00a3bf", "gray": "#6b778c", "pink": "#cd519d", "lime": "#36b37e", "brown": "#974f0c",
+}
+GROUPS = ["jira-administrators", "jira-servicedesk-users", "asset-keepers"]
+CAP_ORDER = ["view", "create", "edit", "move", "remove", "comment", "schema", "access"]
+STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+PROJECTS = [{"key": "TEST", "name": "test"}]
+USERS = {
+    "ivanov": {"userKey": "ivanov", "username": "ivanov", "displayName": "Иванов Сергей", "email": "ivanov@example.com", "phone": "+7 495 000-11-22", "department": "ИТ-поддержка", "title": "Инженер", "directory": "Active Directory", "active": True},
+    "petrova": {"userKey": "petrova", "username": "petrova", "displayName": "Петрова Анна", "email": "petrova@example.com", "phone": "+7 495 000-33-44", "department": "Хирургия", "title": "Старшая медсестра", "directory": "Active Directory", "active": True},
+    "smirnov": {"userKey": "smirnov", "username": "smirnov", "displayName": "Смирнов Олег", "email": "smirnov@example.com", "phone": "+7 812 000-55-66", "department": "Склад", "title": "Заведующий складом", "directory": "Active Directory", "active": True},
+}
+ISSUES = {
+    "SD-14": {"issueId": 10014, "issueKey": "SD-14", "projectKey": "IT", "summary": "Не открывается почта на 3 этаже", "status": "В работе"},
+    "SD-22": {"issueId": 10022, "issueKey": "SD-22", "projectKey": "IT", "summary": "Замена коммутатора в серверной", "status": "Открыта"},
+    "MED-7": {"issueId": 20007, "issueKey": "MED-7", "projectKey": "MED", "summary": "Списать монитор после ремонта", "status": "Ожидание"},
+}
+ISSUES_BY_ID = {item["issueId"]: item for item in ISSUES.values()}
+SEEDS = [
+    ("warehouse", "#175CD3", 0, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
+    ("branch", "#0E7090", 1, True, [("address", "asset-tree.field.address", "text", True), ("phone", "asset-tree.field.phone", "text", False)]),
+    ("department", "#6554C0", 2, True, [("phone", "asset-tree.field.phone", "text", False)]),
+    ("equipment", "#0F6E56", 3, False, [("inventory", "asset-tree.field.inventory", "text", False), ("serial", "asset-tree.field.serial", "text", False)]),
+]
+
+LOCK = threading.Lock()
+STATE = {
+    "seq": 1, "assets": {}, "types": {}, "links": [], "checks": {},
+    "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
+    "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
+}
+
+
+def project_rights():
+    return {
+        "canEdit": True,
+        "canChange": True,
+        "canCreate": True,
+        "canMove": True,
+        "canRemove": True,
+        "canComment": True,
+        "canConfigure": True,
+        "canGrant": True,
+    }
+
+
+def caps_from_level(level):
+    if level == "manage":
+        return ",".join(CAP_ORDER)
+    if level == "edit":
+        return "view,create,edit,move,remove,comment"
+    if level == "view":
+        return "view"
+    return ""
+
+
+def normalize_caps(raw):
+    chosen = []
+    for token in str(raw or "").split(","):
+        token = token.strip()
+        if token in CAP_ORDER and token not in chosen:
+            chosen.append(token)
+    if not chosen:
+        return ""
+    if "create" in chosen and "remove" not in chosen:
+        chosen.append("remove")
+    if "create" in chosen and "comment" not in chosen:
+        chosen.append("comment")
+    if "view" not in chosen:
+        chosen.append("view")
+    return ",".join(key for key in CAP_ORDER if key in chosen)
+
+
+def level_of(caps):
+    parts = {item for item in str(caps or "").split(",") if item}
+    if "schema" in parts or "access" in parts:
+        return "manage"
+    if parts & {"create", "edit", "move", "remove", "comment"}:
+        return "edit"
+    return "view"
+
+
+def unescape_properties(value):
+    output = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            code = value[index + 1]
+            if code == "u" and index + 5 < len(value):
+                output.append(chr(int(value[index + 2:index + 6], 16)))
+                index += 6
+                continue
+            output.append({"n": "\n", "t": "\t", "r": "\r", "\\": "\\"}.get(code, code))
+            index += 2
+            continue
+        output.append(value[index])
+        index += 1
+    return "".join(output)
+
+
+def load_properties(path):
+    result = {}
+    if not os.path.exists(path):
+        return result
+    with open(path, "r", encoding="latin-1") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith("!") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            result[key.strip()] = unescape_properties(value.strip())
+    return result
+
+
+def messages(lang):
+    english = load_properties(os.path.join(RES, "i18n", "asset-tree.properties"))
+    if lang.startswith("ru"):
+        english.update(load_properties(os.path.join(RES, "i18n", "asset-tree_ru_RU.properties")))
+    return english
+
+
+def label_of(stored, text):
+    if stored and stored.startswith("asset-tree."):
+        return text.get(stored, stored)
+    return stored
+
+
+def canonical(status):
+    return CANONICAL.get(status or "", status or "in_use")
+
+
+def slug(label):
+    builder = []
+    dash = False
+    for char in (label or "").strip().lower():
+        if "a" <= char <= "z" or "0" <= char <= "9":
+            builder.append(char)
+            dash = False
+        elif char in " -_." and builder and not dash:
+            builder.append("-")
+            dash = True
+    text = "".join(builder).strip("-")[:40].strip("-")
+    return text
+
+
+def unique_key(base, taken):
+    seed = base or ""
+    if not seed or not ("a" <= seed[0] <= "z"):
+        seed = "type" if not seed else "type-" + seed
+    seed = seed[:40].strip("-") or "type"
+    if seed not in taken:
+        return seed
+    index = 2
+    while index < 10000:
+        suffix = "-%s" % index
+        head = seed
+        if len(head) + len(suffix) > 40:
+            head = head[:40 - len(suffix)].strip("-") or "type"
+        candidate = head + suffix
+        if candidate not in taken:
+            return candidate
+        index += 1
+    return seed
+
+
+def ensure_statuses(project_key, text):
+    bucket = STATE["statuses"].setdefault(project_key, [])
+    if bucket:
+        return bucket
+    for index, item in enumerate(DEFAULT_STATUSES):
+        bucket.append({
+            "statusKey": item[0],
+            "label": text.get(item[1], item[0]),
+            "category": item[2],
+            "sortOrder": index,
+        })
+    return bucket
+
+
+def status_dtos(project_key, text):
+    rows = ensure_statuses(project_key, text)
+    assets = project_assets(project_key)
+    result = []
+    for row in rows:
+        count = len([asset for asset in assets if canonical(asset.get("status")) == row["statusKey"]])
+        result.append({
+            "statusKey": row["statusKey"],
+            "label": row["label"],
+            "category": row["category"],
+            "sortOrder": row["sortOrder"],
+            "assetCount": count,
+        })
+    return result
+
+
+def status_known(project_key, status, text):
+    key = canonical(status)
+    return any(row["statusKey"] == key for row in ensure_statuses(project_key, text))
+
+
+def seed_types(project_key):
+    for base, color, order, location, fields in SEEDS:
+        type_key = "%s-%s" % (project_key.lower(), base)
+        if type_key not in STATE["types"]:
+            STATE["types"][type_key] = {
+                "typeKey": type_key, "projectKey": project_key, "baseKey": base, "label": base,
+                "color": color, "systemType": True, "location": location, "showInTree": location,
+                "sortOrder": order,
+                "fields": [{"fieldKey": item[0], "label": item[1], "kind": item[2], "required": item[3], "position": index} for index, item in enumerate(fields)],
+            }
+
+
+def add_asset(project, type_key, name, parent, status, custodian, values):
+    asset_id = STATE["seq"]
+    STATE["seq"] += 1
+    STATE["assets"][asset_id] = {
+        "id": asset_id, "objectKey": "AST-%s" % asset_id, "projectKey": project, "name": name,
+        "description": "", "typeKey": type_key, "status": status, "parentId": parent,
+        "sortOrder": asset_id, "custodianKey": custodian, "created": "2026-09-26T09:00:00Z",
+        "updated": "2026-09-26T09:00:00Z", "values": values,
+    }
+    return asset_id
+
+
+def seed():
+    return
+
+
+def normalize_parent(parent_id):
+    if parent_id in (None, "", 0):
+        return None
+    return int(parent_id)
+
+
+def project_assets(project_key):
+    return [asset for asset in STATE["assets"].values() if asset["projectKey"] == project_key]
+
+
+def parent_map(rows):
+    return {asset["id"]: normalize_parent(asset["parentId"]) for asset in rows}
+
+
+def children_map(rows):
+    children = {}
+    for asset in rows:
+        parent = normalize_parent(asset["parentId"])
+        if parent is not None:
+            children.setdefault(parent, []).append(asset["id"])
+    return children
+
+
+def would_cycle(rows, moving_id, new_parent):
+    parents = parent_map(rows)
+    cursor = new_parent
+    guard = 0
+    while cursor is not None and guard < 80:
+        if cursor == moving_id:
+            return True
+        cursor = parents.get(cursor)
+        guard += 1
+    return False
+
+
+def descendants(rows, asset_id):
+    children = children_map(rows)
+    ordered = []
+
+    def walk(current):
+        for child in children.get(current, []):
+            ordered.append(child)
+            walk(child)
+
+    walk(asset_id)
+    return ordered
+
+
+def depth(rows, asset_id):
+    parents = parent_map(rows)
+    seen = 0
+    cursor = parents.get(asset_id)
+    while cursor is not None and seen < 80:
+        seen += 1
+        cursor = parents.get(cursor)
+    return seen
+
+
+def subtree_height(rows, asset_id):
+    children = children_map(rows)
+
+    def height(current):
+        kids = children.get(current, [])
+        return 0 if not kids else 1 + max(height(child) for child in kids)
+
+    return height(asset_id)
+
+
+def location_of(asset):
+    names = []
+    parent = normalize_parent(asset["parentId"])
+    guard = 0
+    while parent and guard < 80:
+        node = STATE["assets"].get(parent)
+        if not node:
+            break
+        names.insert(0, node["name"])
+        parent = normalize_parent(node["parentId"])
+        guard += 1
+    return " / ".join(names)
+
+
+def type_row(type_key):
+    return STATE["types"].get(type_key)
+
+
+def type_dto(row, text, rows):
+    label = row["label"]
+    if row["systemType"] and row.get("baseKey"):
+        label = text.get("asset-tree.type." + row["baseKey"], label)
+    count = len([asset for asset in rows if asset["typeKey"] == row["typeKey"]])
+    return {
+        "typeKey": row["typeKey"], "projectKey": row["projectKey"], "label": label, "color": row["color"],
+        "systemType": row["systemType"], "location": row["location"],
+        "showInTree": bool(row.get("location") or row.get("showInTree")), "assetCount": count,
+        "fields": [{
+            "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
+            "required": field["required"], "position": field["position"],
+        } for field in row["fields"]],
+    }
+
+
+def asset_dto(asset, text, with_issues):
+    row = type_row(asset["typeKey"]) or {"label": asset["typeKey"], "color": "#5D6B82", "fields": [], "systemType": False, "baseKey": "", "location": False, "projectKey": asset["projectKey"]}
+    typed = type_dto(row, text, project_assets(asset["projectKey"])) if asset["typeKey"] in STATE["types"] else {
+        "label": asset["typeKey"], "color": "#5D6B82", "fields": [], "location": False
+    }
+    attributes = []
+    for field in typed["fields"]:
+        attributes.append({
+            "fieldKey": field["fieldKey"], "name": field["label"], "kind": field["kind"],
+            "required": field["required"], "value": asset["values"].get(field["fieldKey"], ""),
+        })
+    holder = USERS.get(asset.get("custodianKey") or "")
+    dto = {
+        "id": asset["id"], "objectKey": asset["objectKey"], "name": asset["name"], "description": asset["description"],
+        "typeKey": asset["typeKey"], "typeLabel": typed["label"], "color": typed["color"],
+        "status": canonical(asset["status"]), "parentId": normalize_parent(asset["parentId"]),
+        "sortOrder": asset["sortOrder"], "created": asset["created"], "updated": asset["updated"],
+        "createdBy": USERS["ivanov"]["displayName"], "updatedBy": USERS["ivanov"]["displayName"], "projectKey": asset["projectKey"],
+        "projectName": next(item["name"] for item in PROJECTS if item["key"] == asset["projectKey"]),
+        "location": location_of(asset), "editable": True, "custodian": holder, "attributes": attributes,
+    }
+    if with_issues:
+        dto["issues"] = [dict(ISSUES_BY_ID[link["issueId"]]) for link in STATE["links"] if link["assetId"] == asset["id"] and link["issueId"] in ISSUES_BY_ID]
+        dto["comments"] = [comment_dto(row) for row in comments_of(asset["id"])]
+        dto["files"] = [file_dto(row) for row in files_of(asset["id"])]
+        dto["activities"] = [activity_dto(row) for row in activities_of(asset["id"])]
+    return dto
+
+
+def now_stamp():
+    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def comments_of(asset_id):
+    rows = [row for row in STATE["comments"].values() if row["assetId"] == asset_id]
+    rows.sort(key=lambda item: (item["created"], item["id"]))
+    return rows
+
+
+def files_of(asset_id):
+    rows = [row for row in STATE["files"].values() if row["assetId"] == asset_id]
+    rows.sort(key=lambda item: (item["created"], item["id"]))
+    return rows
+
+
+def comment_dto(row):
+    author = USERS.get(row.get("authorKey") or "")
+    if not author:
+        author = {"userKey": row.get("authorKey") or "", "displayName": row.get("authorKey") or "", "active": False}
+    return {"id": row["id"], "body": row["body"], "created": row["created"], "author": author}
+
+
+def activities_of(asset_id):
+    rows = [row for row in STATE["activities"].values() if row["assetId"] == asset_id]
+    rows.sort(key=lambda item: (item["created"], item["id"]))
+    return rows
+
+
+def activity_dto(row):
+    author = USERS.get(row.get("authorKey") or "")
+    if not author:
+        author = {"userKey": row.get("authorKey") or "", "displayName": row.get("authorKey") or "Preview", "active": False}
+    return {
+        "id": row["id"], "action": row["action"], "field": row.get("field") or "",
+        "oldValue": row.get("oldValue") or "", "newValue": row.get("newValue") or "",
+        "created": row["created"], "author": author,
+    }
+
+
+def log_activity(asset_id, kind, field, old_value, new_value):
+    left = old_value or ""
+    right = new_value or ""
+    if left == right:
+        return
+    activity_id = STATE["activity_seq"]
+    STATE["activity_seq"] += 1
+    STATE["activities"][activity_id] = {
+        "id": activity_id, "assetId": asset_id, "authorKey": "ivanov",
+        "action": kind, "field": field or "", "oldValue": left[:500], "newValue": right[:500],
+        "created": now_stamp(),
+    }
+
+
+def file_dto(row):
+    author = USERS.get(row.get("authorKey") or "")
+    return {
+        "id": row["id"], "fileName": row["fileName"], "contentType": row["contentType"],
+        "size": row["size"], "created": row["created"],
+        "authorName": author["displayName"] if author else "",
+    }
+
+
+def safe_file_name(raw):
+    name = (raw or "").strip().replace("\\", "/").split("/")[-1]
+    if not name or name in (".", ".."):
+        return None
+    if len(name) > 180:
+        name = name[-180:]
+    return name
+
+
+def preview_file_path(file_id):
+    return os.path.join(FILE_DIR, str(file_id))
+
+
+def write_preview_file(file_id, data):
+    os.makedirs(FILE_DIR, exist_ok=True)
+    with open(preview_file_path(file_id), "wb") as handle:
+        handle.write(data)
+
+
+def delete_preview_file(file_id):
+    path = preview_file_path(file_id)
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def multipart_token(value):
+    semi = value.find(";")
+    return value[:semi].strip() if semi >= 0 else value.strip()
+
+
+def multipart_unquote(value):
+    if value is None:
+        return None
+    text = value.strip()
+    if text.startswith('"') and text.endswith('"') and len(text) > 1:
+        text = text[1:-1]
+    return text
+
+
+def multipart_decode_star(value):
+    text = multipart_unquote(value) or ""
+    mark = text.find("''")
+    if mark >= 0:
+        text = text[mark + 2:]
+    return unquote(text)
+
+
+def multipart_filename(headers):
+    plain = None
+    encoded = None
+    for line in re.split(r"\r?\n", headers):
+        lower = line.lower()
+        if not lower.startswith("content-disposition:"):
+            continue
+        starred = lower.find("filename*=")
+        if starred >= 0:
+            encoded = multipart_token(line[starred + len("filename*="):].strip())
+        named = lower.find("filename=")
+        if named >= 0 and (starred < 0 or named < starred):
+            plain = multipart_token(line[named + len("filename="):].strip())
+    chosen = multipart_decode_star(encoded) if encoded else multipart_unquote(plain)
+    if not chosen:
+        return None
+    return chosen.replace("\\", "/").split("/")[-1]
+
+
+def multipart_content_type(headers):
+    for line in re.split(r"\r?\n", headers):
+        if line.lower().startswith("content-type:"):
+            value = line.split(":", 1)[1].strip()
+            semi = value.find(";")
+            return (value[:semi] if semi >= 0 else value).strip() or "application/octet-stream"
+    return "application/octet-stream"
+
+
+def parse_multipart(body, content_type):
+    if not body or not content_type:
+        return None
+    lowered = content_type.lower()
+    at = lowered.find("boundary=")
+    if at < 0:
+        return None
+    boundary = content_type[at + len("boundary="):].strip()
+    if boundary.startswith('"') and boundary.endswith('"') and len(boundary) > 1:
+        boundary = boundary[1:-1]
+    semi = boundary.find(";")
+    if semi >= 0:
+        boundary = boundary[:semi].strip()
+    if not boundary:
+        return None
+    fence = ("--" + boundary).encode("latin-1", "replace")
+    separator = b"\r\n" + fence
+    cursor = body.find(fence)
+    if cursor < 0:
+        return None
+    cursor += len(fence)
+    while cursor < len(body):
+        if cursor + 1 < len(body) and body[cursor:cursor + 2] == b"--":
+            break
+        if cursor < len(body) and body[cursor:cursor + 1] == b"\r":
+            cursor += 2
+        elif cursor < len(body) and body[cursor:cursor + 1] == b"\n":
+            cursor += 1
+        header_end = body.find(b"\r\n\r\n", cursor)
+        gap = 4
+        if header_end < 0:
+            header_end = body.find(b"\n\n", cursor)
+            gap = 2
+        if header_end < 0:
+            return None
+        headers = body[cursor:header_end].decode("latin-1", "replace")
+        data_start = header_end + gap
+        next_at = body.find(separator, data_start)
+        data_end = next_at
+        step = len(separator)
+        if next_at < 0:
+            next_at = body.find(fence, data_start)
+            data_end = next_at
+            step = len(fence)
+            if data_end >= 2 and body[data_end - 2:data_end] == b"\r\n":
+                data_end -= 2
+            elif data_end >= 1 and body[data_end - 1:data_end] == b"\n":
+                data_end -= 1
+        if data_end < 0:
+            data_end = len(body)
+            step = 0
+            next_at = len(body)
+        if data_end < data_start:
+            return None
+        file_name = multipart_filename(headers)
+        if file_name:
+            return file_name, multipart_content_type(headers), body[data_start:data_end]
+        cursor = next_at + step
+    return None
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "AssetTreePreview/1.1"
+
+    def log_message(self, fmt, *args):
+        print("[%s] %s" % (self.log_date_time_string(), fmt % args))
+
+    def do_GET(self):
+        self.route("GET")
+
+    def do_POST(self):
+        self.route("POST")
+
+    def do_PUT(self):
+        self.route("PUT")
+
+    def do_DELETE(self):
+        self.route("DELETE")
+
+    def route(self, method):
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        query = parse_qs(parsed.query)
+        if path in ("/", "/plugins/servlet/asset-tree"):
+            return self.serve_page(query)
+        if path == "/issue":
+            return self.serve_issue(query)
+        if path == "/portal":
+            return self.serve_portal(query)
+        if path.startswith("/browse/"):
+            return self.serve_browse(path.split("/", 2)[2])
+        if path.startswith("/download/resources/"):
+            return self.serve_static(path.rsplit("/", 1)[-1])
+        if path.startswith("/rest/asset-tree/1.0/"):
+            return self.serve_api(method, path[len("/rest/asset-tree/1.0"):], query)
+        if path == "/plugins/servlet/asset-tree-file":
+            return self.serve_file(method, query)
+        self.send_error(404)
+
+    def lang(self):
+        header = self.headers.get("Accept-Language", "ru")
+        return "en" if header.lower().startswith("en") else "ru"
+
+    def text(self):
+        return messages(self.lang())
+
+    def serve_page(self, query):
+        template = open(os.path.join(RES, "templates", "page.html"), encoding="utf-8").read()
+        text = self.text()
+        project = (query.get("project") or [""])[0]
+        view = (query.get("view") or ["all"])[0]
+        if view not in ("all", "mine", "search", "settings", "dashboard"):
+            view = "all"
+        html = (template
+                .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
+                .replace("@@TITLE@@", text.get("asset-tree.ui.title", "Asset tree"))
+                .replace("@@CSS@@", "/download/resources/asset-tree/asset-tree.css")
+                .replace("@@JS@@", "/download/resources/asset-tree/asset-tree.js")
+                .replace("@@REST@@", "/rest/asset-tree/1.0")
+                .replace("@@PROJECT@@", project)
+                .replace("@@VIEW@@", view))
+        html = html.replace("<body>", "<body>\n" + self.preview_header(text, project), 1)
+        self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def preview_header(self, text, project):
+        def href(view):
+            query = "view=" + view
+            if project:
+                query = "project=" + project + "&" + query
+            return "/plugins/servlet/asset-tree?" + query
+        items = [
+            ("mine", text.get("asset-tree.nav.mine", "My assets")),
+            ("all", text.get("asset-tree.nav.all", "All assets")),
+            ("dashboard", text.get("asset-tree.nav.dashboard", "Dashboard")),
+            ("settings", text.get("asset-tree.nav.settings", "Settings")),
+        ]
+        links = "".join('<a href="%s">%s</a>' % (href(key), label) for key, label in items)
+        label = text.get("asset-tree.nav.label", "Assets")
+        return """<style>
+.preview-top { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px; background: #0747a6; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.preview-brand { font-weight: 600; margin-right: 16px; }
+.preview-drop { position: relative; }
+.preview-drop > a { color: #fff; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 3px; }
+.preview-drop > a:hover, .preview-drop:focus-within > a { background: rgba(255,255,255,0.16); }
+.preview-menu { display: none; position: absolute; top: 100%%; left: 0; min-width: 196px; margin-top: 4px; padding: 4px 0; background: #fff; color: #172b4d; border-radius: 3px; box-shadow: 0 4px 8px -2px rgba(9,30,66,.25), 0 0 1px rgba(9,30,66,.31); z-index: 40; }
+.preview-drop:hover .preview-menu, .preview-drop:focus-within .preview-menu { display: block; }
+.preview-menu a { display: block; padding: 8px 16px; color: #172b4d; text-decoration: none; }
+.preview-menu a:hover { background: #f4f5f7; color: #0052cc; }
+</style>
+<header class="preview-top"><span class="preview-brand">Jira</span>
+<div class="preview-drop"><a href="%s">%s <span aria-hidden="true">▾</span></a>
+<div class="preview-menu">%s</div></div></header>""" % (href("all"), label, links)
+
+    def serve_issue(self, query):
+        key = ((query or {}).get("key") or ["SD-14"])[0].upper()
+        issue = ISSUES.get(key) or ISSUES["SD-14"]
+        html = """<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>%s</title>
+<link rel="stylesheet" href="/download/resources/asset-tree/issue-panel.css">
+<style>
+body { margin: 0; background: #f4f5f7; font-family: "Segoe UI", sans-serif; }
+main { max-width: 880px; margin: 32px auto; display: grid; grid-template-columns: 1fr 280px; gap: 16px; }
+article, aside { background: white; border: 1px solid #e3e7ee; border-radius: 12px; padding: 16px; }
+h1 { margin: 0 0 8px; font-size: 22px; }
+p { color: #5d6b82; }
+</style></head>
+<body><main>
+<article><h1>%s</h1><p>Панель справа показывает активы только проекта этой заявки.</p></article>
+<aside><h2 style="margin:0 0 8px;font-size:14px;">Активы</h2>
+<div id="asset-tree-panel" data-issue-id="%s" data-issue-key="%s"></div>
+</aside></main>
+<script src="/download/resources/asset-tree/issue-panel.js"></script>
+</body></html>""" % (issue["issueKey"], issue["issueKey"], issue["issueId"], issue["issueKey"])
+        self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def serve_portal(self, query):
+        project = (query.get("project") or [""])[0]
+        html = """<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Портал</title>
+<link rel="stylesheet" href="/download/resources/asset-tree/asset-field.css">
+<style>
+body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
+main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
+</style></head>
+<body><main>
+<h1>%s</h1>
+<p>%s</p>
+<div class="asset-tree-picker" data-project="%s">
+<input type="hidden" class="asset-tree-picker-value" value="">
+<div class="asset-tree-picker-levels"></div>
+<p class="asset-tree-picker-current"></p>
+</div>
+</main>
+<script src="/download/resources/asset-tree/asset-field.js"></script>
+</body></html>""" % (
+            self.text().get("asset-tree.ui.portalTitle", "Asset"),
+            self.text().get("asset-tree.ui.portalHint", ""),
+            project,
+        )
+        self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def serve_browse(self, key):
+        issue = ISSUES.get(key.upper())
+        if not issue:
+            self.send_error(404)
+            return
+        body = "<h1>%s</h1><p>%s</p><p>%s</p>" % (issue["issueKey"], issue["summary"], issue["status"])
+        self.respond(200, body.encode("utf-8"), "text/html; charset=utf-8")
+
+    def serve_static(self, name):
+        folder = "css" if name.endswith(".css") else "js" if name.endswith(".js") else None
+        if not folder:
+            self.send_error(404)
+            return
+        file_path = os.path.join(RES, folder, name)
+        if not os.path.isfile(file_path):
+            self.send_error(404)
+            return
+        content_type = "text/css; charset=utf-8" if name.endswith(".css") else "application/javascript; charset=utf-8"
+        with open(file_path, "rb") as handle:
+            self.respond(200, handle.read(), content_type)
+
+    def serve_api(self, method, path, query):
+        try:
+            with LOCK:
+                seed()
+                status, payload = self.api(method, path, query)
+            if status == 204:
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.respond(status, body, "application/json; charset=utf-8")
+        except Exception as error:  # noqa: BLE001
+            print("preview error", error)
+            self.respond(500, json.dumps({"message": "Error"}).encode("utf-8"), "application/json; charset=utf-8")
+
+    def api(self, method, path, query):
+        text = self.text()
+        if path == "/meta" and method == "GET":
+            i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
+            return 200, {
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.40",
+                "locale": "ru-RU" if self.lang() == "ru" else "en-US",
+                "displayName": USERS["ivanov"]["displayName"],
+                "userKey": "ivanov", "i18n": i18n,
+                "projects": [dict(project_rights(), key=item["key"], name=item["name"]) for item in PROJECTS],
+            }
+        if path == "/assets" and method == "GET":
+            project_key = (query.get("projectKey") or [""])[0]
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            needle = (query.get("q") or [""])[0].strip().lower()
+            rows = project_assets(project_key)
+            if needle:
+                rows = [row for row in rows if needle in (row["name"] + row["objectKey"] + location_of(row)).lower()][:30]
+            rows.sort(key=lambda item: (item["sortOrder"], item["id"]))
+            return 200, {
+                "assets": [asset_dto(row, text, False) for row in rows],
+                "types": [type_dto(row, text, project_assets(project_key)) for row in self.project_types(project_key)],
+                "statuses": status_dtos(project_key, text),
+            }
+        if path == "/assets" and method == "POST":
+            return self.create_asset(self.read_json(), text)
+        if path == "/users" and method == "GET":
+            needle = (query.get("q") or [""])[0].strip().lower()
+            found = [user for user in USERS.values() if needle and needle in (user["displayName"] + user["email"] + user["department"]).lower()]
+            return 200, found[:8]
+        match = re.fullmatch(r"/users/([a-z0-9_-]+)/assets", path)
+        if match and method == "GET":
+            user_key = match.group(1)
+            if user_key not in USERS:
+                return 404, {"message": text["asset-tree.error.user"]}
+            result = []
+            for asset in STATE["assets"].values():
+                role = text["asset-tree.ui.custodian"] if asset.get("custodianKey") == user_key else None
+                if role:
+                    dto = asset_dto(asset, text, False)
+                    dto["holderRole"] = role
+                    result.append(dto)
+            return 200, result
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/inventory", path)
+        if match and method == "GET":
+            return 200, self.inventory(match.group(1), text)
+        match = re.fullmatch(r"/assets/(\d+)/inventory", path)
+        if match and method == "POST":
+            return self.mark_inventory(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
+        if match and method == "GET":
+            return 200, self.report(match.group(1), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/picker", path)
+        if match and method == "GET":
+            rows = project_assets(match.group(1))
+            rows.sort(key=lambda item: (item["sortOrder"], item["id"]))
+            return 200, [{
+                "id": row["id"], "parentId": normalize_parent(row["parentId"]), "name": row["name"],
+                "objectKey": row["objectKey"], "status": canonical(row["status"]),
+                "typeLabel": type_dto(type_row(row["typeKey"]), text, rows)["label"],
+            } for row in rows]
+        if path == "/types" and method == "POST":
+            return self.create_type(self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)", path)
+        if match and method == "GET":
+            asset = STATE["assets"].get(int(match.group(1)))
+            if not asset:
+                return 404, {"message": text["asset-tree.error.notFound"]}
+            return 200, asset_dto(asset, text, True)
+        if match and method == "PUT":
+            return self.update_asset(int(match.group(1)), self.read_json(), text)
+        if match and method == "DELETE":
+            return self.delete_asset(int(match.group(1)), (query.get("cascade") or ["false"])[0] == "true", text)
+        match = re.fullmatch(r"/assets/(\d+)/comments", path)
+        if match and method == "POST":
+            return self.add_comment(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/comments/(\d+)", path)
+        if match and method == "DELETE":
+            return self.delete_comment(int(match.group(1)), int(match.group(2)), text)
+        match = re.fullmatch(r"/assets/(\d+)/files/(\d+)", path)
+        if match and method == "DELETE":
+            return self.delete_file(int(match.group(1)), int(match.group(2)), text)
+        match = re.fullmatch(r"/assets/(\d+)/move", path)
+        if match and method == "POST":
+            return self.move_asset(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/issues", path)
+        if match and method == "POST":
+            return self.link_issue(int(match.group(1)), (self.read_json() or {}).get("issueKey"), text)
+        match = re.fullmatch(r"/assets/(\d+)/issues/(\d+)", path)
+        if match and method == "DELETE":
+            STATE["links"] = [link for link in STATE["links"] if not (link["assetId"] == int(match.group(1)) and link["issueId"] == int(match.group(2)))]
+            return 204, None
+        match = re.fullmatch(r"/issues/(\d+)/context", path)
+        if match and method == "GET":
+            issue = ISSUES_BY_ID.get(int(match.group(1)))
+            if not issue:
+                return 404, {"message": text["asset-tree.error.issue.notFound"]}
+            project = next((item for item in PROJECTS if item["key"] == issue["projectKey"]), None)
+            if not project:
+                return 404, {"message": text["asset-tree.error.project.notFound"]}
+            return 200, {"projectKey": project["key"], "projectName": project["name"], "canEdit": True}
+        match = re.fullmatch(r"/issues/(\d+)/search", path)
+        if match and method == "GET":
+            issue = ISSUES_BY_ID.get(int(match.group(1)))
+            if not issue:
+                return 404, {"message": text["asset-tree.error.issue.notFound"]}
+            needle = (query.get("q") or [""])[0].strip().lower()
+            rows = [row for row in project_assets(issue["projectKey"]) if needle in (row["name"] + row["objectKey"]).lower()]
+            return 200, [asset_dto(row, text, False) for row in rows[:8]]
+        match = re.fullmatch(r"/issues/(\d+)/assets", path)
+        if match and method == "GET":
+            issue_id = int(match.group(1))
+            if issue_id not in ISSUES_BY_ID:
+                return 404, {"message": text["asset-tree.error.issue.notFound"]}
+            linked = [STATE["assets"][link["assetId"]] for link in STATE["links"] if link["issueId"] == issue_id and link["assetId"] in STATE["assets"]]
+            return 200, [asset_dto(asset, text, False) for asset in linked]
+        if match and method == "POST":
+            body = self.read_json() or {}
+            issue = ISSUES_BY_ID.get(int(match.group(1)))
+            asset = STATE["assets"].get(int(body.get("assetId") or 0))
+            if not issue or not asset:
+                return 404, {"message": text["asset-tree.error.notFound"]}
+            return self.link_issue(asset["id"], issue["issueKey"], text)
+        match = re.fullmatch(r"/types/([a-z0-9-]+)/fields", path)
+        if match and method == "POST":
+            return self.add_field(match.group(1), self.read_json(), text)
+        match = re.fullmatch(r"/types/([a-z0-9-]+)/fields/([a-z0-9-]+)", path)
+        if match and method == "DELETE":
+            row = STATE["types"].get(match.group(1))
+            if not row:
+                return 404, {"message": text["asset-tree.error.type.notFound"]}
+            row["fields"] = [field for field in row["fields"] if field["fieldKey"] != match.group(2)]
+            return 204, None
+        match = re.fullmatch(r"/types/([a-z0-9-]+)", path)
+        if match and method == "PUT":
+            return self.update_type(match.group(1), self.read_json(), text)
+        if match and method == "DELETE":
+            row = STATE["types"].get(match.group(1))
+            if not row:
+                return 404, {"message": text["asset-tree.error.type.notFound"]}
+            if row["systemType"]:
+                return 400, {"message": text["asset-tree.error.type.system"]}
+            if any(asset["typeKey"] == row["typeKey"] for asset in STATE["assets"].values()):
+                return 409, {"message": text["asset-tree.error.type.inUse"]}
+            del STATE["types"][row["typeKey"]]
+            return 204, None
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/statuses", path)
+        if match and method == "GET":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 404, {"message": text["asset-tree.error.project.notFound"]}
+            return 200, status_dtos(project_key, text)
+        if match and method == "POST":
+            return self.create_status(match.group(1), self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/statuses/([a-z0-9_-]+)", path)
+        if match and method == "PUT":
+            return self.update_status(match.group(1), match.group(2), self.read_json(), text)
+        if match and method == "DELETE":
+            return self.delete_status(match.group(1), match.group(2), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/grants", path)
+        if match and method == "GET":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 404, {"message": text["asset-tree.error.project.notFound"]}
+            return 200, list(STATE["grants"].get(project_key, []))
+        if match and method == "POST":
+            return self.add_grant(match.group(1), self.read_json(), text)
+        if match and method == "DELETE":
+            return self.delete_grant(match.group(1), (query.get("group") or [""])[0], text)
+        if path == "/groups" and method == "GET":
+            needle = (query.get("q") or [""])[0].strip().lower()
+            found = [{"groupName": name} for name in GROUPS if needle and needle in name.lower()]
+            return 200, found[:15]
+        return 404, {"message": text["asset-tree.error.notFound"]}
+
+    def create_status(self, project_key, body, text):
+        if project_key not in {item["key"] for item in PROJECTS}:
+            return 404, {"message": text["asset-tree.error.project.notFound"]}
+        label = ((body or {}).get("label") or "").strip()
+        if not label:
+            return 400, {"message": text["asset-tree.error.status"]}
+        category = ((body or {}).get("category") or "todo").strip() or "todo"
+        if category not in CATEGORY_COLOR:
+            return 400, {"message": text["asset-tree.error.status"]}
+        rows = ensure_statuses(project_key, text)
+        taken = {row["statusKey"] for row in rows}
+        key = unique_key(slug(label), taken)
+        if not STATUS_KEY.match(key):
+            return 400, {"message": text["asset-tree.error.status"]}
+        row = {"statusKey": key, "label": label, "category": category, "sortOrder": len(rows)}
+        rows.append(row)
+        return 201, dict(row, assetCount=0)
+
+    def update_status(self, project_key, status_key, body, text):
+        rows = ensure_statuses(project_key, text)
+        row = next((item for item in rows if item["statusKey"] == status_key), None)
+        if not row:
+            return 404, {"message": text["asset-tree.error.status"]}
+        label = ((body or {}).get("label") or "").strip()
+        if (body or {}).get("label") is not None and not label:
+            return 400, {"message": text["asset-tree.error.status"]}
+        if label:
+            row["label"] = label
+        category = ((body or {}).get("category") or "").strip()
+        if category:
+            if category not in CATEGORY_COLOR:
+                return 400, {"message": text["asset-tree.error.status"]}
+            row["category"] = category
+        count = len([asset for asset in project_assets(project_key) if canonical(asset.get("status")) == status_key])
+        return 200, dict(row, assetCount=count)
+
+    def delete_status(self, project_key, status_key, text):
+        rows = ensure_statuses(project_key, text)
+        if len(rows) <= 1:
+            return 400, {"message": text["asset-tree.error.status.last"]}
+        row = next((item for item in rows if item["statusKey"] == status_key), None)
+        if not row:
+            return 404, {"message": text["asset-tree.error.status"]}
+        used = any(canonical(asset.get("status")) == status_key for asset in project_assets(project_key))
+        if used:
+            return 409, {"message": text["asset-tree.error.status.inUse"]}
+        STATE["statuses"][project_key] = [item for item in rows if item["statusKey"] != status_key]
+        return 204, None
+
+    def add_grant(self, project_key, body, text):
+        if project_key not in {item["key"] for item in PROJECTS}:
+            return 404, {"message": text["asset-tree.error.project.notFound"]}
+        group_name = ((body or {}).get("groupName") or "").strip()
+        raw_caps = (body or {}).get("caps")
+        level = ((body or {}).get("level") or "").strip()
+        caps = normalize_caps(raw_caps) if raw_caps else caps_from_level(level)
+        if group_name not in GROUPS or not caps:
+            return 400, {"message": text["asset-tree.error.group"]}
+        row = {"groupName": group_name, "level": level_of(caps), "caps": caps}
+        rows = STATE["grants"].setdefault(project_key, [])
+        current = next((item for item in rows if item["groupName"] == group_name), None)
+        if current:
+            current.update(row)
+            return 201, current
+        rows.append(row)
+        rows.sort(key=lambda item: item["groupName"].lower())
+        return 201, row
+
+    def delete_grant(self, project_key, group_name, text):
+        rows = STATE["grants"].get(project_key, [])
+        match = next((item for item in rows if item["groupName"] == (group_name or "").strip()), None)
+        if not match:
+            return 404, {"message": text["asset-tree.error.group"]}
+        STATE["grants"][project_key] = [item for item in rows if item is not match]
+        return 204, None
+
+    def project_types(self, project_key):
+        rows = [row for row in STATE["types"].values() if row["projectKey"] == project_key]
+        rows.sort(key=lambda item: item["sortOrder"])
+        return rows
+
+    def values_from(self, body, type_key, text):
+        row = type_row(type_key)
+        if not row:
+            return text["asset-tree.error.type"], {}
+        incoming = {}
+        for item in (body or {}).get("attributes") or []:
+            if item and item.get("fieldKey"):
+                incoming[item["fieldKey"]] = item.get("value") or ""
+        values = {}
+        for field in row["fields"]:
+            value = (incoming.get(field["fieldKey"]) or "").strip()
+            if field["required"] and not value:
+                return text["asset-tree.error.field.required"].replace("{0}", label_of(field["label"], text)), {}
+            if field["kind"] == "user" and value and value not in USERS:
+                return text["asset-tree.error.user"], {}
+            values[field["fieldKey"]] = incoming.get(field["fieldKey"]) or ""
+        return None, values
+
+    def create_asset(self, body, text):
+        if not body or not (body.get("name") or "").strip():
+            return 400, {"message": text["asset-tree.error.name.required"]}
+        project_key = body.get("projectKey")
+        if project_key not in {item["key"] for item in PROJECTS}:
+            return 400, {"message": text["asset-tree.error.project.required"]}
+        type_key = (body.get("typeKey") or "").strip()
+        row = type_row(type_key)
+        if not row or row["projectKey"] != project_key:
+            return 400, {"message": text["asset-tree.error.type"]}
+        parent_id = normalize_parent(body.get("parentId"))
+        parent = STATE["assets"].get(parent_id) if parent_id else None
+        if parent_id and (not parent or parent["projectKey"] != project_key):
+            return 400, {"message": text["asset-tree.error.project.mismatch"]}
+        custodian = (body.get("custodianKey") or "").strip() or None
+        if custodian and custodian not in USERS:
+            return 400, {"message": text["asset-tree.error.user"]}
+        error, values = self.values_from(body, type_key, text)
+        if error:
+            return 400, {"message": error}
+        status = canonical(body.get("status") or "in_use")
+        if not status_known(project_key, status, text):
+            return 400, {"message": text["asset-tree.error.status"]}
+        asset_id = add_asset(project_key, type_key, body["name"].strip(), parent_id, status, custodian, values)
+        STATE["assets"][asset_id]["description"] = body.get("description") or ""
+        log_activity(asset_id, "created", "", "", body["name"].strip())
+        return 201, asset_dto(STATE["assets"][asset_id], text, True)
+
+    def update_asset(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        if not body or not (body.get("name") or "").strip():
+            return 400, {"message": text["asset-tree.error.name.required"]}
+        type_key = (body.get("typeKey") or asset["typeKey"]).strip()
+        row = type_row(type_key)
+        if not row or row["projectKey"] != asset["projectKey"]:
+            return 400, {"message": text["asset-tree.error.type"]}
+        status = canonical(body.get("status") or asset["status"])
+        if not status_known(asset["projectKey"], status, text):
+            return 400, {"message": text["asset-tree.error.status"]}
+        custodian = (body.get("custodianKey") or "").strip() or None
+        if custodian and custodian not in USERS:
+            return 400, {"message": text["asset-tree.error.user"]}
+        error, values = self.values_from(body, type_key, text)
+        if error:
+            return 400, {"message": error}
+        old_name = asset["name"]
+        old_description = asset.get("description") or ""
+        old_type = asset["typeKey"]
+        old_status = canonical(asset["status"])
+        old_custodian = asset.get("custodianKey") or ""
+        old_values = dict(asset.get("values") or {})
+        new_name = body["name"].strip()
+        new_description = body.get("description") or ""
+        new_status = canonical(status)
+        new_custodian = custodian or ""
+        asset.update({"name": new_name, "description": new_description, "typeKey": type_key, "status": new_status, "custodianKey": custodian, "values": values, "updated": now_stamp()})
+        log_activity(asset_id, "name", "", old_name, new_name)
+        log_activity(asset_id, "description", "", old_description, new_description)
+        old_type_row = type_row(old_type)
+        new_type_row = type_row(type_key)
+        log_activity(asset_id, "type", "", (old_type_row or {}).get("label") or old_type, (new_type_row or {}).get("label") or type_key)
+        log_activity(asset_id, "status", "", old_status, new_status)
+        old_person = USERS.get(old_custodian)
+        new_person = USERS.get(new_custodian)
+        log_activity(asset_id, "custodian", "", old_person["displayName"] if old_person else "", new_person["displayName"] if new_person else "")
+        labels = {}
+        for field in (new_type_row or {}).get("fields") or []:
+            labels[field["fieldKey"]] = label_of(field["label"], text)
+        keys = set(old_values) | set(values)
+        for key in keys:
+            old_value = (old_values.get(key) or "").strip()
+            new_value = (values.get(key) or "").strip()
+            log_activity(asset_id, "attribute", labels.get(key) or key, old_value, new_value)
+        return 200, asset_dto(asset, text, True)
+
+    def delete_asset(self, asset_id, cascade, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        rows = project_assets(asset["projectKey"])
+        nested = descendants(rows, asset_id)
+        if nested and not cascade:
+            return 409, {"message": text["asset-tree.error.hasChildren"].replace("{0}", str(len(nested)))}
+        for current in nested + [asset_id]:
+            STATE["assets"].pop(current, None)
+            STATE["checks"].pop(current, None)
+            STATE["links"] = [link for link in STATE["links"] if link["assetId"] != current]
+            for comment_id in [row["id"] for row in comments_of(current)]:
+                STATE["comments"].pop(comment_id, None)
+            for file_id in [row["id"] for row in files_of(current)]:
+                STATE["files"].pop(file_id, None)
+                delete_preview_file(file_id)
+            for activity_id in [row["id"] for row in activities_of(current)]:
+                STATE["activities"].pop(activity_id, None)
+        return 204, None
+
+    def move_asset(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        parent_id = normalize_parent((body or {}).get("parentId"))
+        parent = STATE["assets"].get(parent_id) if parent_id else None
+        if parent_id and (not parent or parent["projectKey"] != asset["projectKey"]):
+            return 400, {"message": text["asset-tree.error.project.mismatch"]}
+        rows = project_assets(asset["projectKey"])
+        if would_cycle(rows, asset_id, parent_id):
+            return 400, {"message": text["asset-tree.error.cycle"]}
+        base = 0 if parent_id is None else depth(rows, parent_id) + 1
+        if base >= MAX_DEPTH or base + subtree_height(rows, asset_id) >= MAX_DEPTH:
+            return 400, {"message": text["asset-tree.error.depth"]}
+        siblings = [row for row in rows if row["id"] != asset_id and normalize_parent(row["parentId"]) == parent_id]
+        siblings.sort(key=lambda item: (item["sortOrder"], item["id"]))
+        index = None if body is None else body.get("index")
+        if index is None:
+            index = len(siblings)
+        index = max(0, min(int(index), len(siblings)))
+        previous_parent = normalize_parent(asset.get("parentId"))
+        asset["parentId"] = parent_id
+        if previous_parent != parent_id:
+            old_name = STATE["assets"].get(previous_parent, {}).get("name", "") if previous_parent else ""
+            new_name = parent["name"] if parent else ""
+            log_activity(asset_id, "move", "", old_name, new_name)
+        siblings.insert(index, asset)
+        for position, sibling in enumerate(siblings):
+            sibling["sortOrder"] = position
+        return 200, asset_dto(asset, text, True)
+
+    def link_issue(self, asset_id, issue_key, text):
+        asset = STATE["assets"].get(asset_id)
+        issue = ISSUES.get((issue_key or "").strip().upper())
+        if not asset or not issue:
+            return 404, {"message": text["asset-tree.error.issue.notFound"] if not issue else text["asset-tree.error.notFound"]}
+        if asset["projectKey"] != issue["projectKey"]:
+            return 400, {"message": text["asset-tree.error.project.mismatch"]}
+        if any(link["assetId"] == asset_id and link["issueId"] == issue["issueId"] for link in STATE["links"]):
+            return 409, {"message": text["asset-tree.error.issue.duplicate"]}
+        STATE["links"].append({"assetId": asset_id, "issueId": issue["issueId"]})
+        return 201, issue
+
+    def create_type(self, body, text):
+        label = ((body or {}).get("label") or "").strip()
+        project_key = (body or {}).get("projectKey")
+        if not label:
+            return 400, {"message": text["asset-tree.error.type.label"]}
+        if project_key not in {item["key"] for item in PROJECTS}:
+            return 400, {"message": text["asset-tree.error.project.required"]}
+        color = (body or {}).get("color") or PALETTE[0]
+        taken = set(STATE["types"])
+        key = unique_key(slug(label) or "type", taken)
+        order = max([item["sortOrder"] for item in self.project_types(project_key)] or [-1]) + 1
+        location = bool((body or {}).get("location"))
+        STATE["types"][key] = {
+            "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color,
+            "systemType": False, "location": location,
+            "showInTree": location or bool((body or {}).get("showInTree")),
+            "sortOrder": order, "fields": [],
+        }
+        return 201, type_dto(STATE["types"][key], text, project_assets(project_key))
+
+    def update_type(self, type_key, body, text):
+        row = STATE["types"].get(type_key)
+        if not row:
+            return 404, {"message": text["asset-tree.error.type.notFound"]}
+        if row.get("location"):
+            row["showInTree"] = True
+        else:
+            row["showInTree"] = bool((body or {}).get("showInTree"))
+        return 200, type_dto(row, text, project_assets(row["projectKey"]))
+
+    def add_field(self, type_key, body, text):
+        row = STATE["types"].get(type_key)
+        label = ((body or {}).get("label") or "").strip()
+        kind = (body or {}).get("kind") or "text"
+        if not row:
+            return 404, {"message": text["asset-tree.error.type.notFound"]}
+        if not label:
+            return 400, {"message": text["asset-tree.error.field.label"]}
+        if kind not in ("text", "textarea", "number", "user"):
+            return 400, {"message": text["asset-tree.error.field.kind"]}
+        taken = {field["fieldKey"] for field in row["fields"]}
+        field_key = unique_key(slug(label) or "field", taken)
+        field = {"fieldKey": field_key, "label": label, "kind": kind, "required": bool((body or {}).get("required")), "position": len(row["fields"])}
+        row["fields"].append(field)
+        return 201, {"fieldKey": field_key, "label": label, "kind": kind, "required": field["required"], "position": field["position"]}
+
+    def ancestors_of(self, asset):
+        chain = []
+        cursor = normalize_parent(asset.get("parentId"))
+        guard = 0
+        while cursor and guard < 40:
+            chain.append(cursor)
+            parent = STATE["assets"].get(cursor)
+            cursor = normalize_parent(parent.get("parentId")) if parent else None
+            guard += 1
+        chain.reverse()
+        return chain
+
+    def inventory(self, project_key, text):
+        rows = project_assets(project_key)
+        types = {row["typeKey"]: row for row in self.project_types(project_key)}
+        items = []
+        checked = 0
+        for asset in rows:
+            kind = types.get(asset["typeKey"])
+            if kind and kind.get("location"):
+                continue
+            mark = STATE["checks"].get(asset["id"])
+            if mark:
+                checked += 1
+            person = USERS.get(asset.get("custodianKey") or "")
+            items.append({
+                "id": asset["id"],
+                "name": asset["name"],
+                "objectKey": asset["objectKey"],
+                "typeLabel": (kind or {}).get("label") or asset["typeKey"],
+                "status": canonical(asset["status"]),
+                "location": location_of(asset),
+                "ancestors": self.ancestors_of(asset),
+                "custodian": person["displayName"] if person else "",
+                "checked": bool(mark),
+                "checkedAt": mark["checkedAt"] if mark else "",
+                "checkedBy": mark["checkedBy"] if mark else "",
+            })
+        items.sort(key=lambda item: (item["location"].lower(), item["name"].lower()))
+        return {"total": len(items), "checked": checked, "rows": items}
+
+    def mark_inventory(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        if (body or {}).get("checked"):
+            STATE["checks"][asset_id] = {"checkedAt": "2026-09-27T10:00:00Z", "checkedBy": "Preview"}
+        else:
+            STATE["checks"].pop(asset_id, None)
+        for row in self.inventory(asset["projectKey"], text)["rows"]:
+            if row["id"] == asset_id:
+                return 200, row
+        return 200, {"id": asset_id, "checked": bool(STATE["checks"].get(asset_id)), "ancestors": []}
+
+    def report(self, project_key, text):
+        rows = project_assets(project_key)
+        types = self.project_types(project_key)
+        location_keys = {row["typeKey"] for row in types if row["location"]}
+        equipment = [row for row in rows if row["typeKey"] not in location_keys]
+        by_status = []
+        for status in status_dtos(project_key, text):
+            count = len([row for row in equipment if canonical(row["status"]) == status["statusKey"]])
+            if count:
+                by_status.append({
+                    "key": status["statusKey"],
+                    "label": status["label"],
+                    "color": CATEGORY_COLOR.get(status["category"], "#4a6785"),
+                    "count": count,
+                })
+        by_type = []
+        for row in types:
+            if row["typeKey"] in location_keys:
+                continue
+            count = len([asset for asset in equipment if asset["typeKey"] == row["typeKey"]])
+            if count:
+                by_type.append({"key": row["typeKey"], "label": type_dto(row, text, rows)["label"], "color": row["color"], "count": count})
+        places = []
+        for asset in rows:
+            if asset["typeKey"] not in location_keys:
+                continue
+            nested = [item for item in descendants(rows, asset["id"]) if STATE["assets"][item]["typeKey"] not in location_keys]
+            places.append({"id": asset["id"], "name": asset["name"], "typeLabel": type_dto(type_row(asset["typeKey"]), text, rows)["label"], "equipment": len(nested)})
+        holders = {}
+        for asset in equipment:
+            if asset.get("custodianKey"):
+                holders[asset["custodianKey"]] = holders.get(asset["custodianKey"], 0) + 1
+        project = next(item for item in PROJECTS if item["key"] == project_key)
+        return {
+            "projectKey": project_key, "projectName": project["name"], "total": len(rows), "equipment": len(equipment),
+            "unassigned": len([row for row in equipment if not row.get("custodianKey")]),
+            "byStatus": by_status, "byType": by_type, "places": places,
+            "holders": [{"user": USERS[key], "count": count} for key, count in holders.items()],
+        }
+
+    def add_comment(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        note = ((body or {}).get("body") or "").strip()
+        if not note:
+            return 400, {"message": text["asset-tree.error.comment.required"]}
+        if len(note) > MAX_COMMENT:
+            return 400, {"message": text["asset-tree.error.description.length"]}
+        comment_id = STATE["comment_seq"]
+        STATE["comment_seq"] += 1
+        row = {
+            "id": comment_id, "assetId": asset_id, "authorKey": "ivanov",
+            "body": note, "created": now_stamp(),
+        }
+        STATE["comments"][comment_id] = row
+        log_activity(asset_id, "comment", "", "", note[:500])
+        return 201, comment_dto(row)
+
+    def delete_comment(self, asset_id, comment_id, text):
+        row = STATE["comments"].get(comment_id)
+        if not row or row["assetId"] != asset_id or asset_id not in STATE["assets"]:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        log_activity(asset_id, "comment_delete", "", row.get("body") or "", "")
+        STATE["comments"].pop(comment_id, None)
+        return 204, None
+
+    def delete_file(self, asset_id, file_id, text):
+        row = STATE["files"].get(file_id)
+        if not row or row["assetId"] != asset_id or asset_id not in STATE["assets"]:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        log_activity(asset_id, "file_delete", "", row.get("fileName") or "", "")
+        STATE["files"].pop(file_id, None)
+        delete_preview_file(file_id)
+        return 204, None
+
+    def serve_file(self, method, query):
+        text = self.text()
+        if method == "GET":
+            try:
+                file_id = int((query.get("id") or ["0"])[0])
+            except ValueError:
+                file_id = 0
+            with LOCK:
+                row = STATE["files"].get(file_id)
+                path = preview_file_path(file_id) if row else ""
+            if not row or not os.path.isfile(path):
+                self.send_error(404)
+                return
+            with open(path, "rb") as handle:
+                data = handle.read()
+            name = (row["fileName"] or "file").replace('"', "").replace("\r", "").replace("\n", "")
+            ascii_name = name.encode("ascii", "replace").decode("ascii")
+            disposition = 'attachment; filename="%s"; filename*=UTF-8\'\'%s' % (ascii_name, quote(name))
+            self.respond(200, data, row["contentType"] or "application/octet-stream", {
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": disposition,
+            })
+            return
+        if method != "POST":
+            self.send_error(405)
+            return
+        try:
+            asset_id = int((query.get("assetId") or ["0"])[0])
+        except ValueError:
+            asset_id = 0
+        length = int(self.headers.get("Content-Length") or 0)
+        if asset_id <= 0 or length <= 0 or length > MAX_FILE_BYTES + 65536:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.required"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        raw = self.rfile.read(length)
+        parsed = parse_multipart(raw, self.headers.get("Content-Type", ""))
+        if not parsed or not parsed[2]:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.required"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        name, content_type, data = parsed
+        if len(data) > MAX_FILE_BYTES:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.size"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        safe = safe_file_name(name)
+        if not safe:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.name"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        with LOCK:
+            if asset_id not in STATE["assets"]:
+                missing = True
+                file_id = 0
+            else:
+                missing = False
+                file_id = STATE["file_seq"]
+                STATE["file_seq"] += 1
+                STATE["files"][file_id] = {
+                    "id": file_id, "assetId": asset_id, "fileName": safe,
+                    "contentType": content_type or "application/octet-stream",
+                    "size": len(data), "authorKey": "ivanov", "created": now_stamp(),
+                }
+        if missing:
+            self.respond(404, json.dumps({"message": text["asset-tree.error.notFound"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        try:
+            write_preview_file(file_id, data)
+        except OSError:
+            with LOCK:
+                STATE["files"].pop(file_id, None)
+            self.respond(500, json.dumps({"message": text["asset-tree.error.unexpected"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        with LOCK:
+            log_activity(asset_id, "file", "", "", safe)
+        self.respond(201, json.dumps({"id": file_id}).encode("utf-8"), "application/json; charset=utf-8")
+
+    def read_json(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw.decode("utf-8")) if raw else {}
+
+    def respond(self, status, body, content_type, extra=None):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+
+if __name__ == "__main__":
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    print("Asset tree preview at http://127.0.0.1:%s" % PORT)
+    server.serve_forever()

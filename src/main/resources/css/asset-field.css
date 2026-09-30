@@ -1,0 +1,41 @@
+.asset-tree-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 520px;
+}
+
+.asset-tree-picker-levels {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.asset-tree-picker-level {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.asset-tree-picker-level span {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b778c;
+}
+
+.asset-tree-picker select {
+    width: 100%;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    padding: 6px 8px;
+    background: white;
+}
+
+.asset-tree-picker-current {
+    margin: 0;
+    color: #172b4d;
+}
+
+.asset-tree-picker button {
+    align-self: flex-start;
+}
