@@ -1890,7 +1890,10 @@
     function iconGlyph(key) {
         var shape = iconShape(key) || iconShape(DEFAULT_OBJECT_ICON);
         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('viewBox', '0 0 24 24');
+        /* Padding lives in the viewBox, so the glyph stays centered even when host CSS
+           (Jira/AUI) forces its own size or display on nested svg elements. */
+        svg.setAttribute('viewBox', '-4.5 -4.5 33 33');
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
         svg.setAttribute('aria-hidden', 'true');
         svg.setAttribute('focusable', 'false');
         var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');

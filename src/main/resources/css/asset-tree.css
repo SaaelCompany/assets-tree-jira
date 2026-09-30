@@ -1231,60 +1231,87 @@ html.asset-tree-dragging * {
     box-shadow: 0 0 0 2px #0052cc;
 }
 
-/* Type icon: a colored square tile with a white glyph, like request type icons in Jira. */
-.asset-tree-type-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+/* Type icon: a colored square tile with a white glyph, like request type icons in Jira.
+   The glyph is centered by the SVG viewBox and the svg is pinned to the tile box, so the
+   result does not depend on flex support or on Jira/AUI rules that restyle nested svg. */
+#asset-tree-app .asset-tree-type-icon,
+.asset-tree-backdrop .asset-tree-type-icon {
+    position: relative !important;
+    display: inline-block !important;
     flex: 0 0 auto;
-    box-sizing: border-box;
-    width: 20px;
-    height: 20px;
+    box-sizing: border-box !important;
+    width: 20px !important;
+    min-width: 20px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    margin: 0;
+    padding: 0 !important;
+    border: 0 !important;
     border-radius: 3px;
-    background: #5d6b82;
-    color: #ffffff;
+    background-color: #5d6b82;
+    color: #ffffff !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
     vertical-align: middle;
+    overflow: hidden;
 }
 
-.asset-tree-type-icon svg {
-    display: block;
-    width: 14px;
-    height: 14px;
+#asset-tree-app .asset-tree-type-icon svg,
+.asset-tree-backdrop .asset-tree-type-icon svg {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
     fill: currentColor;
+    color: #ffffff;
+    pointer-events: none;
 }
 
-.asset-tree-type-icon.is-sm {
-    width: 16px;
-    height: 16px;
+#asset-tree-app .asset-tree-type-icon svg path,
+.asset-tree-backdrop .asset-tree-type-icon svg path {
+    fill: #ffffff;
+}
+
+#asset-tree-app .asset-tree-type-icon.is-sm,
+.asset-tree-backdrop .asset-tree-type-icon.is-sm {
+    width: 16px !important;
+    min-width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
     border-radius: 2px;
 }
 
-.asset-tree-type-icon.is-sm svg {
-    width: 11px;
-    height: 11px;
-}
-
-.asset-tree-type-icon.is-lg {
-    width: 32px;
-    height: 32px;
+#asset-tree-app .asset-tree-type-icon.is-lg,
+.asset-tree-backdrop .asset-tree-type-icon.is-lg {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px !important;
+    min-height: 32px !important;
     border-radius: 4px;
 }
 
-.asset-tree-type-icon.is-lg svg {
-    width: 22px;
-    height: 22px;
-}
-
-.asset-tree-type-badge {
-    display: inline-flex;
+#asset-tree-app .asset-tree-type-badge,
+.asset-tree-backdrop .asset-tree-type-badge {
+    display: inline-flex !important;
     align-items: center;
-    gap: 6px;
     min-width: 0;
     max-width: 100%;
     vertical-align: middle;
 }
 
-.asset-tree-type-badge-label {
+#asset-tree-app .asset-tree-type-badge .asset-tree-type-icon,
+.asset-tree-backdrop .asset-tree-type-badge .asset-tree-type-icon {
+    margin-right: 6px;
+}
+
+#asset-tree-app .asset-tree-type-badge-label,
+.asset-tree-backdrop .asset-tree-type-badge-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
