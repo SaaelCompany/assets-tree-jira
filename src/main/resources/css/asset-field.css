@@ -49,3 +49,8 @@
 .asset-tree-picker button {
     align-self: flex-start;
 }
+
+input.asset-tree-picker-native,
+textarea.asset-tree-picker-native {
+    display: none !important;
+}

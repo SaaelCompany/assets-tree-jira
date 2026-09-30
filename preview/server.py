@@ -836,9 +836,9 @@ p { color: #5d6b82; }
     def serve_portal(self, query):
         ensure_portal_demo()
         project = (query.get("project") or ["TEST"])[0] or "TEST"
-        wait = self.text().get("asset-tree.ui.portalWait", "")
+        project_attr = project.replace('"', "")
         html = """<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>Портал</title>
+<html lang="ru"><head><meta charset="utf-8"><meta name="ajs-project-key" content="%s"><title>Портал</title>
 <link rel="stylesheet" href="/download/resources/asset-tree/asset-field.css">
 <style>
 body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
@@ -864,19 +864,16 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
 <option value="a">Пункт А</option>
 </select>
 </label>
-<div class="asset-tree-picker" data-project="%s" data-wait="%s">
-<input type="hidden" class="asset-tree-picker-value" value="">
-<div class="asset-tree-picker-levels"></div>
-<p class="asset-tree-picker-current"></p>
-</div>
+<label>Актив
+<input type="text" id="customfield_10001" name="customfield_10001" value="">
+</label>
 </form>
 </main>
 <script src="/download/resources/asset-tree/asset-field.js"></script>
 </body></html>""" % (
+            project_attr,
             self.text().get("asset-tree.ui.portalTitle", "Asset"),
             self.text().get("asset-tree.ui.portalHint", ""),
-            project,
-            wait.replace('"', "&quot;"),
         )
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
@@ -922,7 +919,7 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.45",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.46",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -970,6 +967,11 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)
+        if path == "/asset-fields" and method == "GET":
+            return 200, {"fields": ["customfield_10001"]}
+        match = re.fullmatch(r"/portals/(\d+)", path)
+        if match and method == "GET":
+            return 200, {"projectKey": "TEST"}
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "DELETE":
             ensure_portal_demo()

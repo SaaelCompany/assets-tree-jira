@@ -148,6 +148,8 @@ public final class UiCatalog {
             "portalAddRule",
             "portalRuleEmpty",
             "portalWait",
+            "portalChoose",
+            "portalNone",
             "portalConditionRequired",
             "statusStock",
             "statusInUse",

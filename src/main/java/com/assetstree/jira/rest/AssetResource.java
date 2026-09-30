@@ -13,8 +13,11 @@ import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.InventoryDraft;
 import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.dto.PortalFieldsDto;
+import com.assetstree.jira.dto.PortalProjectDto;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
+import com.assetstree.jira.web.PortalLookup;
 import com.assetstree.jira.model.TypeDraft;
 import com.assetstree.jira.service.AssetBridge;
 import com.assetstree.jira.service.AssetService;
@@ -373,6 +376,42 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.searchGroups(user(), query)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("asset-fields")
+    public Response assetFields() {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                if (user() == null) {
+                    throw new AssetException(401, "asset-tree.error.auth");
+                }
+                PortalFieldsDto dto = new PortalFieldsDto();
+                dto.setFields(PortalLookup.assetFieldIds());
+                return Response.ok(dto).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("portals/{portalId}")
+    public Response portalProject(@PathParam("portalId") final int portalId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                if (user() == null) {
+                    throw new AssetException(401, "asset-tree.error.auth");
+                }
+                String projectKey = PortalLookup.projectKeyForPortal(user(), portalId);
+                if (projectKey == null || projectKey.isEmpty()) {
+                    throw new AssetException(404, "asset-tree.error.project.notFound");
+                }
+                PortalProjectDto dto = new PortalProjectDto();
+                dto.setProjectKey(projectKey);
+                return Response.ok(dto).build();
             }
         });
     }

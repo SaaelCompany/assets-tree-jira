@@ -200,10 +200,13 @@
         if (!picker || picker.getAttribute('data-ready') === '1') return;
         picker.setAttribute('data-ready', '1');
         var projectKey = picker.getAttribute('data-project') || '';
-        var hidden = picker.querySelector('.asset-tree-picker-value');
+        var hidden = picker.valueInput || picker.querySelector('.asset-tree-picker-value');
         var levels = picker.querySelector('.asset-tree-picker-levels');
         var current = picker.querySelector('.asset-tree-picker-current');
-        var waitText = picker.getAttribute('data-wait') || '';
+        var waitText = picker.getAttribute('data-wait') || phrase('wait');
+        var chooseText = picker.getAttribute('data-choose') || phrase('choose');
+        var emptyText = picker.getAttribute('data-empty') || phrase('empty');
+        var flat = !!picker.valueInput;
         if (!projectKey || !hidden || !levels) return;
         var nodes = null;
         var byId = {};
@@ -234,9 +237,16 @@
             appliedRoot = rootId;
             appliedLock = locked;
             var value = hidden.value ? parseInt(hidden.value, 10) : null;
-            if (locked && !rootId) {
-                hidden.value = '';
-                draw(null, null);
+            if (locked || flat) {
+                if (locked && !rootId) {
+                    hidden.value = '';
+                    drawList(null, true);
+                    return;
+                }
+                if (rootId && value && !listedContains(rootId, value)) {
+                    hidden.value = '';
+                }
+                drawList(locked ? rootId : null, false);
                 return;
             }
             if (rootId && (!value || !contains(byId, rootId, value))) {
@@ -244,6 +254,69 @@
                 value = rootId;
             }
             draw(value, rootId);
+        }
+
+        function listedContains(rootId, id) {
+            var items = listed(rootId);
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].id === id) return true;
+            }
+            return false;
+        }
+
+        function listed(rootId) {
+            var items = [];
+            (nodes || []).forEach(function (node) {
+                if (rootId && !contains(byId, rootId, node.id)) return;
+                items.push(node);
+            });
+            if (rootId && childrenOf(nodes, rootId).length) {
+                items = items.filter(function (node) { return node.id !== rootId; });
+            }
+            items.sort(function (left, right) {
+                return labelOf(left).localeCompare(labelOf(right));
+            });
+            return items;
+        }
+
+        function labelOf(node) {
+            return pathTo(byId, node.id).map(function (item) { return item.name; }).join(' / ');
+        }
+
+        function drawList(rootId, waiting) {
+            levels.innerHTML = '';
+            if (waiting) {
+                var waitingSelect = el('select');
+                waitingSelect.disabled = true;
+                var placeholder = el('option', null, '—');
+                placeholder.value = '';
+                waitingSelect.appendChild(placeholder);
+                levels.appendChild(waitingSelect);
+                levels.appendChild(el('p', 'asset-tree-picker-wait', waitText));
+                if (current) current.textContent = '';
+                return;
+            }
+            if (rootId && byId[rootId]) {
+                levels.appendChild(el('p', 'asset-tree-picker-root', labelOf(byId[rootId])));
+            }
+            var options = listed(rootId);
+            var select = el('select');
+            var empty = el('option', null, chooseText);
+            empty.value = '';
+            select.appendChild(empty);
+            options.forEach(function (node) {
+                var option = el('option', null, labelOf(node));
+                option.value = String(node.id);
+                if (hidden.value === option.value) option.selected = true;
+                select.appendChild(option);
+            });
+            select.addEventListener('change', function () {
+                hidden.value = select.value;
+                show(hidden.value ? parseInt(hidden.value, 10) : null);
+            });
+            levels.appendChild(select);
+            if (!options.length) levels.appendChild(el('p', 'asset-tree-picker-wait', emptyText));
+            show(hidden.value ? parseInt(hidden.value, 10) : null);
         }
 
         function draw(value, rootId) {
@@ -309,9 +382,103 @@
         picker.applyPortal = function () { applyPortal(false); };
     }
 
+    function phrase(kind) {
+        var lang = (document.documentElement.getAttribute('lang') || '').toLowerCase();
+        var ru = lang.indexOf('ru') === 0;
+        if (kind === 'choose') return ru ? 'Выберите актив' : 'Choose an asset';
+        if (kind === 'empty') return ru ? 'В этом месте нет активов' : 'No assets in this place';
+        return ru
+            ? 'Заполните поля выше. Список активов откроется на подходящей площадке.'
+            : 'Fill in the fields above. The asset list will open at the matching place.';
+    }
+
+    function projectFromPage() {
+        var meta = document.querySelector('meta[name="ajs-project-key"]');
+        if (meta && meta.getAttribute('content')) return meta.getAttribute('content');
+        var marked = document.querySelector('[data-project-key]');
+        if (marked && marked.getAttribute('data-project-key')) return marked.getAttribute('data-project-key');
+        var match = /(?:\?|&)project=([A-Za-z][A-Za-z0-9_]*)/.exec(window.location.search || '');
+        if (match) return match[1];
+        var embedded = /"projectKey"\s*:\s*"([A-Z][A-Z0-9_]*)"/.exec(document.body ? document.body.innerHTML : '');
+        return embedded ? embedded[1] : '';
+    }
+
+    function portalIdFromLocation() {
+        var match = /\/portal\/(\d+)/.exec(window.location.pathname || '');
+        return match ? match[1] : '';
+    }
+
+    var fieldContext = null;
+    var fieldWaiters = null;
+
+    function loadFieldContext(done) {
+        if (fieldContext) {
+            done(fieldContext);
+            return;
+        }
+        if (fieldWaiters) {
+            fieldWaiters.push(done);
+            return;
+        }
+        fieldWaiters = [done];
+        var ctx = { fields: [], projectKey: projectFromPage() };
+        var pending = 2;
+        function finish() {
+            if (--pending > 0) return;
+            fieldContext = ctx;
+            var waiters = fieldWaiters;
+            fieldWaiters = null;
+            for (var i = 0; i < waiters.length; i++) waiters[i](ctx);
+        }
+        ajax('/asset-fields', function (status, payload) {
+            if (status === 200 && payload && payload.fields) ctx.fields = payload.fields;
+            finish();
+        });
+        var portalId = portalIdFromLocation();
+        if (ctx.projectKey || !portalId) {
+            finish();
+            return;
+        }
+        ajax('/portals/' + encodeURIComponent(portalId), function (status, payload) {
+            if (status === 200 && payload && payload.projectKey) ctx.projectKey = payload.projectKey;
+            finish();
+        });
+    }
+
+    function adoptTextFields(ctx) {
+        if (!ctx || !ctx.projectKey || !ctx.fields || !ctx.fields.length) return;
+        for (var f = 0; f < ctx.fields.length; f++) {
+            var id = ctx.fields[f];
+            var inputs = document.querySelectorAll('input[name="' + id + '"], textarea[name="' + id + '"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var input = inputs[i];
+                if (input.getAttribute('data-asset-tree') === '1' || insidePicker(input)) continue;
+                input.setAttribute('data-asset-tree', '1');
+                input.className = (input.className ? input.className + ' ' : '') + 'asset-tree-picker-native';
+                var picker = el('div', 'asset-tree-picker');
+                picker.setAttribute('data-project', ctx.projectKey);
+                picker.setAttribute('data-wait', phrase('wait'));
+                picker.setAttribute('data-choose', phrase('choose'));
+                picker.setAttribute('data-empty', phrase('empty'));
+                picker.valueInput = input;
+                picker.appendChild(el('div', 'asset-tree-picker-levels'));
+                picker.appendChild(el('p', 'asset-tree-picker-current'));
+                if (input.nextSibling) input.parentNode.insertBefore(picker, input.nextSibling);
+                else input.parentNode.appendChild(picker);
+            }
+        }
+    }
+
     function boot() {
         var pickers = document.querySelectorAll('.asset-tree-picker');
         for (var i = 0; i < pickers.length; i++) mount(pickers[i]);
+        var inputs = document.querySelectorAll('input[name^="customfield_"], textarea[name^="customfield_"]');
+        if (!inputs.length) return;
+        loadFieldContext(function (ctx) {
+            adoptTextFields(ctx);
+            var created = document.querySelectorAll('.asset-tree-picker');
+            for (var n = 0; n < created.length; n++) mount(created[n]);
+        });
     }
 
     function refresh() {
