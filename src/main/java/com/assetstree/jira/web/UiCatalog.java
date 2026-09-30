@@ -171,6 +171,8 @@ public final class UiCatalog {
             "exchangeExport",
             "exchangeImport",
             "exchangePick",
+            "exchangeChoose",
+            "exchangeEmpty",
             "exchangeCreated",
             "exchangeUpdated",
             "exchangeRow",

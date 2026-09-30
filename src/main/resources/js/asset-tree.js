@@ -5362,7 +5362,18 @@
         file.type = 'file';
         file.id = 'asset-tree-import-file';
         file.accept = '.csv,text/csv,text/plain';
-        block.appendChild(file);
+        var picker = el('div', 'asset-tree-import-picker');
+        var chosen = el('span', 'asset-tree-import-name', t('exchangeEmpty'));
+        file.addEventListener('change', function () {
+            var item = file.files && file.files[0];
+            chosen.textContent = item ? item.name : t('exchangeEmpty');
+        });
+        picker.appendChild(file);
+        picker.appendChild(button(t('exchangeChoose'), 'asset-tree-btn', function () {
+            file.click();
+        }));
+        picker.appendChild(chosen);
+        block.appendChild(picker);
         var actions = el('div', 'asset-tree-inline-actions');
         actions.appendChild(button(t('exchangeExport'), 'asset-tree-btn', function () {
             var frame = document.createElement('iframe');
