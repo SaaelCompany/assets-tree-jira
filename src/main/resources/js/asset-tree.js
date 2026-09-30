@@ -111,7 +111,7 @@
 
     function normalizeView(raw) {
         var value = String(raw || '').toLowerCase();
-        if (value === 'mine' || value === 'settings' || value === 'dashboard') {
+        if (value === 'mine' || value === 'settings') {
             return value;
         }
         return 'all';
@@ -120,7 +120,6 @@
     function viewTitle(view) {
         if (view === 'mine') return t('menuMine');
         if (view === 'settings') return t('menuSettings');
-        if (view === 'dashboard') return t('menuDashboard');
         return t('menuAll');
     }
 
@@ -1021,8 +1020,7 @@
         bar.setAttribute('role', 'tablist');
         var items = [
             { view: 'mine', label: t('menuMine') },
-            { view: 'all', label: t('tabAssets') },
-            { view: 'dashboard', label: t('menuDashboard') }
+            { view: 'all', label: t('tabAssets') }
         ];
         if (state.canManage) {
             items.push({ view: 'settings', label: t('menuSettings') });
@@ -1040,6 +1038,21 @@
     }
 
     function showView(view) {
+        if (view === 'mine') {
+            var entering = state.view !== 'mine';
+            state.view = 'mine';
+            state.dirty = false;
+            state.editing = false;
+            rememberView('mine');
+            if (entering) {
+                state.mineAssets = null;
+                state.error = null;
+                state.loading = true;
+                mount();
+            }
+            loadMine();
+            return;
+        }
         if (state.view === view) {
             return;
         }
@@ -1047,27 +1060,12 @@
         state.dirty = false;
         state.editing = false;
         rememberView(view);
-        if (view === 'mine') {
-            if (state.mineAssets === null) {
-                state.loading = true;
-                mount();
-                loadMine();
-            } else {
-                state.loading = false;
-                state.error = null;
-                mount();
-            }
-            return;
-        }
         ensureTree(function () {
             state.loading = false;
             state.error = null;
             mount();
             if (view === 'all' && state.pane === 'card' && state.selectedId && byId()[state.selectedId]) {
                 selectAsset(state.selectedId, true);
-            }
-            if (view === 'dashboard') {
-                loadReport();
             }
         });
     }
@@ -1228,10 +1226,6 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
-            return;
-        }
-        if (state.view === 'dashboard') {
-            frame.appendChild(renderDashboardPage());
             return;
         }
         frame.appendChild(renderSide());
@@ -1710,6 +1704,7 @@
                 state.expanded[parentId] = true;
                 rememberExpanded();
             }
+            assetsChanged();
             reloadTree(function () {
                 selectAsset(movingId, true);
                 notify(t('moved'));
@@ -2276,7 +2271,10 @@
             }));
         }
         if (tools.childNodes.length) head.appendChild(tools);
+        var showSummary = !asset && !remote && !projectFiltering();
+        if (showSummary) head.classList.add('is-with-summary');
         section.appendChild(head);
+        if (showSummary) section.appendChild(summaryBand());
         section.appendChild(filterBar());
         if (state.searchScope === 'all' && textQuery() && textQuery().length < 2) {
             section.appendChild(el('p', 'asset-tree-hint', t('searchPrompt')));
@@ -2510,6 +2508,7 @@
                 return;
             }
             notify(t('saved'));
+            assetsChanged();
             reloadTree(function () {
                 selectAsset(asset.id, true);
             });
@@ -3418,13 +3417,11 @@
     function finishSave(id, message) {
         state.dirty = false;
         state.editing = false;
+        assetsChanged();
         reloadTree(function () {
             setBusy(false);
             selectAsset(id, true);
             notify(message);
-            if (state.view === 'dashboard') {
-                loadReport();
-            }
         });
     }
 
@@ -3807,12 +3804,10 @@
                 }
                 state.expanded[payload.id] = true;
                 state.pane = place ? 'list' : 'card';
+                assetsChanged();
                 reloadTree(function () {
                     selectAsset(payload.id, true);
                     notify(t('saved'));
-                    if (state.view === 'dashboard') {
-                        loadReport();
-                    }
                 });
             }
 
@@ -4017,14 +4012,12 @@
                         var next = asset.parentId || null;
                         state.selectedId = next;
                         state.dirty = false;
+                        assetsChanged();
                         reloadTree(function () {
                             if (next && byId()[next]) {
                                 selectAsset(next, true);
                             } else {
                                 renderFrame();
-                            }
-                            if (state.view === 'dashboard') {
-                                loadReport();
                             }
                         });
                     } else {
@@ -4524,6 +4517,7 @@
         loadSavedFilters();
         state.dirty = false;
         state.report = null;
+        reportToken++;
         state.treeReady = false;
         state.holderUser = null;
         state.holderAssets = [];
@@ -4545,8 +4539,8 @@
         reloadTree(function () {
             state.loading = false;
             renderFrame();
-            if (state.view === 'dashboard') {
-                loadReport();
+            if (state.view === 'mine') {
+                loadMine();
             }
             if (state.view === 'all' && state.selectedId) {
                 selectAsset(state.selectedId, true);
@@ -4720,11 +4714,28 @@
         return panel;
     }
 
+    var reportToken = 0;
+    var mineToken = 0;
+
+    function assetsChanged() {
+        state.report = null;
+        reportToken++;
+        if (state.view === 'mine') {
+            loadMine();
+        } else {
+            state.mineAssets = null;
+        }
+    }
+
     function loadReport() {
         if (!state.projectKey) {
             return;
         }
+        var token = ++reportToken;
         ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/report', null, function (status, payload) {
+            if (token !== reportToken) {
+                return;
+            }
             state.report = status === 200 ? payload : null;
             var dash = document.getElementById('asset-tree-dashboard');
             if (dash) {
@@ -4781,17 +4792,16 @@
         refreshBrowse();
     }
 
-    function renderDashboardPage() {
-        var section = el('section', 'asset-tree-report');
-        var dash = el('div', 'asset-tree-dashboard');
+    function summaryBand() {
+        var dash = el('div', 'asset-tree-dashboard is-inline');
         dash.id = 'asset-tree-dashboard';
-        section.appendChild(dash);
         if (state.report) {
             fillDashboard(dash);
         } else {
             dash.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadReport();
         }
-        return section;
+        return dash;
     }
 
     function dashStat(label, value, onClick, tone) {
@@ -4932,6 +4942,7 @@
     }
 
     function loadMine() {
+        var token = ++mineToken;
         if (!state.userKey) {
             state.mineAssets = [];
             state.loading = false;
@@ -4943,6 +4954,9 @@
             return;
         }
         ajax('GET', '/users/' + encodeURIComponent(state.userKey) + '/assets', null, function (status, payload) {
+            if (token !== mineToken || state.view !== 'mine') {
+                return;
+            }
             state.loading = false;
             if (status === 200) {
                 state.mineAssets = payload || [];
@@ -5938,9 +5952,6 @@
             reloadTree(function () {
                 state.loading = false;
                 renderFrame();
-                if (state.view === 'dashboard') {
-                    loadReport();
-                }
                 if (state.view === 'all') {
                     var grouped = hashGroup();
                     if (grouped && byId()[grouped.placeId]) {

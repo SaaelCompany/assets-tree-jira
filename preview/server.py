@@ -733,7 +733,9 @@ class Handler(BaseHTTPRequestHandler):
         text = self.text()
         project = (query.get("project") or [""])[0]
         view = (query.get("view") or ["all"])[0]
-        if view not in ("all", "mine", "search", "settings", "dashboard"):
+        if view == "dashboard":
+            view = "all"
+        if view not in ("all", "mine", "search", "settings"):
             view = "all"
         html = (template
                 .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
@@ -755,7 +757,6 @@ class Handler(BaseHTTPRequestHandler):
         items = [
             ("mine", text.get("asset-tree.nav.mine", "My assets")),
             ("all", text.get("asset-tree.nav.all", "All assets")),
-            ("dashboard", text.get("asset-tree.nav.dashboard", "Dashboard")),
             ("settings", text.get("asset-tree.nav.settings", "Settings")),
         ]
         links = "".join('<a href="%s">%s</a>' % (href(key), label) for key, label in items)
@@ -936,7 +937,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.49",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.50",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,

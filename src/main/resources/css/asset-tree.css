@@ -1882,6 +1882,20 @@ html.asset-tree-dragging * {
     background: #fff;
 }
 
+.asset-tree-queue-head.is-with-summary {
+    border-bottom: 0;
+    padding-bottom: 4px;
+}
+
+.asset-tree-detail.is-queue > .asset-tree-dashboard.is-inline {
+    margin: 0;
+    padding: 0 20px 12px;
+    border: 0;
+    border-bottom: 1px solid #dfe1e6;
+    border-radius: 0;
+    background: #fff;
+}
+
 .asset-tree-queue-title {
     display: flex;
     align-items: baseline;

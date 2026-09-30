@@ -90,7 +90,10 @@ public class AssetPageServlet extends HttpServlet {
             return "all";
         }
         String value = raw.trim().toLowerCase(Locale.ROOT);
-        if ("mine".equals(value) || "search".equals(value) || "settings".equals(value) || "dashboard".equals(value)) {
+        if ("dashboard".equals(value)) {
+            return "all";
+        }
+        if ("mine".equals(value) || "search".equals(value) || "settings".equals(value)) {
             return value;
         }
         return "all";
