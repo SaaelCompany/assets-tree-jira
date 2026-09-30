@@ -69,6 +69,7 @@ ISSUES = {
     "SD-14": {"issueId": 10014, "issueKey": "SD-14", "projectKey": "IT", "summary": "Не открывается почта на 3 этаже", "status": "В работе"},
     "SD-22": {"issueId": 10022, "issueKey": "SD-22", "projectKey": "IT", "summary": "Замена коммутатора в серверной", "status": "Открыта"},
     "MED-7": {"issueId": 20007, "issueKey": "MED-7", "projectKey": "MED", "summary": "Списать монитор после ремонта", "status": "Ожидание"},
+    "STP-1": {"issueId": 30001, "issueKey": "STP-1", "projectKey": "TEST", "summary": "Aser", "status": "Ожидание поддержки"},
 }
 ISSUES_BY_ID = {item["issueId"]: item for item in ISSUES.values()}
 SEEDS = [
@@ -707,7 +708,10 @@ class Handler(BaseHTTPRequestHandler):
     def serve_issue(self, query):
         key = ((query or {}).get("key") or ["SD-14"])[0].upper()
         issue = ISSUES.get(key) or ISSUES["SD-14"]
-        html = """<!DOCTYPE html>
+        # late=1 mimics Jira: the panel HTML arrives after the scripts, with no issue id on the element.
+        late = ((query or {}).get("late") or ["0"])[0] == "1"
+        if late:
+            html = """<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>%s</title>
 <link rel="stylesheet" href="/download/resources/asset-tree/issue-panel.css">
 <style>
@@ -715,12 +719,48 @@ body { margin: 0; background: #f4f5f7; font-family: "Segoe UI", sans-serif; }
 main { max-width: 880px; margin: 32px auto; display: grid; grid-template-columns: 1fr 280px; gap: 16px; }
 article, aside { background: white; border: 1px solid #e3e7ee; border-radius: 12px; padding: 16px; }
 h1 { margin: 0 0 8px; font-size: 22px; }
+h2 { margin: 0 0 8px; font-size: 14px; }
 p { color: #5d6b82; }
 </style></head>
 <body><main>
 <article><h1>%s</h1><p>Панель справа показывает активы только проекта этой заявки.</p></article>
-<aside><h2 style="margin:0 0 8px;font-size:14px;">Активы</h2>
-<div id="asset-tree-panel" data-issue-id="%s" data-issue-key="%s"></div>
+<aside><h2>Активы</h2><div id="panel-slot"></div></aside></main>
+<script>
+window.JIRA = window.JIRA || {};
+JIRA.Events = { NEW_CONTENT_ADDED: 'newContentAdded' };
+JIRA._handlers = {};
+JIRA.bind = function (name, fn) { (this._handlers[name] = this._handlers[name] || []).push(fn); };
+JIRA.trigger = function (name, context) {
+  var handlers = this._handlers[name] || [];
+  for (var i = 0; i < handlers.length; i++) handlers[i]({ type: name }, context, 'panelRefreshed');
+};
+JIRA.Issue = { getIssueId: function () { return %s; }, getIssueKey: function () { return '%s'; } };
+</script>
+<script src="/download/resources/asset-tree/issue-panel.js"></script>
+<script>
+setTimeout(function () {
+  var slot = document.getElementById('panel-slot');
+  slot.innerHTML = '<div id="asset-tree-panel" class="asset-tree-panel" data-issue-id="" data-issue-key=""></div>';
+  JIRA.trigger(JIRA.Events.NEW_CONTENT_ADDED, slot);
+}, 900);
+</script>
+</body></html>""" % (issue["issueKey"], issue["issueKey"], issue["issueId"], issue["issueKey"])
+        else:
+            html = """<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>%s</title>
+<link rel="stylesheet" href="/download/resources/asset-tree/issue-panel.css">
+<style>
+body { margin: 0; background: #f4f5f7; font-family: "Segoe UI", sans-serif; }
+main { max-width: 880px; margin: 32px auto; display: grid; grid-template-columns: 1fr 280px; gap: 16px; }
+article, aside { background: white; border: 1px solid #e3e7ee; border-radius: 12px; padding: 16px; }
+h1 { margin: 0 0 8px; font-size: 22px; }
+h2 { margin: 0 0 8px; font-size: 14px; }
+p { color: #5d6b82; }
+</style></head>
+<body><main>
+<article><h1>%s</h1><p>Панель справа показывает активы только проекта этой заявки.</p></article>
+<aside><h2>Активы</h2>
+<div id="asset-tree-panel" class="asset-tree-panel" data-issue-id="%s" data-issue-key="%s"></div>
 </aside></main>
 <script src="/download/resources/asset-tree/issue-panel.js"></script>
 </body></html>""" % (issue["issueKey"], issue["issueKey"], issue["issueId"], issue["issueKey"])
@@ -794,7 +834,7 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.42",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.43",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,

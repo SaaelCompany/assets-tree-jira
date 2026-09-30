@@ -96,6 +96,7 @@
     <web-resource key="asset-tree-issue" name="Asset Tree Issue Panel Resources">
         <dependency>com.atlassian.auiplugin:ajs</dependency>
         <context>jira.view.issue</context>
+        <context>jira.navigator</context>
         <resource type="download" name="issue-panel.css" location="css/issue-panel.css"/>
         <resource type="download" name="issue-panel.js" location="js/issue-panel.js"/>
     </web-resource>
@@ -112,6 +113,7 @@
 
     <web-panel key="asset-tree-issue-panel" location="atl.jira.view.issue.right.context" weight="250">
         <label key="asset-tree.panel.title"/>
+        <context-provider class="com.assetstree.jira.web.IssuePanelContextProvider"/>
         <resource name="view" type="velocity" location="templates/issue-panel.vm"/>
         <condition class="com.atlassian.jira.plugin.webfragment.conditions.UserLoggedInCondition"/>
     </web-panel>

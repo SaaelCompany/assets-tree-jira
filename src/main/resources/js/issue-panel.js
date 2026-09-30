@@ -41,17 +41,84 @@
         return (i18n && i18n[key]) || key;
     }
 
-    function boot() {
-        var panel = document.getElementById('asset-tree-panel');
+    function numericId(value) {
+        var text = value === undefined || value === null ? '' : String(value).replace(/^\s+|\s+$/g, '');
+        return /^[0-9]+$/.test(text) ? text : '';
+    }
+
+    /* The issue viewer inserts this panel after the first scripts have run, and the
+       velocity context sometimes has no $issue. Either source is enough. */
+    function pageIssueId() {
+        try {
+            if (window.JIRA && JIRA.Issue && typeof JIRA.Issue.getIssueId === 'function') {
+                var id = numericId(JIRA.Issue.getIssueId());
+                if (id) return id;
+            }
+        } catch (error) { /* the issue module is not on this page */ }
+        var meta = document.querySelector('meta[name="ajs-issue-id"]');
+        return meta ? numericId(meta.getAttribute('content')) : '';
+    }
+
+    function pageIssueKey() {
+        try {
+            if (window.JIRA && JIRA.Issue && typeof JIRA.Issue.getIssueKey === 'function') {
+                var key = JIRA.Issue.getIssueKey();
+                if (key) return String(key);
+            }
+        } catch (error) { /* the issue module is not on this page */ }
+        var meta = document.querySelector('meta[name="ajs-issue-key"]');
+        return meta ? (meta.getAttribute('content') || '') : '';
+    }
+
+    function hasClass(node, name) {
+        return !!(node && node.className && (' ' + node.className + ' ').indexOf(' ' + name + ' ') !== -1);
+    }
+
+    function rootsOf(context) {
+        if (!context || context === document) return [document];
+        if (context.jquery && typeof context.get === 'function') return context.get();
+        if (context.nodeType) return [context];
+        if (context.length && context[0] && context[0].nodeType) {
+            var nodes = [];
+            for (var i = 0; i < context.length; i++) nodes.push(context[i]);
+            return nodes;
+        }
+        return [document];
+    }
+
+    function findPanels(context) {
+        var roots = rootsOf(context);
+        var found = [];
+        for (var i = 0; i < roots.length; i++) {
+            var root = roots[i];
+            if (!root || !root.querySelectorAll) continue;
+            if (hasClass(root, 'asset-tree-panel')) found.push(root);
+            var nested = root.querySelectorAll('.asset-tree-panel');
+            for (var j = 0; j < nested.length; j++) {
+                if (found.indexOf(nested[j]) === -1) found.push(nested[j]);
+            }
+        }
+        return found;
+    }
+
+    function boot(context) {
+        var panels = findPanels(context);
+        for (var i = 0; i < panels.length; i++) mount(panels[i]);
+    }
+
+    function mount(panel) {
         if (!panel || panel.getAttribute('data-ready') === '1') return;
-        panel.setAttribute('data-ready', '1');
-        var issueId = panel.getAttribute('data-issue-id');
+        var issueId = numericId(panel.getAttribute('data-issue-id')) || pageIssueId();
         if (!issueId) return;
+        panel.setAttribute('data-issue-id', issueId);
+        if (!panel.getAttribute('data-issue-key')) panel.setAttribute('data-issue-key', pageIssueKey());
+        panel.setAttribute('data-ready', '1');
+        var projectKey = panel.getAttribute('data-project-key') || '';
         ajax('GET', '/meta', null, function (status, meta) {
             var i18n = status === 200 && meta ? meta.i18n : {};
             ajax('GET', '/issues/' + issueId + '/context', null, function (contextStatus, context) {
                 var canEdit = contextStatus === 200 && context ? !!context.canEdit : false;
-                var projectKey = contextStatus === 200 && context ? context.projectKey : '';
+                if (contextStatus === 200 && context && context.projectKey) projectKey = context.projectKey;
                 render(panel, issueId, i18n, canEdit, projectKey);
                 loadLinks(panel, issueId, i18n, canEdit, projectKey);
             });
@@ -59,9 +126,11 @@
     }
 
     function render(panel, issueId, i18n, canEdit, projectKey) {
-        panel.innerHTML = '';
-        panel.appendChild(el('p', 'asset-tree-panel-hint', t(i18n, 'panelHint')));
-        if (canEdit) {
+        var list = panel.querySelector('.asset-tree-panel-list');
+        if (!panel.querySelector('.asset-tree-panel-hint')) {
+            panel.insertBefore(el('p', 'asset-tree-panel-hint', t(i18n, 'panelHint')), panel.firstChild);
+        }
+        if (canEdit && !panel.querySelector('input')) {
             var input = el('input');
             input.type = 'search';
             input.placeholder = t(i18n, 'panelSearch');
@@ -69,7 +138,7 @@
             var timer = null;
             input.addEventListener('input', function () {
                 clearTimeout(timer);
-                var query = input.value.trim();
+                var query = input.value.replace(/^\s+|\s+$/g, '');
                 timer = setTimeout(function () {
                     if (query.length < 1) {
                         results.innerHTML = '';
@@ -98,23 +167,46 @@
                     });
                 }, 220);
             });
-            panel.appendChild(input);
-            panel.appendChild(results);
+            var before = list || panel.querySelector('.asset-tree-panel-empty') || panel.querySelector('.asset-tree-panel-open');
+            if (before) {
+                panel.insertBefore(input, before);
+                panel.insertBefore(results, before);
+            } else {
+                panel.appendChild(input);
+                panel.appendChild(results);
+            }
         }
-        var list = el('ul', 'asset-tree-panel-list');
+        ensureList(panel);
+        if (!panel.querySelector('.asset-tree-panel-open')) {
+            var open = el('a', 'asset-tree-panel-open', t(i18n, 'openTree'));
+            open.href = contextPath() + '/plugins/servlet/asset-tree' + (projectKey ? '?project=' + encodeURIComponent(projectKey) : '');
+            panel.appendChild(open);
+        }
+    }
+
+    function ensureList(panel) {
+        var list = panel.querySelector('.asset-tree-panel-list');
+        if (list) return list;
+        list = el('ul', 'asset-tree-panel-list');
         list.id = 'asset-tree-panel-list';
-        panel.appendChild(list);
-        var open = el('a', null, t(i18n, 'openTree'));
-        open.href = contextPath() + '/plugins/servlet/asset-tree' + (projectKey ? '?project=' + encodeURIComponent(projectKey) : '');
-        open.style.display = 'inline-block';
-        open.style.marginTop = '8px';
-        panel.appendChild(open);
+        var empty = panel.querySelector('.asset-tree-panel-empty');
+        var open = panel.querySelector('.asset-tree-panel-open');
+        if (empty) {
+            panel.insertBefore(list, empty);
+            panel.removeChild(empty);
+        } else if (open) {
+            panel.insertBefore(list, open);
+        } else {
+            panel.appendChild(list);
+        }
+        return list;
     }
 
     function loadLinks(panel, issueId, i18n, canEdit, projectKey) {
-        var list = document.getElementById('asset-tree-panel-list');
-        if (!list) return;
+        var list = ensureList(panel);
         ajax('GET', '/issues/' + issueId + '/assets', null, function (status, payload) {
+            if (!panel.parentNode) return;
+            list = ensureList(panel);
             list.innerHTML = '';
             if (status !== 200) {
                 list.appendChild(el('li', 'asset-tree-panel-error', (payload && payload.message) || t(i18n, 'errorTitle')));
@@ -145,13 +237,45 @@
         });
     }
 
+    var listening = false;
+
+    function listen() {
+        if (listening) return;
+        if (!(window.JIRA && typeof JIRA.bind === 'function' && JIRA.Events && JIRA.Events.NEW_CONTENT_ADDED)) return;
+        listening = true;
+        JIRA.bind(JIRA.Events.NEW_CONTENT_ADDED, function (event, context) {
+            boot(context || document);
+        });
+    }
+
+    function watch() {
+        var polls = 0;
+        var timer = setInterval(function () {
+            polls++;
+            listen();
+            boot(document);
+            var panels = document.querySelectorAll('.asset-tree-panel');
+            var pending = false;
+            for (var i = 0; i < panels.length; i++) {
+                if (panels[i].getAttribute('data-ready') !== '1') pending = true;
+            }
+            if (polls >= 24 || (panels.length && !pending)) clearInterval(timer);
+        }, 250);
+    }
+
     function start() {
+        listen();
+        var run = function () {
+            listen();
+            boot(document);
+            watch();
+        };
         if (window.AJS && AJS.toInit) {
-            AJS.toInit(boot);
+            AJS.toInit(run);
         } else if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', boot);
+            document.addEventListener('DOMContentLoaded', run);
         } else {
-            boot();
+            run();
         }
     }
 
