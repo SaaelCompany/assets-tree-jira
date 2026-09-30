@@ -388,7 +388,7 @@
                 items = items.filter(function (node) { return node.id !== rootId; });
             }
             items.sort(function (left, right) {
-                return labelOf(left).localeCompare(labelOf(right));
+                return (left.name || '').localeCompare(right.name || '');
             });
             return items;
         }
@@ -419,7 +419,7 @@
             empty.value = '';
             select.appendChild(empty);
             options.forEach(function (node) {
-                var option = el('option', null, labelOf(node));
+                var option = el('option', null, node.name || '');
                 option.value = String(node.id);
                 if (hidden.value === option.value) option.selected = true;
                 select.appendChild(option);
@@ -489,6 +489,10 @@
 
         function show(value) {
             if (!current) return;
+            if (flat) {
+                current.textContent = '';
+                return;
+            }
             var chain = value ? pathTo(byId, value) : [];
             current.textContent = chain.map(function (node) { return node.name; }).join('  /  ');
         }
