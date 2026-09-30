@@ -1,5 +1,7 @@
 (function () {
     'use strict';
+    if (window.__assetTreeFieldBoot) return;
+    window.__assetTreeFieldBoot = true;
 
     function contextPath() {
         if (window.AJS && typeof AJS.contextPath === 'function') return AJS.contextPath();
@@ -71,7 +73,9 @@
     }
 
     function tidy(value) {
-        return norm(String(value || '').replace(/[*:]/g, ' '));
+        return norm(String(value || '')
+            .replace(/\((?:необязательно|optional)\)/gi, ' ')
+            .replace(/[*:]/g, ' '));
     }
 
     function formOf(node) {
@@ -392,7 +396,13 @@
             : 'Fill in the fields above. The asset list will open at the matching place.';
     }
 
+    function bootMarker() {
+        return document.getElementById('asset-tree-portal-boot');
+    }
+
     function projectFromPage() {
+        var marker = bootMarker();
+        if (marker && marker.getAttribute('data-project')) return marker.getAttribute('data-project');
         var meta = document.querySelector('meta[name="ajs-project-key"]');
         if (meta && meta.getAttribute('content')) return meta.getAttribute('content');
         var marked = document.querySelector('[data-project-key]');
@@ -403,16 +413,36 @@
         return embedded ? embedded[1] : '';
     }
 
+    function fieldsFromPage() {
+        var marker = bootMarker();
+        if (!marker) return [];
+        var parts = (marker.getAttribute('data-fields') || '').split(',');
+        var ids = [];
+        for (var i = 0; i < parts.length; i++) {
+            var id = parts[i].replace(/^\s+|\s+$/g, '');
+            if (id.indexOf('customfield_') === 0) ids.push(id);
+        }
+        return ids;
+    }
+
     function portalIdFromLocation() {
         var match = /\/portal\/(\d+)/.exec(window.location.pathname || '');
-        return match ? match[1] : '';
+        if (match) return match[1];
+        var marker = bootMarker();
+        if (marker && marker.getAttribute('data-portal')) return marker.getAttribute('data-portal');
+        var meta = document.querySelector('meta[name="ajs-portal-id"], meta[name="ajs-portalid"]');
+        return meta ? (meta.getAttribute('content') || '') : '';
     }
 
     var fieldContext = null;
     var fieldWaiters = null;
 
+    function contextComplete(ctx) {
+        return !!(ctx && ctx.projectKey && ctx.fieldsSettled);
+    }
+
     function loadFieldContext(done) {
-        if (fieldContext) {
+        if (contextComplete(fieldContext)) {
             done(fieldContext);
             return;
         }
@@ -421,40 +451,98 @@
             return;
         }
         fieldWaiters = [done];
-        var ctx = { fields: [], projectKey: projectFromPage() };
-        var pending = 2;
+        var knownFields = fieldsFromPage();
+        var ctx = {
+            fields: knownFields,
+            fieldsSettled: knownFields.length > 0,
+            projectKey: projectFromPage()
+        };
+        var pending = 1;
         function finish() {
             if (--pending > 0) return;
-            fieldContext = ctx;
+            if (contextComplete(ctx)) fieldContext = ctx;
             var waiters = fieldWaiters;
             fieldWaiters = null;
             for (var i = 0; i < waiters.length; i++) waiters[i](ctx);
         }
-        ajax('/asset-fields', function (status, payload) {
-            if (status === 200 && payload && payload.fields) ctx.fields = payload.fields;
-            finish();
-        });
-        var portalId = portalIdFromLocation();
-        if (ctx.projectKey || !portalId) {
-            finish();
-            return;
+        if (!ctx.fieldsSettled) {
+            pending++;
+            ajax('/asset-fields', function (status, payload) {
+                if (status === 200 && payload && payload.fields) {
+                    ctx.fields = payload.fields;
+                    ctx.fieldsSettled = true;
+                }
+                finish();
+            });
         }
-        ajax('/portals/' + encodeURIComponent(portalId), function (status, payload) {
-            if (status === 200 && payload && payload.projectKey) ctx.projectKey = payload.projectKey;
-            finish();
-        });
+        var portalId = portalIdFromLocation();
+        if (!ctx.projectKey && portalId) {
+            pending++;
+            ajax('/portals/' + encodeURIComponent(portalId), function (status, payload) {
+                if (status === 200 && payload && payload.projectKey) {
+                    ctx.projectKey = payload.projectKey;
+                    finish();
+                    return;
+                }
+                serviceDeskProject(portalId, function (key) {
+                    if (key) ctx.projectKey = key;
+                    finish();
+                });
+            });
+        }
+        finish();
+    }
+
+    function serviceDeskProject(portalId, done) {
+        var paths = ['/rest/servicedeskapi/portals/', '/rest/servicedeskapi/servicedesk/'];
+        var index = 0;
+        function next() {
+            if (index >= paths.length) {
+                done('');
+                return;
+            }
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', contextPath() + paths[index] + encodeURIComponent(portalId), true);
+            index++;
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState !== 4) return;
+                var key = '';
+                if (xhr.status === 200 && xhr.responseText) {
+                    try {
+                        var payload = JSON.parse(xhr.responseText);
+                        key = payload && payload.projectKey ? payload.projectKey : '';
+                    } catch (error) {
+                        key = '';
+                    }
+                }
+                if (key) done(key);
+                else next();
+            };
+            xhr.send(null);
+        }
+        next();
+    }
+
+    function hideNative(input) {
+        input.setAttribute('data-asset-tree', '1');
+        input.className = (input.className ? input.className + ' ' : '') + 'asset-tree-picker-native';
+        if (input.style && input.style.setProperty) input.style.setProperty('display', 'none', 'important');
+        else input.style.display = 'none';
     }
 
     function adoptTextFields(ctx) {
         if (!ctx || !ctx.projectKey || !ctx.fields || !ctx.fields.length) return;
         for (var f = 0; f < ctx.fields.length; f++) {
             var id = ctx.fields[f];
-            var inputs = document.querySelectorAll('input[name="' + id + '"], textarea[name="' + id + '"]');
+            var inputs = document.querySelectorAll(
+                'input[name="' + id + '"], textarea[name="' + id + '"], input[id="' + id + '"], textarea[id="' + id + '"]'
+            );
             for (var i = 0; i < inputs.length; i++) {
                 var input = inputs[i];
-                if (input.getAttribute('data-asset-tree') === '1' || insidePicker(input)) continue;
-                input.setAttribute('data-asset-tree', '1');
-                input.className = (input.className ? input.className + ' ' : '') + 'asset-tree-picker-native';
+                if (input.getAttribute('data-asset-tree') === '1' || insidePicker(input) || input.type === 'hidden') continue;
+                hideNative(input);
                 var picker = el('div', 'asset-tree-picker');
                 picker.setAttribute('data-project', ctx.projectKey);
                 picker.setAttribute('data-wait', phrase('wait'));
@@ -464,7 +552,7 @@
                 picker.appendChild(el('div', 'asset-tree-picker-levels'));
                 picker.appendChild(el('p', 'asset-tree-picker-current'));
                 if (input.nextSibling) input.parentNode.insertBefore(picker, input.nextSibling);
-                else input.parentNode.appendChild(picker);
+                else if (input.parentNode) input.parentNode.appendChild(picker);
             }
         }
     }
@@ -472,13 +560,26 @@
     function boot() {
         var pickers = document.querySelectorAll('.asset-tree-picker');
         for (var i = 0; i < pickers.length; i++) mount(pickers[i]);
-        var inputs = document.querySelectorAll('input[name^="customfield_"], textarea[name^="customfield_"]');
+        var inputs = document.querySelectorAll('input[name^="customfield_"], textarea[name^="customfield_"], input[id^="customfield_"], textarea[id^="customfield_"]');
         if (!inputs.length) return;
         loadFieldContext(function (ctx) {
             adoptTextFields(ctx);
             var created = document.querySelectorAll('.asset-tree-picker');
             for (var n = 0; n < created.length; n++) mount(created[n]);
         });
+    }
+
+    function watch() {
+        if (!document.body) {
+            setTimeout(watch, 50);
+            return;
+        }
+        if (!watch.started && window.MutationObserver) {
+            watch.started = true;
+            var observer = new MutationObserver(function () { boot(); });
+            observer.observe(document.body, { childList: true, subtree: true });
+        }
+        boot();
     }
 
     function refresh() {
@@ -496,12 +597,12 @@
         refresh();
     });
 
-    if (window.AJS && AJS.toInit) AJS.toInit(boot);
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
-    else boot();
-    setTimeout(boot, 400);
-    if (window.MutationObserver && document.body) {
-        var observer = new MutationObserver(function () { boot(); });
-        observer.observe(document.body, { childList: true, subtree: true });
-    }
+    if (window.AJS && AJS.toInit) AJS.toInit(watch);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch);
+    else watch();
+    var polls = 0;
+    var timer = setInterval(function () {
+        watch();
+        if (++polls >= 40) clearInterval(timer);
+    }, 500);
 })();

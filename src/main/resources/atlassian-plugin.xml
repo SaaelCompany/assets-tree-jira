@@ -107,11 +107,37 @@
         <context>jira.create.issue</context>
         <context>jira.edit.issue</context>
         <context>jira.view.issue</context>
+        <context>servicedesk.general</context>
         <context>servicedesk.portal</context>
         <context>customerportal</context>
         <resource type="download" name="asset-field.css" location="css/asset-field.css"/>
         <resource type="download" name="asset-field.js" location="js/asset-field.js"/>
     </web-resource>
+
+    <servlet-filter name="Asset Tree Portal Field" key="asset-tree-portal-filter" class="com.assetstree.jira.servlet.PortalPageFilter" location="before-decoration" weight="50">
+        <description>Adds the asset dropdown to the customer portal create form.</description>
+        <url-pattern>/servicedesk/customer/*</url-pattern>
+        <dispatcher>REQUEST</dispatcher>
+        <dispatcher>FORWARD</dispatcher>
+    </servlet-filter>
+
+    <web-panel key="asset-tree-portal-footer" location="servicedesk.portal.footer" weight="1000">
+        <context-provider class="com.assetstree.jira.web.PortalBootContextProvider"/>
+        <resource name="view" type="velocity" location="templates/portal-boot.vm"/>
+        <condition class="com.assetstree.jira.web.PortalPageCondition"/>
+    </web-panel>
+
+    <web-panel key="asset-tree-portal-header" location="servicedesk.portal.header" weight="1000">
+        <context-provider class="com.assetstree.jira.web.PortalBootContextProvider"/>
+        <resource name="view" type="velocity" location="templates/portal-boot.vm"/>
+        <condition class="com.assetstree.jira.web.PortalPageCondition"/>
+    </web-panel>
+
+    <web-panel key="asset-tree-portal-fields" location="servicedesk.portal.request.fields.create" weight="1000">
+        <context-provider class="com.assetstree.jira.web.PortalBootContextProvider"/>
+        <resource name="view" type="velocity" location="templates/portal-boot.vm"/>
+        <condition class="com.assetstree.jira.web.PortalPageCondition"/>
+    </web-panel>
 
     <web-panel key="asset-tree-issue-panel" location="atl.jira.view.issue.right.context" weight="250">
         <label key="asset-tree.panel.title"/>

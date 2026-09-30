@@ -706,8 +706,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve_page(query)
         if path == "/issue":
             return self.serve_issue(query)
-        if path == "/portal":
-            return self.serve_portal(query)
+        if path == "/portal" or re.fullmatch(r"/servicedesk/customer/portal/\d+/create/\d+", path):
+            return self.serve_portal(path)
+        if path.startswith("/rest/servicedeskapi/portals/") or path.startswith("/rest/servicedeskapi/servicedesk/"):
+            body = b'{"id":"7","projectId":"10000","projectKey":"TEST","projectName":"Test"}'
+            return self.respond(200, body, "application/json; charset=utf-8")
         if path.startswith("/browse/"):
             return self.serve_browse(path.split("/", 2)[2])
         if path.startswith("/download/resources/"):
@@ -833,45 +836,55 @@ p { color: #5d6b82; }
 </body></html>""" % (issue["issueKey"], issue["issueKey"], issue["issueId"], issue["issueKey"])
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
 
-    def serve_portal(self, query):
+    def serve_portal(self, path):
         ensure_portal_demo()
-        project = (query.get("project") or ["TEST"])[0] or "TEST"
-        project_attr = project.replace('"', "")
+        # The script is in the head, before the form exists, and the asset input
+        # appears later. Project key is not in the page: portal 7 answers only
+        # through the Service Desk portal API.
+        rewrite = ""
+        if path == "/portal":
+            rewrite = "<script>history.replaceState(null,'','/servicedesk/customer/portal/7/create/5');</script>"
         html = """<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="ajs-project-key" content="%s"><title>Портал</title>
+<html lang="ru"><head><meta charset="utf-8"><title>Техническая поддержка</title>
 <link rel="stylesheet" href="/download/resources/asset-tree/asset-field.css">
 <style>
 body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
 main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
 form { display: flex; flex-direction: column; gap: 16px; }
 label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
-select { font: inherit; font-weight: 400; padding: 6px 8px; }
-</style></head>
+select, input[type="text"] { font: inherit; font-weight: 400; padding: 6px 8px; }
+</style>
+%s
+<script src="/download/resources/asset-tree/asset-field.js"></script>
+</head>
 <body><main>
 <h1>%s</h1>
 <p>%s</p>
-<form>
-<label>Площадка
-<select id="demo-place">
+<form id="request-form">
+<label for="demo-place">Площадка <span>(необязательно)</span>
+<select id="demo-place" name="demo-place">
 <option value="">—</option>
 <option value="a">Пункт А</option>
 <option value="b">Пункт Б</option>
 </select>
 </label>
-<label>Отделение
-<select id="demo-dept">
+<label for="demo-dept">Отделение
+<select id="demo-dept" name="demo-dept">
 <option value="">—</option>
 <option value="a">Пункт А</option>
 </select>
 </label>
-<label>Актив
-<input type="text" id="customfield_10001" name="customfield_10001" value="">
-</label>
+<div id="asset-slot"></div>
 </form>
 </main>
-<script src="/download/resources/asset-tree/asset-field.js"></script>
+<script>
+setTimeout(function () {
+  var slot = document.getElementById('asset-slot');
+  slot.innerHTML = '<label for="customfield_10001">Актив <span>(необязательно)</span></label><input type="text" id="customfield_10001" name="customfield_10001" value="">';
+}, 900);
+</script>
 </body></html>""" % (
-            project_attr,
+            rewrite,
             self.text().get("asset-tree.ui.portalTitle", "Asset"),
             self.text().get("asset-tree.ui.portalHint", ""),
         )
@@ -919,7 +932,7 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.46",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.47",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -971,6 +984,8 @@ select { font: inherit; font-weight: 400; padding: 6px 8px; }
             return 200, {"fields": ["customfield_10001"]}
         match = re.fullmatch(r"/portals/(\d+)", path)
         if match and method == "GET":
+            if match.group(1) == "7":
+                return 404, {"message": text["asset-tree.error.project.notFound"]}
             return 200, {"projectKey": "TEST"}
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "DELETE":
