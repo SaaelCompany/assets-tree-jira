@@ -2169,7 +2169,6 @@
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(placeItems)));
         main.appendChild(descriptionModule(full, true));
-        main.appendChild(activityBlock(full));
 
         if (departments.length) {
             var places = el('div');
@@ -2195,6 +2194,7 @@
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
+        main.appendChild(activityBlock(full));
 
         var issues = el('div');
         if (mayEdit(full)) {
