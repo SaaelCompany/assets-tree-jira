@@ -88,6 +88,24 @@ public class EquipmentExchangeTest {
         assertEquals("asset-tree.error.import.number", plan.getIssues().get(1).getMessageKey());
     }
 
+    @Test
+    public void dateFieldAcceptsBothOrdersAndRejectsJunk() {
+        String csv = "Название;Тип;Площадка;Ввод\n"
+                + "Первый;Принтер;Филиал;01.03.2024\n"
+                + "Второй;Принтер;Филиал;2024-03-02\n"
+                + "Третий;Принтер;Филиал;31.02.2024\n";
+        List<EquipmentExchange.FieldRef> fields = new ArrayList<EquipmentExchange.FieldRef>();
+        fields.add(new EquipmentExchange.FieldRef("commissioned", "Ввод", "date", false));
+        List<EquipmentExchange.TypeRef> types = new ArrayList<EquipmentExchange.TypeRef>();
+        types.add(new EquipmentExchange.TypeRef("printer", "Принтер", false, fields));
+        EquipmentExchange.Plan plan = EquipmentExchange.plan(EquipmentSheet.read(csv), types, catalogStatuses(), catalogNodes(),
+                "in_use", Collections.<String, String>emptyMap(), directory());
+        assertEquals(2, plan.getChanges().size());
+        assertEquals("2024-03-01", plan.getChanges().get(0).getAttributes().get(0).getValue());
+        assertEquals("2024-03-02", plan.getChanges().get(1).getAttributes().get(0).getValue());
+        assertEquals("asset-tree.error.import.date", plan.getIssues().get(0).getMessageKey());
+    }
+
     private static List<EquipmentExchange.TypeRef> catalogTypes() {
         List<EquipmentExchange.FieldRef> fields = new ArrayList<EquipmentExchange.FieldRef>();
         fields.add(new EquipmentExchange.FieldRef("serial", "Серийный номер", "text", false));

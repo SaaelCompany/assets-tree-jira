@@ -76,6 +76,7 @@ import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.DefaultTypes;
 import com.assetstree.jira.model.EquipmentExchange;
 import com.assetstree.jira.model.EquipmentSheet;
+import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
@@ -700,6 +701,15 @@ public class AssetServiceImpl implements AssetService {
         }
         final String chosenColor = color;
         final String chosenIcon = resolveIcon(draft.getIcon(), draft.isLocation());
+        String caption = "";
+        if (draft.isLocation() && draft.getPlaceCaption() != null) {
+            String captionError = AssetValidator.validateCaption(draft.getPlaceCaption());
+            if (captionError != null) {
+                throw new AssetException(400, captionError);
+            }
+            caption = draft.getPlaceCaption().trim();
+        }
+        final String chosenCaption = caption;
         return ao().executeInTransaction(new TransactionCallback<AssetTypeDto>() {
             @Override
             public AssetTypeDto doInTransaction() {
@@ -726,7 +736,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("PROJECT_KEY", project.getKey()),
                         new DBParam("BASE_KEY", ""),
                         new DBParam("LOCATION", Boolean.valueOf(draft.isLocation())),
-                        new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))));
+                        new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))),
+                        new DBParam("PLACE_CAPTION", chosenCaption));
                 return toTypeDto(created, i18n(), 0);
             }
         });
@@ -757,6 +768,13 @@ public class AssetServiceImpl implements AssetService {
                         throw new AssetException(400, colorError);
                     }
                     type.setColor(draft.getColor().trim());
+                }
+                if (draft.getPlaceCaption() != null && type.isLocation()) {
+                    String captionError = AssetValidator.validateCaption(draft.getPlaceCaption());
+                    if (captionError != null) {
+                        throw new AssetException(400, captionError);
+                    }
+                    type.setPlaceCaption(draft.getPlaceCaption().trim());
                 }
                 type.save();
                 int count = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
@@ -2367,6 +2385,13 @@ public class AssetServiceImpl implements AssetService {
             if (!trimmed.isEmpty() && FieldKinds.NUMBER.equals(field.getKind()) && !NUMBER.matcher(trimmed).matches()) {
                 throw new AssetException(400, "asset-tree.error.number");
             }
+            if (!trimmed.isEmpty() && FieldKinds.DATE.equals(field.getKind())) {
+                String canonical = FieldDates.canonical(trimmed);
+                if (canonical == null) {
+                    throw new AssetException(400, "asset-tree.error.date");
+                }
+                value = canonical;
+            }
             if (!trimmed.isEmpty() && FieldKinds.USER.equals(field.getKind()) && userManager().getUserByKey(trimmed) == null) {
                 throw new AssetException(400, "asset-tree.error.user");
             }
@@ -2811,6 +2836,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setSystemType(type.isSystemType());
         dto.setLocation(type.isLocation());
         dto.setShowInTree(type.isLocation() || type.isShowInTree());
+        dto.setPlaceCaption(type.getPlaceCaption() == null ? "" : type.getPlaceCaption());
         dto.setAssetCount(assetCount);
         if (type.isSystemType() && type.getBaseKey() != null && !type.getBaseKey().isEmpty()) {
             String key = "asset-tree.type." + type.getBaseKey();

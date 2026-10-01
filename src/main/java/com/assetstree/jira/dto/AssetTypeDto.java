@@ -16,6 +16,7 @@ public class AssetTypeDto {
     private boolean systemType;
     private boolean location;
     private boolean showInTree;
+    private String placeCaption;
     private int assetCount;
     private List<FieldDto> fields = new ArrayList<FieldDto>();
 
@@ -89,6 +90,14 @@ public class AssetTypeDto {
 
     public void setShowInTree(boolean showInTree) {
         this.showInTree = showInTree;
+    }
+
+    public String getPlaceCaption() {
+        return placeCaption;
+    }
+
+    public void setPlaceCaption(String placeCaption) {
+        this.placeCaption = placeCaption;
     }
 
     public List<FieldDto> getFields() {

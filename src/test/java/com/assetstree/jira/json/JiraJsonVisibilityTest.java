@@ -35,7 +35,7 @@ public class JiraJsonVisibilityTest {
     public void metaSerializesPublicProperties() throws Exception {
         MetaDto meta = new MetaDto();
         meta.setCanEdit(true);
-        meta.setVersion("1.2.55");
+        meta.setVersion("1.2.56");
         meta.setBaseUrl("https://jira.example.com");
         meta.setLocale("ru-RU");
         meta.setDisplayName("Admin");
@@ -49,7 +49,7 @@ public class JiraJsonVisibilityTest {
 
         String json = mapper().writeValueAsString(meta);
 
-        assertTrue(json.contains("\"version\":\"1.2.55\""));
+        assertTrue(json.contains("\"version\":\"1.2.56\""));
         assertTrue(json.contains("\"baseUrl\":\"https://jira.example.com\""));
         assertTrue(json.contains("\"locale\":\"ru-RU\""));
         assertTrue(json.contains("\"displayName\":\"Admin\""));
@@ -88,16 +88,22 @@ public class JiraJsonVisibilityTest {
         assertEquals("printer", partial.getIcon());
         assertNull(partial.getShowInTree());
         assertNull(partial.getColor());
+        assertNull(partial.getPlaceCaption());
+
+        TypeDraft captioned = mapper.readValue("{\"placeCaption\":\"Кабинет\"}", TypeDraft.class);
+        assertEquals("Кабинет", captioned.getPlaceCaption());
 
         AssetTypeDto stored = new AssetTypeDto();
         stored.setTypeKey("pc");
         stored.setLabel("Компьютер");
-        stored.setLocation(false);
+        stored.setLocation(true);
         stored.setShowInTree(false);
         stored.setIcon("desktop");
+        stored.setPlaceCaption("Филиал");
         String typeJson = mapper.writeValueAsString(stored);
         assertTrue(typeJson.contains("\"showInTree\":false"));
-        assertTrue(typeJson.contains("\"location\":false"));
+        assertTrue(typeJson.contains("\"location\":true"));
+        assertTrue(typeJson.contains("\"placeCaption\":\"Филиал\""));
         assertTrue(typeJson.contains("\"icon\":\"desktop\""));
 
         PortalRuleDraft portal = mapper.readValue(

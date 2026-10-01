@@ -437,6 +437,36 @@ def type_row(type_key):
     return STATE["types"].get(type_key)
 
 
+def canonical_date(value):
+    text = (value or "").strip()
+    if not text:
+        return ""
+    patterns = (
+        (r"^(\d{4})-(\d{2})-(\d{2})$", "iso"),
+        (r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$", "dmy"),
+        (r"^(\d{1,2})\.(\d{1,2})\.(\d{2})$", "short"),
+    )
+    for pattern, shape in patterns:
+        match = re.fullmatch(pattern, text)
+        if not match:
+            continue
+        if shape == "iso":
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        elif shape == "dmy":
+            year, month, day = int(match.group(3)), int(match.group(2)), int(match.group(1))
+        else:
+            yy = int(match.group(3))
+            year = 2000 + yy if yy <= 69 else 1900 + yy
+            month, day = int(match.group(2)), int(match.group(1))
+        if year < 1900 or year > 2199:
+            return None
+        try:
+            return datetime.date(year, month, day).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
 def type_dto(row, text, rows):
     label = row["label"]
     if row["systemType"] and row.get("baseKey"):
@@ -446,6 +476,7 @@ def type_dto(row, text, rows):
         "typeKey": row["typeKey"], "projectKey": row["projectKey"], "label": label, "color": row["color"],
         "icon": row.get("icon") if row.get("icon") in ICONS else default_icon(row["location"]),
         "systemType": row["systemType"], "location": row["location"],
+        "placeCaption": (row.get("placeCaption") or "") if row.get("location") else "",
         "showInTree": bool(row.get("location") or row.get("showInTree")), "assetCount": count,
         "fields": [{
             "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
@@ -1350,7 +1381,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.55",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.56",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1674,9 +1705,14 @@ setTimeout(function () {
             value = (incoming.get(field["fieldKey"]) or "").strip()
             if field["required"] and not value:
                 return text["asset-tree.error.field.required"].replace("{0}", label_of(field["label"], text)), {}
+            stored = incoming.get(field["fieldKey"]) or ""
+            if field["kind"] == "date" and value:
+                stored = canonical_date(value)
+                if not stored:
+                    return text.get("asset-tree.error.date", "Date"), {}
             if field["kind"] == "user" and value and value not in USERS:
                 return text["asset-tree.error.user"], {}
-            values[field["fieldKey"]] = incoming.get(field["fieldKey"]) or ""
+            values[field["fieldKey"]] = stored
         return None, values
 
     def create_asset(self, body, text):
@@ -1844,12 +1880,17 @@ setTimeout(function () {
         icon = resolve_icon((body or {}).get("icon"), location)
         if icon is None:
             return 400, {"message": text["asset-tree.error.type.icon"]}
+        caption = ""
+        if location:
+            caption = str((body or {}).get("placeCaption") or "").strip()
+            if len(caption) > 80:
+                return 400, {"message": text.get("asset-tree.error.caption.length", "Caption")}
         taken = set(STATE["types"])
         key = unique_key(slug(label) or "type", taken)
         order = max([item["sortOrder"] for item in self.project_types(project_key)] or [-1]) + 1
         STATE["types"][key] = {
             "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color, "icon": icon,
-            "systemType": False, "location": location,
+            "systemType": False, "location": location, "placeCaption": caption,
             "showInTree": location or bool((body or {}).get("showInTree")),
             "sortOrder": order, "fields": [],
         }
@@ -1872,6 +1913,11 @@ setTimeout(function () {
             if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
                 return 400, {"message": text["asset-tree.error.type.color"]}
             row["color"] = color
+        if body.get("placeCaption") is not None and row.get("location"):
+            caption = str(body.get("placeCaption") or "").strip()
+            if len(caption) > 80:
+                return 400, {"message": text.get("asset-tree.error.caption.length", "Caption")}
+            row["placeCaption"] = caption
         return 200, type_dto(row, text, project_assets(row["projectKey"]))
 
     def add_field(self, type_key, body, text):
@@ -1882,7 +1928,7 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.type.notFound"]}
         if not label:
             return 400, {"message": text["asset-tree.error.field.label"]}
-        if kind not in ("text", "textarea", "number", "user"):
+        if kind not in ("text", "textarea", "number", "user", "date"):
             return 400, {"message": text["asset-tree.error.field.kind"]}
         taken = {field["fieldKey"] for field in row["fields"]}
         field_key = unique_key(slug(label) or "field", taken)

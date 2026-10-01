@@ -481,6 +481,14 @@ public final class EquipmentExchange {
                     return null;
                 }
             }
+            if (FieldKinds.DATE.equals(field.getKind()) && !value.isEmpty()) {
+                String canonical = FieldDates.canonical(value);
+                if (canonical == null) {
+                    issues.add(new Issue(row, "asset-tree.error.import.date", field.getLabel()));
+                    return null;
+                }
+                value = canonical;
+            }
             if (FieldKinds.USER.equals(field.getKind()) && !value.isEmpty()) {
                 Person person = people == null ? Person.missing() : people.find(value);
                 if (person == null || person.isMissing() || person.isBlank()) {

@@ -232,6 +232,16 @@
         return result;
     }
 
+    function parentCaption(asset) {
+        if (!asset || !asset.parentId) return t('parent');
+        var parent = byId()[asset.parentId];
+        if (!parent) return t('parent');
+        var type = typeOf(parent.typeKey);
+        if (type && type.placeCaption) return type.placeCaption;
+        if (type && type.label) return type.label;
+        return t('parent');
+    }
+
     function typeOf(typeKey) {
         for (var i = 0; i < state.types.length; i++) {
             if (state.types[i].typeKey === typeKey) {
@@ -591,6 +601,7 @@
         }
         (asset.attributes || []).forEach(function (attribute) {
             parts.push(attribute.name || '', attribute.value || '');
+            if (attribute.kind === 'date' && attribute.value) parts.push(formatFieldDate(attribute.value));
         });
         return parts.join('\n').toLowerCase();
     }
@@ -669,7 +680,7 @@
     }
 
     function opsFor(kind) {
-        if (kind === 'number') return ['eq', 'gt', 'lt', 'empty', 'notEmpty'];
+        if (kind === 'number' || kind === 'date') return ['eq', 'gt', 'lt', 'empty', 'notEmpty'];
         if (kind === 'type' || kind === 'status') return ['eq'];
         return ['contains', 'eq', 'empty', 'notEmpty'];
     }
@@ -716,7 +727,14 @@
         var op = rule.op || 'contains';
         if (op === 'empty') return !value;
         if (op === 'notEmpty') return !!value;
-        if (op === 'gt' || op === 'lt' || (op === 'eq' && fieldSpec(rule.field).kind === 'number')) {
+        var kind = fieldSpec(rule.field).kind;
+        if (kind === 'date' && (op === 'gt' || op === 'lt' || op === 'eq')) {
+            if (!value || !expected) return false;
+            if (op === 'gt') return value > expected;
+            if (op === 'lt') return value < expected;
+            return value === expected;
+        }
+        if (op === 'gt' || op === 'lt' || (op === 'eq' && kind === 'number')) {
             var left = parseFloat(value.replace(',', '.'));
             var right = parseFloat(expected.replace(',', '.'));
             if (isNaN(left) || isNaN(right)) return false;
@@ -759,6 +777,9 @@
         var kind = fieldSpec(key).kind;
         var av = fieldRaw(left, key);
         var bv = fieldRaw(right, key);
+        if (kind === 'date') {
+            return String(av).localeCompare(String(bv));
+        }
         if (kind === 'number') {
             var an = parseFloat(String(av).replace(',', '.'));
             var bn = parseFloat(String(bv).replace(',', '.'));
@@ -973,6 +994,22 @@
         });
         state.expansionReady = true;
         rememberExpanded();
+    }
+
+    function formatFieldDate(value) {
+        var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+        if (!match) return String(value || '');
+        if (String(state.locale || 'ru').toLowerCase().indexOf('ru') === 0) {
+            return match[3] + '.' + match[2] + '.' + match[1];
+        }
+        return match[1] + '-' + match[2] + '-' + match[3];
+    }
+
+    function attributeText(attribute) {
+        var raw = attribute && attribute.value ? String(attribute.value) : '';
+        if (!raw) return '';
+        if (attribute.kind === 'date') return formatFieldDate(raw);
+        return raw;
     }
 
     function formatDate(iso) {
@@ -2163,10 +2200,10 @@
 
         var placeItems = [detailItem(t('type'), typeBadge(typeFor(full), full.typeLabel || typeOf(full.typeKey).label || ''))];
         if (full.parentId && byId()[full.parentId]) {
-            placeItems.push(detailItem(t('parent'), el('span', null, byId()[full.parentId].name)));
+            placeItems.push(detailItem(parentCaption(full), el('span', null, byId()[full.parentId].name)));
         }
         (full.attributes || []).forEach(function (attribute) {
-            var shown = attribute.value ? String(attribute.value) : t('emptyValue');
+            var shown = attributeText(attribute) || t('emptyValue');
             placeItems.push(detailItem(attribute.name || attribute.fieldKey, el('span', attribute.value ? null : 'is-empty', shown)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(placeItems)));
@@ -3406,9 +3443,9 @@
         var items = [detailItem(t('type'), typeBadge(typeFor(asset), asset.typeLabel || typeOf(asset.typeKey).label || ''))];
         items.push(detailItem(t('status'), statusPicker(asset)));
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
-        items.push(detailItem(t('parent'), el('span', null, place)));
+        items.push(detailItem(parentCaption(asset), el('span', null, place)));
         (asset.attributes || []).forEach(function (attribute) {
-            var shown = attribute.value ? String(attribute.value) : t('emptyValue');
+            var shown = attributeText(attribute) || t('emptyValue');
             items.push(detailItem(attribute.name || attribute.fieldKey, el('span', attribute.value ? null : 'is-empty', shown)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
@@ -3599,7 +3636,14 @@
         if (!placePage) {
             aside.appendChild(field(t('status'), selectBox('asset-field-status', statusChoices(), asset.status, !state.canEdit)));
         }
-        aside.appendChild(field(t('parent'), parentSelect(asset)));
+        var parentControl = parentSelect(asset);
+        var parentField = field(parentCaption(asset), parentControl);
+        parentControl.addEventListener('change', function () {
+            var caption = parentField.querySelector('span');
+            var nextId = parseInt(parentControl.value, 10);
+            if (caption) caption.textContent = parentCaption(nextId ? { parentId: nextId } : null);
+        });
+        aside.appendChild(parentField);
         aside.appendChild(el('h3', null, t('dates')));
         var meta = el('div', 'asset-tree-meta');
         meta.appendChild(el('span', null, t('created') + ': ' + formatDate(asset.created) + (asset.createdBy ? ' · ' + asset.createdBy : '')));
@@ -3860,6 +3904,7 @@
             { value: 'text', label: t('kindText') },
             { value: 'textarea', label: t('kindTextarea') },
             { value: 'number', label: t('kindNumber') },
+            { value: 'date', label: t('kindDate') },
             { value: 'user', label: t('kindUser') }
         ], selected || 'text', false);
     }
@@ -4173,6 +4218,9 @@
                     valueControl = area('', draft.value || '', false);
                 } else if (draft.kind === 'user') {
                     valueControl = userBox(draft.value || '', false);
+                } else if (draft.kind === 'date') {
+                    valueControl = input('', draft.value || '', false);
+                    valueControl.type = 'date';
                 } else {
                     valueControl = input('', draft.value || '', false);
                     if (draft.kind === 'number') valueControl.inputMode = 'decimal';
@@ -4699,6 +4747,15 @@
             look.appendChild(field(t('color'), colors, true));
             look.appendChild(field(t('icon'), icons, true));
             look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+            if (type.location) {
+                var caption = input('', type.placeCaption || '', false);
+                caption.maxLength = 80;
+                caption.addEventListener('change', function () {
+                    saveLook({ placeCaption: caption.value.trim() });
+                });
+                look.appendChild(field(t('placeCaption'), caption, true));
+                look.appendChild(el('p', 'asset-tree-hint', t('placeCaptionHint')));
+            }
             wrap.appendChild(look);
         }
         if (!type.location) {
@@ -4774,6 +4831,14 @@
         locationToggle.appendChild(locationInput);
         locationToggle.appendChild(el('span', null, t('locationType')));
         form.appendChild(locationToggle);
+        var captionInput = input('type-place-caption', '', false);
+        captionInput.maxLength = 80;
+        var captionField = field(t('placeCaption'), captionInput, true);
+        var captionHint = el('p', 'asset-tree-hint', t('placeCaptionHint'));
+        captionField.hidden = true;
+        captionHint.hidden = true;
+        form.appendChild(captionField);
+        form.appendChild(captionHint);
         var treeToggle = el('label', 'asset-tree-check');
         var treeInput = el('input');
         treeInput.type = 'checkbox';
@@ -4785,6 +4850,8 @@
         locationInput.addEventListener('change', function () {
             treeInput.disabled = locationInput.checked;
             if (locationInput.checked) treeInput.checked = false;
+            captionField.hidden = !locationInput.checked;
+            captionHint.hidden = !locationInput.checked;
         });
         var chosen = PALETTE[0];
         var chosenIcon = '';
@@ -4823,7 +4890,8 @@
                 icon: effectiveIcon(),
                 projectKey: state.projectKey,
                 location: place,
-                showInTree: place || treeInput.checked
+                showInTree: place || treeInput.checked,
+                placeCaption: place ? captionInput.value.trim() : ''
             }, function (status, payload) {
                 if (status >= 200 && status < 300) {
                     state.schemaAdding = false;
@@ -4923,6 +4991,7 @@
 
     function kindLabel(kind) {
         if (kind === 'number') return t('kindNumber');
+        if (kind === 'date') return t('kindDate');
         if (kind === 'user') return t('kindUser');
         if (kind === 'textarea') return t('kindTextarea');
         return t('kindText');
@@ -5025,6 +5094,10 @@
                 control.classList.add('asset-tree-field-value');
             } else if (fieldDef.kind === 'user') {
                 control = userBox(current, !state.canEdit);
+            } else if (fieldDef.kind === 'date') {
+                control = input('', current, !state.canEdit);
+                control.type = 'date';
+                control.classList.add('asset-tree-field-value');
             } else {
                 control = input('', current, !state.canEdit);
                 if (fieldDef.kind === 'number') control.inputMode = 'decimal';
@@ -5632,6 +5705,10 @@
                         } else if (spec.kind === 'user') {
                             valueBox = userBox(rule.value || '', false);
                             valueBox.classList.add('asset-tree-rule-value');
+                        } else if (spec.kind === 'date') {
+                            valueBox = input('', rule.value || '', false);
+                            valueBox.type = 'date';
+                            valueBox.className = 'asset-tree-rule-value';
                         } else {
                             valueBox = input('', rule.value || '', false);
                             valueBox.className = 'asset-tree-rule-value';

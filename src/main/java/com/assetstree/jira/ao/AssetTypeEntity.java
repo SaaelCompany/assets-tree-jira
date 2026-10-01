@@ -60,4 +60,10 @@ public interface AssetTypeEntity extends Entity {
     boolean isShowInTree();
 
     void setShowInTree(boolean showInTree);
+
+    /** Label shown on a child card instead of the generic parent caption. Empty uses the type name. */
+    @StringLength(80)
+    String getPlaceCaption();
+
+    void setPlaceCaption(String placeCaption);
 }

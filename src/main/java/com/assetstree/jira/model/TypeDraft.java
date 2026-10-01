@@ -11,6 +11,7 @@ public class TypeDraft {
     private String projectKey;
     private boolean location;
     private Boolean showInTree;
+    private String placeCaption;
 
     public String getLabel() {
         return label;
@@ -59,5 +60,14 @@ public class TypeDraft {
 
     public void setShowInTree(Boolean showInTree) {
         this.showInTree = showInTree;
+    }
+
+    /** Null when the request did not mention the caption, so a partial update leaves it alone. */
+    public String getPlaceCaption() {
+        return placeCaption;
+    }
+
+    public void setPlaceCaption(String placeCaption) {
+        this.placeCaption = placeCaption;
     }
 }

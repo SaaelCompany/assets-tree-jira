@@ -10,9 +10,10 @@ public final class FieldKinds {
     public static final String NUMBER = "number";
     public static final String USER = "user";
     public static final String TEXTAREA = "textarea";
+    public static final String DATE = "date";
 
     public static final Set<String> ALL = Collections.unmodifiableSet(new HashSet<String>(Arrays.asList(
-            TEXT, NUMBER, USER, TEXTAREA
+            TEXT, NUMBER, USER, TEXTAREA, DATE
     )));
 
     private FieldKinds() {
