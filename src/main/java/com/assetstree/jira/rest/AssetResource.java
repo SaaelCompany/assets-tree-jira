@@ -6,6 +6,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.CommentDraft;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.FieldDraft;
@@ -296,6 +297,17 @@ public class AssetResource {
                 return Response.ok(csv, "text/csv;charset=UTF-8")
                         .header("Content-Disposition", "attachment; filename=\"" + file + "\"")
                         .build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/bulk")
+    public Response bulk(@PathParam("projectKey") final String projectKey, final BulkDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.applyBulk(user(), projectKey, draft)).build();
             }
         });
     }

@@ -3,6 +3,7 @@ package com.assetstree.jira.service;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.CommentDto;
@@ -20,6 +21,7 @@ import com.assetstree.jira.dto.PickerNodeDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.dto.PortalRuleDto;
@@ -98,6 +100,8 @@ public interface AssetService {
     String exportEquipment(ApplicationUser user, String projectKey);
 
     ImportResultDto importEquipment(ApplicationUser user, String projectKey, String csv);
+
+    BulkResultDto applyBulk(ApplicationUser user, String projectKey, BulkDraft draft);
 
     InventoryDto inventory(ApplicationUser user, String projectKey);
 

@@ -2483,6 +2483,59 @@ html.asset-tree-dragging * {
     color: #5e6c84;
 }
 
+.asset-tree-bulk {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    padding: 8px 10px;
+    background: #deebff;
+    border-radius: 3px;
+}
+
+.asset-tree-bulk-count {
+    font-weight: 600;
+    color: #0747a6;
+}
+
+.asset-tree-bulk-errors {
+    flex-basis: 100%;
+    margin: 0;
+    padding-left: 18px;
+    color: #bf2600;
+}
+
+.asset-tree-pick {
+    width: 36px;
+    text-align: center;
+}
+
+.asset-tree-pick-box {
+    margin: 0;
+}
+
+.asset-tree-type-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding-left: 8px;
+    border-bottom: 1px solid #f4f5f7;
+}
+
+.asset-tree-type-row .asset-tree-type-pick {
+    flex: 1;
+    min-width: 0;
+    border-bottom: 0 !important;
+}
+
+.asset-tree-bulk-choice {
+    display: block;
+    width: 100%;
+    margin: 0 0 6px;
+    text-align: left;
+}
+
 .asset-tree-import-errors {
     margin: 8px 0 0;
     padding-left: 18px;

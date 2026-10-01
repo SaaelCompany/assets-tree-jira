@@ -44,6 +44,8 @@ import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.AttributeDto;
+import com.assetstree.jira.dto.BulkIssueDto;
+import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FileDto;
@@ -65,6 +67,8 @@ import com.assetstree.jira.dto.ReportPlaceDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.BulkDraft;
+import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.AssetValidator;
 import com.assetstree.jira.model.AttributeDraft;
@@ -102,6 +106,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1255,6 +1260,23 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public BulkResultDto applyBulk(ApplicationUser user, String projectKey, BulkDraft draft) {
+        Project project = requireReadableProject(user, projectKey);
+        if (draft == null || draft.getAction() == null) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        String action = draft.getAction().trim();
+        String target = draft.getTarget() == null ? "" : draft.getTarget().trim();
+        if ("type".equals(target)) {
+            return bulkTypes(user, project, action, draft.getKeys());
+        }
+        if (!"asset".equals(target)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        return bulkAssets(user, project, action, draft);
+    }
+
+    @Override
     public InventoryDto inventory(ApplicationUser user, String projectKey) {
         Project project = requireReadableProject(user, projectKey);
         return ao().executeInTransaction(new TransactionCallback<InventoryDto>() {
@@ -1901,6 +1923,183 @@ public class AssetServiceImpl implements AssetService {
         result.setUpdated(updated);
         result.setErrors(errors);
         return result;
+    }
+
+    private BulkResultDto bulkTypes(ApplicationUser user, Project project, String action, List<String> keys) {
+        if (!"delete".equals(action)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        List<String> unique = new ArrayList<String>();
+        Set<String> seen = new HashSet<String>();
+        if (keys != null) {
+            for (String key : keys) {
+                if (key == null || key.trim().isEmpty() || !seen.add(key.trim())) {
+                    continue;
+                }
+                unique.add(key.trim());
+            }
+        }
+        if (unique.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.bulk.empty");
+        }
+        if (unique.size() > BulkSelection.MAX_ITEMS) {
+            throw new AssetException(400, "asset-tree.error.bulk.limit", Integer.valueOf(BulkSelection.MAX_ITEMS));
+        }
+        BulkResultDto result = new BulkResultDto();
+        List<BulkIssueDto> errors = new ArrayList<BulkIssueDto>();
+        int done = 0;
+        I18nHelper labels = i18n();
+        for (String key : unique) {
+            AssetTypeEntity type = findType(key);
+            String label = type == null ? key : type.getLabel();
+            try {
+                if (type != null && !ProjectKeys.same(type.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.project.mismatch");
+                }
+                deleteType(user, key);
+                done++;
+            } catch (AssetException ex) {
+                errors.add(new BulkIssueDto(label, exceptionText(labels, ex)));
+            }
+        }
+        result.setDone(done);
+        result.setErrors(errors);
+        return result;
+    }
+
+    private BulkResultDto bulkAssets(ApplicationUser user, Project project, String action, BulkDraft draft) {
+        if (!"delete".equals(action) && !"move".equals(action) && !"status".equals(action) && !"custodian".equals(action)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        if ("move".equals(action) && !draft.isToRoot() && TreeLogic.normalizeParent(draft.getParentId()) == null) {
+            throw new AssetException(400, "asset-tree.error.import.place.required");
+        }
+        LinkedHashSet<Integer> unique = new LinkedHashSet<Integer>();
+        if (draft.getIds() != null) {
+            for (Integer id : draft.getIds()) {
+                if (id != null && id.intValue() > 0) {
+                    unique.add(id);
+                }
+            }
+        }
+        if (unique.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.bulk.empty");
+        }
+        if (unique.size() > BulkSelection.MAX_ITEMS) {
+            throw new AssetException(400, "asset-tree.error.bulk.limit", Integer.valueOf(BulkSelection.MAX_ITEMS));
+        }
+        List<Integer> ids = new ArrayList<Integer>(unique);
+        AssetEntity[] rows = assetsIn(project.getKey());
+        Map<Integer, Integer> parents = parentMap(rows);
+        boolean outermost = "move".equals(action) || ("delete".equals(action) && draft.isCascade());
+        List<Integer> order = outermost ? BulkSelection.keepRoots(ids, parents) : BulkSelection.deepestFirst(ids, parents);
+        Set<Integer> selected = new HashSet<Integer>(ids);
+        Set<Integer> covered = new HashSet<Integer>();
+        BulkResultDto result = new BulkResultDto();
+        List<BulkIssueDto> errors = new ArrayList<BulkIssueDto>();
+        I18nHelper labels = i18n();
+        for (Integer id : order) {
+            String label = assetLabel(id);
+            try {
+                AssetEntity entity = ao().get(AssetEntity.class, id.intValue());
+                if (entity == null) {
+                    if (outermost) {
+                        covered.add(id);
+                    }
+                    continue;
+                }
+                if (!ProjectKeys.same(entity.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.project.mismatch");
+                }
+                if ("delete".equals(action)) {
+                    deleteAsset(user, id.intValue(), draft.isCascade());
+                } else if ("move".equals(action)) {
+                    MoveDraft move = new MoveDraft();
+                    move.setParentId(draft.isToRoot() ? null : draft.getParentId());
+                    moveAsset(user, id.intValue(), move);
+                } else if ("status".equals(action)) {
+                    patchStatus(user, id.intValue(), draft.getStatus());
+                } else {
+                    patchCustodian(user, id.intValue(), draft.getCustodianKey());
+                }
+                covered.add(id);
+                if (outermost) {
+                    for (Integer other : selected) {
+                        if (BulkSelection.isUnder(other.intValue(), id.intValue(), parents)) {
+                            covered.add(other);
+                        }
+                    }
+                }
+            } catch (AssetException ex) {
+                errors.add(new BulkIssueDto(label, exceptionText(labels, ex)));
+            }
+        }
+        result.setDone(covered.size());
+        result.setErrors(errors);
+        return result;
+    }
+
+    private void patchStatus(ApplicationUser user, final int id, final String status) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.bulk.place", entity.getName());
+                }
+                String oldStatus = Statuses.canonical(entity.getStatus());
+                String next = resolveStatus(entity.getProjectKey(), status);
+                entity.setStatus(next);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                logActivity(id, user.getKey(), "status", "", oldStatus, next);
+                return null;
+            }
+        });
+    }
+
+    private void patchCustodian(ApplicationUser user, final int id, final String custodianKey) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.bulk.place", entity.getName());
+                }
+                String oldCustodian = entity.getCustodianKey() == null ? "" : entity.getCustodianKey();
+                String next = normalizeCustodian(custodianKey);
+                entity.setCustodianKey(next);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                logActivity(id, user.getKey(), "custodian", "", displayName(oldCustodian), displayName(next == null ? "" : next));
+                return null;
+            }
+        });
+    }
+
+    private boolean isLocation(AssetEntity entity) {
+        AssetTypeEntity type = entity == null ? null : findType(entity.getTypeKey());
+        return type != null && type.isLocation();
+    }
+
+    private String assetLabel(int id) {
+        AssetEntity entity = ao().get(AssetEntity.class, id);
+        if (entity == null || entity.getName() == null || entity.getName().trim().isEmpty()) {
+            return String.valueOf(id);
+        }
+        return entity.getName();
+    }
+
+    private String exceptionText(I18nHelper labels, AssetException ex) {
+        String text = ex.getArgs() == null || ex.getArgs().length == 0
+                ? labels.getText(ex.getMessageKey())
+                : labels.getText(ex.getMessageKey(), ex.getArgs());
+        if (text == null || text.equals(ex.getMessageKey())) {
+            return ex.getMessageKey();
+        }
+        return text;
     }
 
     private void createImported(ApplicationUser user, String projectKey, EquipmentExchange.Change change) {

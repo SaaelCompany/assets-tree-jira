@@ -883,6 +883,157 @@ def import_equipment(project_key, source, text):
     return {"created": created, "updated": updated, "errors": errors}
 
 
+def bulk_parents(project_key):
+    return {asset["id"]: normalize_parent(asset.get("parentId")) for asset in project_assets(project_key)}
+
+
+def bulk_roots(ids, parents):
+    selected = set(ids)
+    roots = []
+    for item in ids:
+        parent = parents.get(item)
+        seen = set()
+        covered = False
+        while parent:
+            if parent in selected:
+                covered = True
+                break
+            if parent in seen:
+                break
+            seen.add(parent)
+            parent = parents.get(parent)
+        if not covered:
+            roots.append(item)
+    return roots
+
+
+def bulk_depth(item, parents):
+    level = 0
+    parent = parents.get(item)
+    seen = set()
+    while parent and parent not in seen:
+        seen.add(parent)
+        level += 1
+        parent = parents.get(parent)
+    return level
+
+
+def bulk_under(item, ancestor, parents):
+    parent = parents.get(item)
+    seen = set()
+    while parent:
+        if parent == ancestor:
+            return True
+        if parent in seen:
+            return False
+        seen.add(parent)
+        parent = parents.get(parent)
+    return False
+
+
+def bulk_apply(project_key, body, text):
+    body = body or {}
+    action = (body.get("action") or "").strip()
+    target = (body.get("target") or "").strip()
+    if target == "type":
+        return bulk_types(project_key, action, body.get("keys") or [], text)
+    if target != "asset" or action not in ("delete", "move", "status", "custodian"):
+        return 400, {"message": text.get("asset-tree.error.bulk.action", "Action")}
+    ids = []
+    seen = set()
+    for raw in body.get("ids") or []:
+        try:
+            item = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if item > 0 and item not in seen:
+            seen.add(item)
+            ids.append(item)
+    if not ids:
+        return 400, {"message": text.get("asset-tree.error.bulk.empty", "Empty")}
+    if len(ids) > 200:
+        return 400, {"message": text.get("asset-tree.error.bulk.limit", "Limit").replace("{0}", "200")}
+    if action == "move" and not body.get("toRoot") and not normalize_parent(body.get("parentId")):
+        return 400, {"message": text.get("asset-tree.error.import.place.required", "Place")}
+    parents = bulk_parents(project_key)
+    outermost = action == "move" or (action == "delete" and body.get("cascade"))
+    order = bulk_roots(ids, parents) if outermost else sorted(ids, key=lambda item: -bulk_depth(item, parents))
+    covered = set()
+    errors = []
+    for item in order:
+        asset = STATE["assets"].get(item)
+        label = asset["name"] if asset else str(item)
+        if asset and asset["projectKey"] != project_key:
+            errors.append({"label": label, "message": text.get("asset-tree.error.project.mismatch", "Project")})
+            continue
+        if not asset:
+            if outermost:
+                covered.add(item)
+            continue
+        kind = next((row for row in STATE["types"].values() if row["typeKey"] == asset["typeKey"]), {})
+        if action in ("status", "custodian") and kind.get("location"):
+            errors.append({"label": label, "message": text.get("asset-tree.error.bulk.place", "Place").replace("{0}", label)})
+            continue
+        if action == "delete":
+            status, payload = Handler.delete_asset(Handler, item, bool(body.get("cascade")), text)
+            if status >= 400:
+                errors.append({"label": label, "message": (payload or {}).get("message") or ""})
+                continue
+        elif action == "move":
+            move = {"parentId": None if body.get("toRoot") else body.get("parentId")}
+            status, payload = Handler.move_asset(Handler, item, move, text)
+            if status >= 400:
+                errors.append({"label": label, "message": (payload or {}).get("message") or ""})
+                continue
+        elif action == "status":
+            asset["status"] = canonical(body.get("status") or "in_use")
+            asset["updated"] = now_stamp()
+        else:
+            key = (body.get("custodianKey") or "").strip()
+            asset["custodianKey"] = key or None
+            asset["updated"] = now_stamp()
+        covered.add(item)
+        if outermost:
+            for other in ids:
+                if bulk_under(other, item, parents):
+                    covered.add(other)
+    return 200, {"done": len(covered), "errors": errors}
+
+
+def bulk_types(project_key, action, keys, text):
+    if action != "delete":
+        return 400, {"message": text.get("asset-tree.error.bulk.action", "Action")}
+    unique = []
+    seen = set()
+    for key in keys:
+        name = (key or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            unique.append(name)
+    if not unique:
+        return 400, {"message": text.get("asset-tree.error.bulk.empty", "Empty")}
+    done = 0
+    errors = []
+    for key in unique:
+        row = STATE["types"].get(key)
+        label = row["label"] if row else key
+        if not row:
+            errors.append({"label": label, "message": text.get("asset-tree.error.type.notFound", "Type")})
+            continue
+        if row.get("projectKey") != project_key:
+            errors.append({"label": label, "message": text.get("asset-tree.error.project.mismatch", "Project")})
+            continue
+        if row.get("systemType"):
+            errors.append({"label": label, "message": text.get("asset-tree.error.type.system", "System")})
+            continue
+        if any(asset["typeKey"] == key for asset in STATE["assets"].values()):
+            errors.append({"label": label, "message": text.get("asset-tree.error.type.inUse", "Used")})
+            continue
+        del STATE["types"][key]
+        done += 1
+    return 200, {"done": done, "errors": errors}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AssetTreePreview/1.1"
 
@@ -1147,7 +1298,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.51",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.52",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -1192,6 +1343,11 @@ setTimeout(function () {
         match = re.fullmatch(r"/assets/(\d+)/inventory", path)
         if match and method == "POST":
             return self.mark_inventory(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/bulk", path)
+        if match and method == "POST":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return bulk_apply(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/equipment", path)
         if match and method == "POST":
             if match.group(1) not in {item["key"] for item in PROJECTS}:

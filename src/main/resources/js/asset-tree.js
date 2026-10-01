@@ -105,7 +105,10 @@
         statusQuery: '',
         typeQuery: '',
         fieldQuery: '',
-        grantQuery: ''
+        grantQuery: '',
+        picked: {},
+        pickScope: '',
+        bulkErrors: []
     };
     var idIndex = null;
     var noticeTimer = null;
@@ -1841,7 +1844,7 @@
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
             return section;
         }
-        section.appendChild(assetTable(kids.map(function (child) {
+        section.appendChild(selectableTable(kids.map(function (child) {
             var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             return [
                 openName(child.name, function () {
@@ -1852,7 +1855,12 @@
                 lozenge(child.status),
                 who || t('custodianNone')
             ];
-        }), [t('name'), t('keyLabel'), t('status'), t('custodian')]));
+        }), [t('name'), t('keyLabel'), t('status'), t('custodian')], {
+            scope: 'group:' + group.placeId + ':' + group.typeKey,
+            rows: kids.map(function (child) {
+                return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey };
+            })
+        }));
         return section;
     }
 
@@ -2308,7 +2316,7 @@
         var showField = state.sortKey && state.sortKey.indexOf('attr:') === 0;
         if (showField) headers.push(fieldSpec(state.sortKey).label);
         if (remote) headers.push(t('project'));
-        section.appendChild(assetTable(kids.map(function (child) {
+        section.appendChild(selectableTable(kids.map(function (child) {
             var nested = childrenOf(child.id).length;
             var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             var cells = [
@@ -2328,7 +2336,17 @@
             if (showField) cells.push(fieldRaw(child, state.sortKey));
             if (remote) cells.push(child.projectName || child.projectKey || '');
             return cells;
-        }), headers));
+        }), headers, {
+            scope: remote ? 'search' : (projectFiltering() ? 'filter' : ('children:' + (parentId || 'root'))),
+            rows: kids.map(function (child) {
+                return {
+                    key: String(child.id),
+                    kind: isFolder(child) ? 'place' : 'object',
+                    label: child.name,
+                    projectKey: child.projectKey || state.projectKey
+                };
+            })
+        }));
         return section;
     }
 
@@ -2340,12 +2358,297 @@
         return el('span', 'asset-tree-lozenge ' + statusClass(status), statusLabel(status));
     }
 
+    function canBulk(kind) {
+        if (kind === 'type') return !!state.canConfigure;
+        if (kind === 'place') return !!state.canPlaces;
+        return !!state.canObjects;
+    }
+
+    function syncPick(scope, rows) {
+        if (state.pickScope !== scope) {
+            state.picked = {};
+            state.pickScope = scope;
+            state.bulkErrors = [];
+        }
+        var live = {};
+        (rows || []).forEach(function (row) {
+            if (row && canBulk(row.kind)) live[row.key] = true;
+        });
+        Object.keys(state.picked).forEach(function (key) {
+            if (!live[key]) delete state.picked[key];
+        });
+    }
+
+    function pickedItems() {
+        return Object.keys(state.picked).map(function (key) { return state.picked[key]; });
+    }
+
+    function refreshPick() {
+        if (state.view === 'settings') {
+            repaintSchema();
+            return;
+        }
+        if (document.getElementById('asset-tree-detail')) {
+            replaceDetail();
+            return;
+        }
+        renderFrame();
+    }
+
+    function pickBox(row, refresh) {
+        var box = el('input', 'asset-tree-pick-box');
+        box.type = 'checkbox';
+        box.checked = !!state.picked[row.key];
+        box.disabled = !canBulk(row.kind);
+        box.setAttribute('aria-label', row.label || '');
+        box.addEventListener('click', function (event) { event.stopPropagation(); });
+        box.addEventListener('change', function () {
+            if (box.checked) state.picked[row.key] = row;
+            else delete state.picked[row.key];
+            refresh();
+        });
+        return box;
+    }
+
+    function masterBox(rows, refresh) {
+        var box = el('input', 'asset-tree-pick-box');
+        box.type = 'checkbox';
+        var keys = rows.map(function (row) { return row.key; });
+        box.checked = keys.length > 0 && keys.every(function (key) { return !!state.picked[key]; });
+        box.setAttribute('aria-label', t('bulkSelected', keys.length));
+        box.addEventListener('change', function () {
+            rows.forEach(function (row) {
+                if (box.checked) state.picked[row.key] = row;
+                else delete state.picked[row.key];
+            });
+            refresh();
+        });
+        return box;
+    }
+
+    function selectableTable(records, headers, pick) {
+        var rows = pick && pick.rows ? pick.rows.filter(function (row) { return canBulk(row.kind); }) : [];
+        if (!rows.length) {
+            return assetTable(records, headers);
+        }
+        syncPick(pick.scope, pick.rows);
+        var wrap = el('div', 'asset-tree-pick-wrap');
+        if (pickedItems().length || (state.bulkErrors && state.bulkErrors.length)) {
+            wrap.appendChild(bulkBar());
+        }
+        var body = records.map(function (cells, index) {
+            var row = pick.rows[index];
+            if (!row || !canBulk(row.kind)) {
+                return [el('span')].concat(cells);
+            }
+            return [pickBox(row, refreshPick)].concat(cells);
+        });
+        wrap.appendChild(assetTable(body, [masterBox(rows, refreshPick)].concat(headers)));
+        return wrap;
+    }
+
+    function bulkBar() {
+        var bar = el('div', 'asset-tree-bulk');
+        var items = pickedItems();
+        bar.appendChild(el('span', 'asset-tree-bulk-count', t('bulkSelected', items.length)));
+        var kinds = {};
+        items.forEach(function (item) { kinds[item.kind] = true; });
+        var onlyObjects = kinds.object && !kinds.place && !kinds.type;
+        var onlyTypes = kinds.type && !kinds.object && !kinds.place;
+        var assetsOnly = !kinds.type && (kinds.object || kinds.place);
+        if (items.length) {
+            if (onlyObjects) {
+                bar.appendChild(button(t('status'), 'asset-tree-btn', function () { openBulkStatus(); }));
+                bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
+            }
+            if (assetsOnly) {
+                bar.appendChild(button(t('bulkMove'), 'asset-tree-btn', function () { openBulkMove(); }));
+            }
+            if (assetsOnly || onlyTypes) {
+                bar.appendChild(button(t('delete'), 'asset-tree-btn danger', openBulkDelete));
+            }
+            bar.appendChild(button(t('bulkClear'), 'asset-tree-btn', function () {
+                state.picked = {};
+                state.bulkErrors = [];
+                refreshPick();
+            }));
+        }
+        var errors = state.bulkErrors || [];
+        if (errors.length) {
+            var list = el('ul', 'asset-tree-bulk-errors');
+            errors.forEach(function (error) {
+                var text = error.message || '';
+                if (error.label) text = error.label + ': ' + text;
+                list.appendChild(el('li', null, text));
+            });
+            bar.appendChild(list);
+        }
+        return bar;
+    }
+
+    function postBulk(action, extra) {
+        var groups = {};
+        pickedItems().forEach(function (item) {
+            var project = item.projectKey || state.projectKey;
+            if (!groups[project]) groups[project] = [];
+            groups[project].push(item);
+        });
+        var projects = Object.keys(groups);
+        var combined = { done: 0, errors: [] };
+        var index = 0;
+        setBusy(true);
+        function next() {
+            if (index >= projects.length) {
+                setBusy(false);
+                closeModal();
+                state.bulkErrors = combined.errors;
+                if (combined.done > 0) state.picked = {};
+                var note = action === 'delete' ? t('bulkDeleted', combined.done) : (action === 'move' ? t('bulkMoved', combined.done) : t('bulkChanged', combined.done));
+                if (combined.errors.length) note += ' ' + t('bulkFailed', combined.errors.length);
+                notify(note);
+                assetsChanged();
+                if (state.view === 'mine') {
+                    loadMine();
+                    return;
+                }
+                reloadTree(function () { renderFrame(); });
+            } else {
+                var project = projects[index];
+                index += 1;
+                var batch = groups[project];
+                var body = {
+                    target: batch[0].kind === 'type' ? 'type' : 'asset',
+                    action: action,
+                    ids: batch.filter(function (item) { return item.kind !== 'type'; }).map(function (item) { return parseInt(item.key, 10); }),
+                    keys: batch.filter(function (item) { return item.kind === 'type'; }).map(function (item) { return item.key; })
+                };
+                if (extra) {
+                    Object.keys(extra).forEach(function (key) { body[key] = extra[key]; });
+                }
+                ajax('POST', '/projects/' + encodeURIComponent(project) + '/bulk', body, function (status, payload) {
+                    if (status < 200 || status >= 300) {
+                        combined.errors.push({ label: '', message: (payload && payload.message) || t('errorTitle') });
+                    } else {
+                        combined.done += payload.done || 0;
+                        (payload.errors || []).forEach(function (error) { combined.errors.push(error); });
+                    }
+                    next();
+                });
+            }
+        }
+        next();
+    }
+
+    function openBulkStatus() {
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('status')));
+            statusChoices().forEach(function (choice) {
+                dialog.appendChild(button(choice.label, 'asset-tree-btn asset-tree-bulk-choice', function () {
+                    postBulk('status', { status: choice.value });
+                }));
+            });
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function openBulkCustodian() {
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('custodian')));
+            var box = userBox('', false);
+            dialog.appendChild(box);
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('bulkClearCustodian'), 'asset-tree-btn', function () {
+                postBulk('custodian', { custodianKey: '' });
+            }));
+            actions.appendChild(button(t('bulkApply'), 'asset-tree-btn primary', function () {
+                var hidden = box.querySelector('.asset-tree-field-value');
+                var key = hidden ? hidden.value : '';
+                if (!key) {
+                    notify(t('bulkChooseUser'));
+                    return;
+                }
+                postBulk('custodian', { custodianKey: key });
+            }));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function openBulkMove() {
+        var blocked = {};
+        pickedItems().forEach(function (item) {
+            var id = parseInt(item.key, 10);
+            blocked[id] = true;
+            descendantsOf(id).forEach(function (child) { blocked[child] = true; });
+        });
+        var options = [{ value: 'root', label: t('root') }];
+        function walk(parentId, depth) {
+            childrenOf(parentId).forEach(function (asset) {
+                if (!isFolder(asset) || blocked[asset.id]) return;
+                var prefix = '';
+                for (var i = 0; i < depth; i++) prefix += '· ';
+                options.push({ value: String(asset.id), label: prefix + asset.name });
+                walk(asset.id, depth + 1);
+            });
+        }
+        walk(null, 0);
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('bulkMove')));
+            var select = selectBox('asset-tree-bulk-place', options, 'root', false);
+            dialog.appendChild(field(t('exchangePlace'), select, true));
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('bulkApply'), 'asset-tree-btn primary', function () {
+                if (!select.value) {
+                    notify(t('bulkChoosePlace'));
+                    return;
+                }
+                if (select.value === 'root') postBulk('move', { toRoot: true });
+                else postBulk('move', { parentId: parseInt(select.value, 10) });
+            }));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function openBulkDelete() {
+        var chosen = {};
+        var extra = 0;
+        pickedItems().forEach(function (item) {
+            if (item.kind === 'type') return;
+            chosen[parseInt(item.key, 10)] = true;
+        });
+        Object.keys(chosen).forEach(function (id) {
+            descendantsOf(parseInt(id, 10)).forEach(function (child) {
+                if (!chosen[child]) {
+                    chosen[child] = true;
+                    extra += 1;
+                }
+            });
+        });
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('bulkDeleteTitle')));
+            dialog.appendChild(el('p', null, t('bulkDeleteText', pickedItems().length)));
+            if (extra) dialog.appendChild(el('p', null, t('deleteCascade', extra)));
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('delete'), 'asset-tree-btn danger', function () {
+                postBulk('delete', { cascade: extra > 0 });
+            }));
+            dialog.appendChild(actions);
+        });
+    }
+
     function assetTable(records, headers) {
         var table = el('table', 'asset-tree-table');
         var head = el('thead');
         var hr = el('tr');
         headers.forEach(function (label) {
-            hr.appendChild(el('th', null, label));
+            var th = el('th', label && label.nodeType ? 'asset-tree-pick' : null);
+            if (label && label.nodeType) th.appendChild(label);
+            else th.textContent = label == null ? '' : String(label);
+            hr.appendChild(th);
         });
         head.appendChild(hr);
         table.appendChild(head);
@@ -2353,7 +2656,8 @@
         records.forEach(function (cells) {
             var tr = el('tr');
             cells.forEach(function (cell) {
-                var td = el('td');
+                var pickCell = cell && cell.nodeType && cell.classList && cell.classList.contains('asset-tree-pick-box');
+                var td = el('td', pickCell ? 'asset-tree-pick' : null);
                 if (cell && cell.nodeType) {
                     td.appendChild(cell);
                 } else {
@@ -4195,8 +4499,17 @@
                 repaintSchema();
             }));
         }
+        var typeRows = sortedTypes().map(function (type) {
+            return { key: type.typeKey, kind: 'type', label: type.label || type.typeKey, projectKey: type.projectKey || state.projectKey };
+        });
+        if (state.canConfigure) {
+            syncPick('types', typeRows);
+            if (pickedItems().length || (state.bulkErrors && state.bulkErrors.length)) {
+                tools.appendChild(bulkBar());
+            }
+        }
         side.appendChild(tools);
-        sortedTypes().forEach(function (type) {
+        sortedTypes().forEach(function (type, index) {
             var selected = !!(selectedType && type.typeKey === selectedType.typeKey);
             var pick = button('', 'asset-tree-type-pick' + (selected ? ' is-selected' : ''), function () {
                 state.schemaAdding = false;
@@ -4210,8 +4523,17 @@
             var count = el('span', 'asset-tree-key', String((type.fields || []).length));
             count.title = t('schemaFieldCount', (type.fields || []).length);
             pick.appendChild(count);
-            list.appendChild(pick);
-            rows.push(pick);
+            if (state.canConfigure) {
+                var line = el('div', 'asset-tree-type-row');
+                line.setAttribute('data-name', type.label || '');
+                line.appendChild(pickBox(typeRows[index], refreshPick));
+                line.appendChild(pick);
+                list.appendChild(line);
+                rows.push(line);
+            } else {
+                list.appendChild(pick);
+                rows.push(pick);
+            }
         });
         list.appendChild(empty);
         applyListFilter(state.typeQuery, rows, empty);
@@ -4519,6 +4841,9 @@
         state.dirty = false;
         state.report = null;
         state.importResult = null;
+        state.picked = {};
+        state.pickScope = '';
+        state.bulkErrors = [];
         reportToken++;
         state.treeReady = false;
         state.holderUser = null;
@@ -4987,7 +5312,7 @@
             panel.appendChild(el('p', 'asset-tree-hint', t('mineEmpty')));
             return panel;
         }
-        panel.appendChild(assetTable(state.mineAssets.map(function (asset) {
+        panel.appendChild(selectableTable(state.mineAssets.map(function (asset) {
             return [
                 openName(asset.name, function () { goToAsset(asset.projectKey, asset.id); }),
                 asset.objectKey || '',
@@ -4995,7 +5320,17 @@
                 lozenge(asset.status),
                 asset.location || t('root')
             ];
-        }), [t('name'), t('keyLabel'), t('project'), t('status'), t('parent')]));
+        }), [t('name'), t('keyLabel'), t('project'), t('status'), t('parent')], {
+            scope: 'mine',
+            rows: state.mineAssets.map(function (asset) {
+                return {
+                    key: String(asset.id),
+                    kind: typeOf(asset.typeKey).location ? 'place' : 'object',
+                    label: asset.name,
+                    projectKey: asset.projectKey || state.projectKey
+                };
+            })
+        }));
         return panel;
     }
 
