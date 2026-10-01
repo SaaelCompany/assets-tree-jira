@@ -2169,6 +2169,7 @@
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(placeItems)));
         main.appendChild(descriptionModule(full, true));
+        main.appendChild(activityBlock(full));
 
         if (departments.length) {
             var places = el('div');
@@ -2998,6 +2999,10 @@
         return '';
     }
 
+    function placeKind(action) {
+        return action === 'place_add' || action === 'place_remove' || action === 'place_in' || action === 'place_out';
+    }
+
     function historyVerb(item) {
         if (item.action === 'created') return t('actCreated');
         if (item.action === 'comment') return t('actComment');
@@ -3005,6 +3010,10 @@
         if (item.action === 'file') return t('actFile');
         if (item.action === 'file_delete') return t('actFileDelete');
         if (item.action === 'move') return t('actMove');
+        if (item.action === 'place_add') return t('actPlaceAdd');
+        if (item.action === 'place_remove') return t('actPlaceRemove');
+        if (item.action === 'place_in') return t('actPlaceIn');
+        if (item.action === 'place_out') return t('actPlaceOut');
         return t('actUpdated');
     }
 
@@ -3022,6 +3031,14 @@
         head.appendChild(text);
         row.appendChild(head);
         if (item.action === 'created') return row;
+        if (placeKind(item.action)) {
+            var placeChange = el('div', 'asset-tree-history-change');
+            var placeLabel = item.newValue || item.oldValue || '';
+            var placeKey = item.field || '';
+            placeChange.appendChild(el('span', null, placeKey ? (placeLabel + ' \u00b7 ' + placeKey) : placeLabel));
+            row.appendChild(placeChange);
+            return row;
+        }
         var change = el('div', 'asset-tree-history-change');
         var field = historyField(item);
         if (field) change.appendChild(el('span', 'asset-tree-history-field', field));
@@ -3079,7 +3096,9 @@
         [['all', 'activityAll'], ['comments', 'activityComments'], ['history', 'activityHistory']].forEach(function (pair) {
             var tab = button(t(pair[1]), 'asset-tree-tab' + (state.activityTab === pair[0] ? ' is-active' : ''), function () {
                 state.activityTab = pair[0];
-                if (state.detail && state.detail.id === asset.id) showDetail(state.detail, false);
+                if (!(state.detail && state.detail.id === asset.id)) return;
+                if (isFolder(asset)) replaceDetail();
+                else showDetail(state.detail, false);
             });
             tabs.appendChild(tab);
         });

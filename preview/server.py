@@ -523,18 +523,56 @@ def activity_dto(row):
     }
 
 
+def record_activity(asset_id, kind, field, old_value, new_value):
+    activity_id = STATE["activity_seq"]
+    STATE["activity_seq"] += 1
+    STATE["activities"][activity_id] = {
+        "id": activity_id, "assetId": asset_id, "authorKey": "ivanov",
+        "action": kind, "field": field or "", "oldValue": (old_value or "")[:500], "newValue": (new_value or "")[:500],
+        "created": now_stamp(),
+    }
+
+
 def log_activity(asset_id, kind, field, old_value, new_value):
     left = old_value or ""
     right = new_value or ""
     if left == right:
         return
-    activity_id = STATE["activity_seq"]
-    STATE["activity_seq"] += 1
-    STATE["activities"][activity_id] = {
-        "id": activity_id, "assetId": asset_id, "authorKey": "ivanov",
-        "action": kind, "field": field or "", "oldValue": left[:500], "newValue": right[:500],
-        "created": now_stamp(),
-    }
+    record_activity(asset_id, kind, field, left, right)
+
+
+def is_location_id(asset_id):
+    asset = STATE["assets"].get(asset_id)
+    if not asset:
+        return False
+    return bool((STATE["types"].get(asset["typeKey"]) or {}).get("location"))
+
+
+def place_container(start_id, skip=None):
+    current = normalize_parent(start_id)
+    seen = set()
+    skipped = skip or set()
+    while current and current not in seen:
+        seen.add(current)
+        asset = STATE["assets"].get(current)
+        if current in skipped:
+            current = normalize_parent(asset.get("parentId")) if asset else None
+            continue
+        if is_location_id(current):
+            return current
+        current = normalize_parent(asset.get("parentId")) if asset else None
+    return None
+
+
+def log_place(place_id, kind, child):
+    if not place_id or not child:
+        return
+    key = child.get("objectKey") or ""
+    name = child.get("name") or ""
+    if kind in ("place_add", "place_in"):
+        record_activity(place_id, kind, key, "", name)
+    else:
+        record_activity(place_id, kind, key, name, "")
 
 
 def file_dto(row):
@@ -865,6 +903,7 @@ def import_equipment(project_key, source, text):
                 errors.append({"row": row_number, "message": text.get("asset-tree.error.import.user", "User").replace("{0}", custodian_name)})
                 continue
         if existing:
+            old_parent = normalize_parent(existing.get("parentId"))
             existing["name"] = name
             existing["typeKey"] = kind["typeKey"]
             existing["status"] = status_key
@@ -874,11 +913,23 @@ def import_equipment(project_key, source, text):
                 existing["description"] = description
             if has_custodian:
                 existing["custodianKey"] = custodian
+            if old_parent != parent:
+                from_place = place_container(old_parent)
+                to_place = place_container(parent)
+                old_name = STATE["assets"].get(old_parent, {}).get("name", "") if old_parent else ""
+                new_name = STATE["assets"].get(parent, {}).get("name", "") if parent else ""
+                log_activity(existing["id"], "move", "", old_name, new_name)
+                if from_place and from_place != to_place:
+                    log_place(from_place, "place_out", existing)
+                if to_place and to_place != from_place:
+                    log_place(to_place, "place_in", existing)
             updated += 1
         else:
             asset_id = add_asset(project_key, kind["typeKey"], name, parent, status_key, custodian, {})
             STATE["assets"][asset_id]["description"] = description
             by_key[STATE["assets"][asset_id]["objectKey"].lower()] = STATE["assets"][asset_id]
+            log_activity(asset_id, "created", "", "", name)
+            log_place(place_container(parent), "place_add", STATE["assets"][asset_id])
             created += 1
     return {"created": created, "updated": updated, "errors": errors}
 
@@ -1298,7 +1349,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.52",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.53",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
@@ -1652,6 +1703,7 @@ setTimeout(function () {
         asset_id = add_asset(project_key, type_key, body["name"].strip(), parent_id, status, custodian, values)
         STATE["assets"][asset_id]["description"] = body.get("description") or ""
         log_activity(asset_id, "created", "", "", body["name"].strip())
+        log_place(place_container(parent_id), "place_add", STATE["assets"][asset_id])
         return 201, asset_dto(STATE["assets"][asset_id], text, True)
 
     def update_asset(self, asset_id, body, text):
@@ -1711,6 +1763,11 @@ setTimeout(function () {
         nested = descendants(rows, asset_id)
         if nested and not cascade:
             return 409, {"message": text["asset-tree.error.hasChildren"].replace("{0}", str(len(nested)))}
+        doomed = set(nested + [asset_id])
+        for current in nested + [asset_id]:
+            gone = STATE["assets"].get(current)
+            if gone:
+                log_place(place_container(gone.get("parentId"), doomed), "place_remove", gone)
         for current in nested + [asset_id]:
             STATE["assets"].pop(current, None)
             STATE["checks"].pop(current, None)
@@ -1745,11 +1802,17 @@ setTimeout(function () {
             index = len(siblings)
         index = max(0, min(int(index), len(siblings)))
         previous_parent = normalize_parent(asset.get("parentId"))
+        from_place = place_container(previous_parent)
+        to_place = place_container(parent_id)
         asset["parentId"] = parent_id
         if previous_parent != parent_id:
             old_name = STATE["assets"].get(previous_parent, {}).get("name", "") if previous_parent else ""
             new_name = parent["name"] if parent else ""
             log_activity(asset_id, "move", "", old_name, new_name)
+        if from_place and from_place != to_place:
+            log_place(from_place, "place_out", asset)
+        if to_place and to_place != from_place:
+            log_place(to_place, "place_in", asset)
         siblings.insert(index, asset)
         for position, sibling in enumerate(siblings):
             sibling["sortOrder"] = position

@@ -80,6 +80,7 @@ import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PlaceHistory;
 import com.assetstree.jira.model.PortalConditionDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
@@ -370,8 +371,9 @@ public class AssetServiceImpl implements AssetService {
                 entity.setCustodianKey(custodian);
                 entity.save();
                 replaceAttributes(entity, draft.getAttributes());
-                logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
                 AssetEntity[] rows = assetsIn(project.getKey());
+                logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
+                logPlaceChange(user, placeContainer(parentId, rows, null), "place_add", entity);
                 return toDto(entity, attributesFor(entity.getID()), indexTypes(typeDtos(project.getKey(), rows)), indexAssets(rows), true);
             }
         });
@@ -556,6 +558,15 @@ public class AssetServiceImpl implements AssetService {
                 }
                 List<Integer> toDelete = new ArrayList<Integer>(descendants);
                 toDelete.add(Integer.valueOf(id));
+                Map<Integer, AssetEntity> index = indexAssets(all);
+                Set<Integer> doomed = new HashSet<Integer>(toDelete);
+                for (Integer assetId : toDelete) {
+                    AssetEntity gone = index.get(assetId);
+                    if (gone == null) {
+                        continue;
+                    }
+                    logPlaceChange(user, placeContainer(TreeLogic.normalizeParent(gone.getParentId()), all, doomed), "place_remove", gone);
+                }
                 List<Integer> fileIds = new ArrayList<Integer>();
                 for (Integer assetId : toDelete) {
                     for (AssetFileEntity file : ao().find(AssetFileEntity.class, Query.select().where("ASSET_ID = ?", assetId))) {
@@ -624,6 +635,8 @@ public class AssetServiceImpl implements AssetService {
                 }
                 Collections.sort(siblings, SIBLING_ORDER);
                 Integer previousParent = TreeLogic.normalizeParent(moving.getParentId());
+                Integer fromPlace = placeContainer(previousParent, all, null);
+                Integer toPlace = placeContainer(parentId, all, null);
                 int index = move.getIndex() == null ? siblings.size() : move.getIndex().intValue();
                 if (index < 0) {
                     index = 0;
@@ -636,6 +649,12 @@ public class AssetServiceImpl implements AssetService {
                 moving.setUpdatedBy(user.getKey());
                 if (!TreeLogic.sameParent(previousParent, parentId)) {
                     logActivity(id, user.getKey(), "move", "", parentName(previousParent), parentName(parentId));
+                }
+                if (fromPlace != null && !fromPlace.equals(toPlace)) {
+                    logPlaceChange(user, fromPlace, "place_out", moving);
+                }
+                if (toPlace != null && !toPlace.equals(fromPlace)) {
+                    logPlaceChange(user, toPlace, "place_in", moving);
                 }
                 siblings.add(index, moving);
                 for (int i = 0; i < siblings.size(); i++) {
@@ -2079,6 +2098,26 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
+    private Integer placeContainer(Integer startId, AssetEntity[] rows, Set<Integer> skip) {
+        Map<Integer, Boolean> locations = new HashMap<Integer, Boolean>();
+        if (rows != null) {
+            for (AssetEntity row : rows) {
+                locations.put(Integer.valueOf(row.getID()), Boolean.valueOf(isLocation(row)));
+            }
+        }
+        return PlaceHistory.container(startId, locations, parentMap(rows == null ? new AssetEntity[0] : rows), skip);
+    }
+
+    private void logPlaceChange(ApplicationUser user, Integer placeId, String kind, AssetEntity child) {
+        if (user == null || placeId == null || child == null) {
+            return;
+        }
+        String key = child.getObjectKey() == null ? "" : child.getObjectKey();
+        String name = child.getName() == null ? "" : child.getName();
+        boolean arrival = "place_add".equals(kind) || "place_in".equals(kind);
+        recordActivity(placeId.intValue(), user.getKey(), kind, key, arrival ? "" : name, arrival ? name : "");
+    }
+
     private boolean isLocation(AssetEntity entity) {
         AssetTypeEntity type = entity == null ? null : findType(entity.getTypeKey());
         return type != null && type.isLocation();
@@ -2122,6 +2161,7 @@ public class AssetServiceImpl implements AssetService {
         entity.save();
         replaceAttributes(entity, drafts(change));
         logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
+        logPlaceChange(user, placeContainer(parentId, assetsIn(projectKey), null), "place_add", entity);
     }
 
     private void updateImported(ApplicationUser user, EquipmentExchange.Change change, Map<Integer, AssetEntity> index) {
@@ -2138,6 +2178,9 @@ public class AssetServiceImpl implements AssetService {
         String oldStatus = Statuses.canonical(entity.getStatus());
         String oldCustodian = entity.getCustodianKey() == null ? "" : entity.getCustodianKey();
         Integer oldParent = TreeLogic.normalizeParent(entity.getParentId());
+        AssetEntity[] projectRows = assetsIn(entity.getProjectKey());
+        Integer fromPlace = placeContainer(oldParent, projectRows, null);
+        Integer toPlace = placeContainer(Integer.valueOf(change.getParentId()), projectRows, null);
         Map<String, String> oldAttributes = attributeValues(entity.getID());
         String newDescription = change.getDescription() == null ? oldDescription : change.getDescription();
         String newCustodian = change.isCustodianPresent()
@@ -2163,6 +2206,12 @@ public class AssetServiceImpl implements AssetService {
             AssetEntity previous = oldParent == null ? null : index.get(oldParent);
             AssetEntity next = index.get(Integer.valueOf(change.getParentId()));
             logActivity(id, user.getKey(), "move", "", previous == null ? "" : previous.getName(), next == null ? "" : next.getName());
+        }
+        if (fromPlace != null && !fromPlace.equals(toPlace)) {
+            logPlaceChange(user, fromPlace, "place_out", entity);
+        }
+        if (toPlace != null && !toPlace.equals(fromPlace)) {
+            logPlaceChange(user, toPlace, "place_in", entity);
         }
         logAttributeChanges(id, user.getKey(), change.getTypeKey(), oldAttributes);
     }
