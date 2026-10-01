@@ -1153,6 +1153,7 @@ class Handler(BaseHTTPRequestHandler):
                 .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
                 .replace("@@TITLE@@", text.get("asset-tree.ui.title", "Asset tree"))
                 .replace("@@CSS@@", "/download/resources/asset-tree/asset-tree.css")
+                .replace("@@QR@@", "/download/resources/asset-tree/qr-code.js")
                 .replace("@@JS@@", "/download/resources/asset-tree/asset-tree.js")
                 .replace("@@REST@@", "/rest/asset-tree/1.0")
                 .replace("@@PROJECT@@", project)
@@ -1349,7 +1350,8 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.54",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.55",
+                "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,

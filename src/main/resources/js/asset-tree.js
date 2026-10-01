@@ -108,7 +108,8 @@
         grantQuery: '',
         picked: {},
         pickScope: '',
-        bulkErrors: []
+        bulkErrors: [],
+        baseUrl: ''
     };
     var idIndex = null;
     var noticeTimer = null;
@@ -1901,6 +1902,7 @@
             comment: 'M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2z',
             assign: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-3.31 0-8 1.67-8 4v2h16v-2c0-2.33-4.69-4-8-4z',
             more: 'M6 10a2 2 0 1 0 .01 4A2 2 0 0 0 6 10zm6 0a2 2 0 1 0 .01 4A2 2 0 0 0 12 10zm6 0a2 2 0 1 0 .01 4A2 2 0 0 0 18 10z',
+            print: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
             plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
             trash: 'M9 3h6l1 2h4v2H4V5h4l1-2zm-2 6h2v9H7V9zm4 0h2v9h-2V9zm4 0h2v9h-2V9zM6 7h12l-1 14H7L6 7z',
             cloud: 'M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 8.6 3.5 3.5 0 0 0 7 18z',
@@ -2461,6 +2463,11 @@
             if (onlyObjects) {
                 bar.appendChild(button(t('status'), 'asset-tree-btn', function () { openBulkStatus(); }));
                 bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
+                bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
+                    printCards(items.map(function (item) {
+                        return byId()[parseInt(item.key, 10)];
+                    }));
+                }));
             }
             if (assetsOnly) {
                 bar.appendChild(button(t('bulkMove'), 'asset-tree-btn', function () { openBulkMove(); }));
@@ -3275,6 +3282,85 @@
         xhr.send(data);
     }
 
+    function htmlEscape(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function placePath(asset) {
+        if (asset && asset.location) return asset.location;
+        var names = [];
+        var current = asset && asset.parentId ? byId()[asset.parentId] : null;
+        var guard = 0;
+        while (current && guard < 40) {
+            names.unshift(current.name || '');
+            current = current.parentId ? byId()[current.parentId] : null;
+            guard++;
+        }
+        return names.join(' / ');
+    }
+
+    function cardLink(asset) {
+        var base = String(state.baseUrl || '').replace(/\/+$/, '');
+        if (!base) {
+            base = window.location.origin + contextPath();
+        }
+        var project = (asset && asset.projectKey) || state.projectKey || '';
+        var key = (asset && asset.objectKey) || '';
+        return base + '/plugins/servlet/asset-tree?project=' + encodeURIComponent(project) + '&key=' + encodeURIComponent(key);
+    }
+
+    function printCards(assets) {
+        var cards = (assets || []).filter(function (asset) {
+            return asset && !isFolder(asset) && asset.objectKey;
+        });
+        if (!cards.length) {
+            notify(t('printEmpty'));
+            return;
+        }
+        if (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function') {
+            notify(t('errorTitle'));
+            return;
+        }
+        var sheet = window.open('', '_blank');
+        if (!sheet) {
+            notify(t('printBlocked'));
+            return;
+        }
+        var body = cards.map(function (asset) {
+            var link = cardLink(asset);
+            var type = asset.typeLabel || typeOf(asset.typeKey).label || '';
+            var place = placePath(asset);
+            return '<article class="card"><div class="qr">' + window.AssetTreeQr.svg(link) + '</div><div class="text">'
+                + '<div class="name">' + htmlEscape(asset.name || '') + '</div>'
+                + '<div class="meta">' + htmlEscape(type) + (place ? ' · ' + htmlEscape(place) : '') + '</div>'
+                + '<div class="key">' + htmlEscape(asset.objectKey) + '</div>'
+                + '<div class="scan">' + htmlEscape(t('cardScan')) + '</div>'
+                + '</div></article>';
+        }).join('');
+        var style = 'body{margin:0;color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
+            + '.bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
+            + '.bar p{margin:0;flex:1}.bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
+            + '.sheet{display:flex;flex-wrap:wrap;gap:4mm;padding:8mm}'
+            + '.card{width:86mm;height:54mm;border:.3mm solid #172b4d;display:flex;box-sizing:border-box;page-break-inside:avoid;background:#fff}'
+            + '.qr{width:46mm;height:46mm;margin:4mm 0 4mm 3mm;flex:none}.qr svg{width:100%;height:100%;display:block}'
+            + '.text{flex:1;min-width:0;padding:4mm 4mm 3mm 1mm;display:flex;flex-direction:column}'
+            + '.name{font-size:13pt;font-weight:700;line-height:1.15;max-height:2.4em;overflow:hidden}'
+            + '.meta{margin-top:2mm;font-size:9pt;color:#44546f}'
+            + '.key{margin-top:auto;font-family:ui-monospace,monospace;font-size:12pt;letter-spacing:.04em}'
+            + '.scan{font-size:8pt;color:#6b778c}'
+            + '@media print{.bar{display:none}.sheet{padding:0;gap:3mm}.card{border-color:#000}}'
+            + '@page{size:A4;margin:8mm}';
+        sheet.document.open();
+        sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>' + style + '</style></head><body>'
+            + '<div class="bar"><p>' + htmlEscape(t('printHint')) + '</p><button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
+            + '<div class="sheet">' + body + '</div></body></html>');
+        sheet.document.close();
+    }
+
     function showDetailView(asset, issuesLoading, section) {
         section.className = 'asset-tree-detail is-issue is-view';
         section.innerHTML = '';
@@ -3291,6 +3377,11 @@
                 showDetail(state.detail || asset, false);
             }));
             ops.appendChild(toolButton(t('addComment'), 'comment', openComment));
+        }
+        if (!isFolder(asset)) {
+            ops.appendChild(toolButton(t('printCard'), 'print', function () {
+                printCards([state.detail && state.detail.id === asset.id ? state.detail : asset]);
+            }));
         }
         var extra = [];
         if (mayEdit(asset)) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
@@ -4802,6 +4893,20 @@
                 renderFrame();
             }
         });
+    }
+
+    function queryValue(name) {
+        var search = String(window.location.search || '').replace(/^\?/, '');
+        if (!search) return '';
+        var parts = search.split('&');
+        for (var i = 0; i < parts.length; i++) {
+            var pair = parts[i].split('=');
+            var key = decodeURIComponent(pair[0] || '').replace(/\+/g, ' ');
+            if (key === name) {
+                return decodeURIComponent(pair.slice(1).join('=') || '').replace(/\+/g, ' ');
+            }
+        }
+        return '';
     }
 
     function hashId() {
@@ -6385,6 +6490,7 @@
                 return;
             }
             state.i18n = payload.i18n || {};
+            state.baseUrl = payload.baseUrl || '';
             var manageable = !!payload.canConfigure || !!payload.canGrant;
             (payload.projects || []).forEach(function (project) {
                 if (project.canObjects || project.canAssets || project.canAdmin) manageable = true;
@@ -6414,9 +6520,25 @@
                     if (grouped && byId()[grouped.placeId]) {
                         selectTypeGroup(grouped.placeId, grouped.typeKey);
                     }
-                    var requested = hashId();
-                    if (requested && byId()[requested]) {
-                        selectAsset(requested, true);
+                    var wantedKey = queryValue('key');
+                    var openedByKey = false;
+                    if (wantedKey) {
+                        var matched = null;
+                        state.assets.forEach(function (asset) {
+                            if (!matched && String(asset.objectKey || '').toLowerCase() === wantedKey.toLowerCase()) {
+                                matched = asset;
+                            }
+                        });
+                        if (matched) {
+                            openedByKey = true;
+                            selectAsset(matched.id, true);
+                        }
+                    }
+                    if (!openedByKey) {
+                        var requested = hashId();
+                        if (requested && byId()[requested]) {
+                            selectAsset(requested, true);
+                        }
                     }
                     if (state.focusSearch) {
                         var searchBox = document.getElementById('asset-tree-search');

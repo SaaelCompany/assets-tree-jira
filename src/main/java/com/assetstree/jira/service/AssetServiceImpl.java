@@ -8,6 +8,7 @@ import com.atlassian.crowd.embedded.api.UserWithAttributes;
 import com.atlassian.jira.bc.user.search.UserSearchParams;
 import com.atlassian.jira.bc.user.search.UserSearchService;
 import com.atlassian.jira.component.ComponentAccessor;
+import com.atlassian.jira.config.properties.APKeys;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
@@ -224,6 +225,17 @@ public class AssetServiceImpl implements AssetService {
         return current;
     }
 
+    private String jiraBaseUrl() {
+        String base = ComponentAccessor.getApplicationProperties().getString(APKeys.JIRA_BASEURL);
+        if (base == null) {
+            return "";
+        }
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base;
+    }
+
     private GroupManager groupManager() {
         GroupManager current = groupManagerRef;
         if (current == null) {
@@ -239,6 +251,7 @@ public class AssetServiceImpl implements AssetService {
         I18nHelper i18n = authenticationContext().getI18nHelper();
         MetaDto meta = new MetaDto();
         meta.setVersion(PluginInfo.VERSION);
+        meta.setBaseUrl(jiraBaseUrl());
         meta.setLocale(i18n.getLocale() == null ? "en" : i18n.getLocale().toLanguageTag());
         meta.setDisplayName(user.getDisplayName());
         meta.setUserKey(user.getKey());
