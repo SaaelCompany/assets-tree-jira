@@ -4502,12 +4502,7 @@
         var typeRows = sortedTypes().map(function (type) {
             return { key: type.typeKey, kind: 'type', label: type.label || type.typeKey, projectKey: type.projectKey || state.projectKey };
         });
-        if (state.canConfigure) {
-            syncPick('types', typeRows);
-            if (pickedItems().length || (state.bulkErrors && state.bulkErrors.length)) {
-                tools.appendChild(bulkBar());
-            }
-        }
+        if (state.canConfigure) syncPick('types', typeRows);
         side.appendChild(tools);
         sortedTypes().forEach(function (type, index) {
             var selected = !!(selectedType && type.typeKey === selectedType.typeKey);
@@ -4548,6 +4543,9 @@
         }
         layout.appendChild(side);
         layout.appendChild(main);
+        if (state.canConfigure && (pickedItems().length || (state.bulkErrors && state.bulkErrors.length))) {
+            container.appendChild(bulkBar());
+        }
         container.appendChild(layout);
     }
 
