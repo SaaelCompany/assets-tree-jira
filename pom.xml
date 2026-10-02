@@ -6,11 +6,11 @@
 
     <groupId>com.assetstree.jira</groupId>
     <artifactId>asset-tree</artifactId>
-    <version>1.2.79</version>
+    <version>1.2.80</version>
     <packaging>atlassian-plugin</packaging>
 
-    <name>Asset Tree</name>
-    <description>Hierarchical asset tree for Jira Service Management 4.21.1.</description>
+    <name>Niout AssetHub for JSM</name>
+    <description>Niout AssetHub for JSM. Дерево активов для Jira Service Management: площадки, оборудование, ответственные и связи с заявками.</description>
 
     <licenses>
         <license>

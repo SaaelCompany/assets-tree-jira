@@ -45,6 +45,10 @@
     min-width: 0;
 }
 
+#asset-tree-app .asset-tree-top-row .asset-tree-actions {
+    margin-right: 20px;
+}
+
 .asset-tree-heading {
     min-width: 0;
 }

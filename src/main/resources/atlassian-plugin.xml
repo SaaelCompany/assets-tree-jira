@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<atlassian-plugin key="com.assetstree.jira.asset-tree" name="Asset Tree" plugins-version="2">
+<atlassian-plugin key="com.assetstree.jira.asset-tree" name="Niout AssetHub for JSM" plugins-version="2">
     <plugin-info>
-        <description key="asset-tree.description">Hierarchical asset tree for Jira Service Management: locations, services, and equipment, with attributes and links to issues.</description>
+        <description key="asset-tree.description">Niout AssetHub for JSM. Дерево активов для Jira Service Management: площадки, оборудование, ответственные и связи с заявками. Поддержка: niouti@yandex.ru, nioutistudio@gmail.com</description>
         <version>${project.version}</version>
-        <vendor name="Asset Tree"/>
+        <vendor name="Niout" url="mailto:niouti@yandex.ru"/>
         <param name="atlassian-data-center-status">compatible</param>
         <param name="atlassian-data-center-compatible">true</param>
         <param name="configure.url">/plugins/servlet/asset-tree?view=settings</param>

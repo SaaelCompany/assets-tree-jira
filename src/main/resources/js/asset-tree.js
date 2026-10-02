@@ -1350,7 +1350,7 @@
         projectPicker.addEventListener('change', function () {
             switchProject(projectPicker.value);
         });
-        if (!state.projects.length) {
+        if (state.projects.length < 2) {
             projectLabel.hidden = true;
             projectPicker.hidden = true;
         }
