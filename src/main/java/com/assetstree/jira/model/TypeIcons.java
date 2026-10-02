@@ -18,7 +18,9 @@ public final class TypeIcons {
             "building", "warehouse", "department", "office", "hospital", "factory", "store", "home",
             "device", "desktop", "laptop", "monitor", "server", "printer", "scanner", "phone", "tablet",
             "camera", "network", "wifi", "storage", "keyboard", "projector", "battery",
-            "medical", "microscope", "tool", "vehicle", "furniture", "box", "document", "tag"
+            "medical", "microscope", "tool", "vehicle", "furniture", "box", "document", "tag",
+            "project", "megaphone", "target", "bars", "headset", "users", "chat", "clipboard",
+            "gear", "badge", "syringe", "pill", "pulse", "code", "window"
     ));
 
     private TypeIcons() {

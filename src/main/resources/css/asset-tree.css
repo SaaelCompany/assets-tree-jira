@@ -1388,7 +1388,7 @@ html.asset-tree-dragging * {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    max-height: 132px;
+    max-height: 240px;
     padding: 4px;
     overflow-y: auto;
     border: 1px solid #dfe1e6;

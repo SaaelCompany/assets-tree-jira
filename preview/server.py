@@ -47,6 +47,8 @@ ICONS = [
     "device", "desktop", "laptop", "monitor", "server", "printer", "scanner", "phone", "tablet",
     "camera", "network", "wifi", "storage", "keyboard", "projector", "battery",
     "medical", "microscope", "tool", "vehicle", "furniture", "box", "document", "tag",
+    "project", "megaphone", "target", "bars", "headset", "users", "chat", "clipboard",
+    "gear", "badge", "syringe", "pill", "pulse", "code", "window",
 ]
 
 
@@ -1642,7 +1644,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.67",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.68",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

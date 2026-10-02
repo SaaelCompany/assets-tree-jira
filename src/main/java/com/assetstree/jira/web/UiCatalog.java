@@ -424,7 +424,22 @@ public final class UiCatalog {
             "iconFurniture",
             "iconBox",
             "iconDocument",
-            "iconTag"
+            "iconTag",
+            "iconProject",
+            "iconMegaphone",
+            "iconTarget",
+            "iconBars",
+            "iconHeadset",
+            "iconUsers",
+            "iconChat",
+            "iconClipboard",
+            "iconGear",
+            "iconBadge",
+            "iconSyringe",
+            "iconPill",
+            "iconPulse",
+            "iconCode",
+            "iconWindow"
     };
 
     private UiCatalog() {
