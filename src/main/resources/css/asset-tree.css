@@ -239,8 +239,24 @@
 }
 
 .asset-tree-dashboard .asset-tree-donut {
-    width: 88px;
-    height: 88px;
+    width: 156px;
+    height: 156px;
+}
+
+.asset-tree-summary-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 8px;
+}
+
+.asset-tree-dashboard.is-collapsed .asset-tree-summary-bar {
+    margin: 0;
+}
+
+.asset-tree-summary-brief {
+    color: #6b778c;
+    font-size: 12px;
 }
 
 .asset-tree-dashboard .asset-tree-chart-body {
@@ -2172,6 +2188,7 @@ html.asset-tree-dragging * {
 #asset-tree-app .asset-tree-dash,
 #asset-tree-app .asset-tree-dash-stats,
 #asset-tree-app .asset-tree-dash-stack,
+#asset-tree-app .asset-tree-summary-bar,
 #asset-tree-app .asset-tree-chart-card,
 #asset-tree-app .asset-tree-chart-head,
 #asset-tree-app .asset-tree-chart-body,
@@ -2221,6 +2238,17 @@ html.asset-tree-dragging * {
     align-items: center !important;
     gap: 8px !important;
     margin: 0 0 6px !important;
+}
+
+#asset-tree-app .asset-tree-summary-bar {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin: 0 0 8px !important;
+}
+
+#asset-tree-app .asset-tree-dashboard.is-collapsed .asset-tree-summary-bar {
+    margin: 0 !important;
 }
 
 #asset-tree-app .asset-tree-chart-body {
@@ -2293,6 +2321,141 @@ html.asset-tree-dragging * {
     max-height: 72px !important;
     flex: 0 0 72px !important;
     overflow: hidden !important;
+}
+
+#asset-tree-app .asset-tree-dashboard svg.asset-tree-donut {
+    width: 156px !important;
+    height: 156px !important;
+    min-width: 156px !important;
+    max-width: 156px !important;
+    min-height: 156px !important;
+    max-height: 156px !important;
+    flex: 0 0 156px !important;
+}
+
+#asset-tree-app .asset-tree-dashboard .asset-tree-chart-body {
+    align-items: center !important;
+}
+
+#asset-tree-app .asset-tree-dashboard .asset-tree-legend {
+    max-height: 156px;
+    overflow: auto;
+    flex: 1 1 auto;
+}
+
+#asset-tree-app .asset-tree-dash-list {
+    max-height: 220px;
+    overflow: auto;
+}
+
+#asset-tree-app button.asset-tree-legend-btn i {
+    flex: 0 0 8px;
+    width: 8px !important;
+    height: 8px !important;
+}
+
+#asset-tree-app .asset-tree-legend-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: #172b4d !important;
+    text-align: left;
+}
+
+#asset-tree-app .asset-tree-legend-count {
+    flex: 0 0 auto;
+    margin-left: 12px;
+    color: #5e6c84 !important;
+    font-variant-numeric: tabular-nums;
+}
+
+#asset-tree-app button.asset-tree-summary-toggle,
+#asset-tree-app button.asset-tree-chart-toggle {
+    display: inline-flex !important;
+    align-items: center;
+    width: auto !important;
+    height: 28px !important;
+    margin: 0 !important;
+    padding: 0 8px !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 3px;
+    background: #fff !important;
+    color: #172b4d !important;
+    font: inherit !important;
+    font-size: 12px !important;
+    font-weight: 600;
+    line-height: 26px !important;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+#asset-tree-app button.asset-tree-chart-toggle {
+    margin-left: auto !important;
+    max-width: 190px !important;
+    font-weight: 400;
+}
+
+#asset-tree-chart-menu {
+    position: fixed;
+    z-index: 40;
+    box-sizing: border-box;
+    padding: 8px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+    box-shadow: 0 8px 24px rgba(9, 30, 66, 0.18);
+}
+
+#asset-tree-chart-menu .asset-tree-chart-search {
+    box-sizing: border-box;
+    width: 100%;
+    height: 30px;
+    margin: 0 0 6px;
+    padding: 0 8px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+    color: #172b4d;
+    font: inherit;
+    font-size: 13px;
+}
+
+#asset-tree-chart-menu .asset-tree-chart-options {
+    max-height: 240px;
+    overflow: auto;
+}
+
+#asset-tree-chart-menu .asset-tree-chart-group {
+    margin: 6px 4px 2px;
+    color: #6b778c;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+#asset-tree-chart-menu button.asset-tree-chart-option {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 6px 8px !important;
+    border: 0 !important;
+    border-radius: 3px;
+    background: transparent !important;
+    color: #172b4d !important;
+    font: inherit !important;
+    font-size: 13px !important;
+    font-weight: 400;
+    line-height: 1.3 !important;
+    text-align: left;
+    white-space: normal !important;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+#asset-tree-chart-menu button.asset-tree-chart-option.is-selected,
+#asset-tree-chart-menu button.asset-tree-chart-option:hover {
+    background: #deebff !important;
 }
 
 @media (max-width: 1100px) {

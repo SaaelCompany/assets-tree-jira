@@ -5371,13 +5371,50 @@
         return card;
     }
 
+    function summaryCollapsed() {
+        try {
+            return sessionStorage.getItem('asset-tree-summary:' + (state.projectKey || '')) === '0';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function rememberSummary(open) {
+        try {
+            sessionStorage.setItem('asset-tree-summary:' + (state.projectKey || ''), open ? '1' : '0');
+        } catch (error) { /* ignore */ }
+    }
+
+    function closeChartMenu() {
+        var menu = document.getElementById('asset-tree-chart-menu');
+        if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+    }
+
     function fillDashboard(node) {
+        closeChartMenu();
         node.innerHTML = '';
         var report = state.report;
         if (!report) {
             node.appendChild(el('p', 'asset-tree-hint', t('loading')));
             return;
         }
+        var open = !summaryCollapsed();
+        var bar = el('div', 'asset-tree-summary-bar');
+        var toggle = button((open ? '\u25BE ' : '\u25B8 ') + t('summaryTitle'), 'asset-tree-summary-toggle', function () {
+            rememberSummary(!open);
+            fillDashboard(node);
+        });
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.title = open ? t('summaryHide') : t('summaryShow');
+        bar.appendChild(toggle);
+        if (!open) {
+            bar.appendChild(el('span', 'asset-tree-summary-brief', t('reportEquipment') + ' ' + report.equipment));
+            node.appendChild(bar);
+            node.classList.add('is-collapsed');
+            return;
+        }
+        node.classList.remove('is-collapsed');
+        node.appendChild(bar);
         var places = report.total - report.equipment;
         var totals = el('div', 'asset-tree-dash-stats');
         totals.appendChild(dashStat(t('reportEquipment'), report.equipment, function () {
@@ -5402,6 +5439,7 @@
 
         var typeRows = (report.byType || []).filter(function (item) { return item.count > 0; });
         typeRows.sort(function (left, right) { return right.count - left.count; });
+        typeRows = typeRows.slice(0, 6);
         row.appendChild(dashCard(t('reportByType'), typeRows.length ? typeList(typeRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
 
         var side = el('div', 'asset-tree-dash-stack');
@@ -5465,7 +5503,7 @@
                 if (!label) return;
                 var id = 'field:' + label.toLowerCase();
                 if (!groups[id]) {
-                    groups[id] = { id: id, label: label, kind: kind, keys: [] };
+                    groups[id] = { id: id, label: label, kind: kind, keys: [], listed: false };
                     order.push(id);
                 }
                 if (groups[id].keys.indexOf(field.fieldKey) < 0) groups[id].keys.push(field.fieldKey);
@@ -5475,8 +5513,32 @@
         order.sort(function (left, right) {
             return groups[left].label.localeCompare(groups[right].label, state.locale || 'ru');
         });
-        order.forEach(function (id) { dims.push(groups[id]); });
+        order.forEach(function (id) {
+            groups[id].listed = chartFieldListed(groups[id]);
+            dims.push(groups[id]);
+        });
         return dims;
+    }
+
+    function chartFieldListed(group) {
+        var counts = {};
+        var distinct = 0;
+        equipmentRows().forEach(function (asset) {
+            var bucket = fieldBucket(asset, group);
+            if (!bucket || !bucket.key) return;
+            if (!counts[bucket.key]) {
+                counts[bucket.key] = 0;
+                distinct++;
+            }
+            counts[bucket.key]++;
+        });
+        if (!distinct) return false;
+        if (distinct <= 8) return true;
+        var shared = false;
+        Object.keys(counts).forEach(function (key) {
+            if (counts[key] > 1) shared = true;
+        });
+        return shared;
     }
 
     function chartBucketKey(raw, kind) {
@@ -5637,17 +5699,11 @@
             if (dim.id === current) known = true;
         });
         if (!known) current = 'status';
-        var select = selectBox('asset-tree-chart', dims.map(function (dim) {
-            return { value: dim.id, label: dim.label };
-        }), current, false);
-        select.className = 'asset-tree-chart-select';
-        select.setAttribute('aria-label', t('chartTitle'));
-        select.addEventListener('change', function () {
-            rememberChart(select.value);
+        head.appendChild(chartPicker(dims, current, function (id) {
+            rememberChart(id);
             var dash = document.getElementById('asset-tree-dashboard');
             if (dash) fillDashboard(dash);
-        });
-        head.appendChild(select);
+        }));
         card.appendChild(head);
         var chosen = dims[0];
         dims.forEach(function (dim) {
@@ -5658,17 +5714,100 @@
         return card;
     }
 
+    function chartPicker(dims, current, onPick) {
+        var chosen = dims[0];
+        dims.forEach(function (dim) {
+            if (dim.id === current) chosen = dim;
+        });
+        var toggle = button(chosen.label, 'asset-tree-chart-toggle', function () {
+            var existing = document.getElementById('asset-tree-chart-menu');
+            if (existing) {
+                closeChartMenu();
+                return;
+            }
+            openChartMenu(toggle, dims, chosen.id, onPick);
+        });
+        toggle.id = 'asset-tree-chart-toggle';
+        toggle.setAttribute('aria-haspopup', 'listbox');
+        toggle.setAttribute('aria-label', t('chartTitle'));
+        return toggle;
+    }
+
+    function openChartMenu(toggle, dims, currentId, onPick) {
+        if (!state.chartMenuBound) {
+            state.chartMenuBound = true;
+            document.addEventListener('mousedown', function (event) {
+                var menu = document.getElementById('asset-tree-chart-menu');
+                var buttonNode = document.getElementById('asset-tree-chart-toggle');
+                if (!menu) return;
+                if (menu.contains(event.target) || (buttonNode && buttonNode.contains(event.target))) return;
+                closeChartMenu();
+            });
+        }
+        var menu = el('div', 'asset-tree-chart-menu');
+        menu.id = 'asset-tree-chart-menu';
+        var search = el('input', 'asset-tree-chart-search');
+        search.type = 'text';
+        search.placeholder = t('chartFind');
+        search.setAttribute('aria-label', t('chartFind'));
+        var list = el('div', 'asset-tree-chart-options');
+        function paint(query) {
+            list.innerHTML = '';
+            var needle = String(query || '').trim().toLowerCase();
+            var shown = dims.filter(function (dim) {
+                if (!needle) return dim.listed !== false;
+                return dim.label.toLowerCase().indexOf(needle) >= 0;
+            });
+            if (!shown.length) {
+                list.appendChild(el('p', 'asset-tree-hint', t('noResults')));
+                return;
+            }
+            var headed = false;
+            shown.forEach(function (dim) {
+                if (needle === '' && dim.id.indexOf('field:') === 0 && !headed) {
+                    list.appendChild(el('div', 'asset-tree-chart-group', t('chartFields')));
+                    headed = true;
+                }
+                var item = button(dim.label, 'asset-tree-chart-option' + (dim.id === currentId ? ' is-selected' : ''), function () {
+                    closeChartMenu();
+                    onPick(dim.id);
+                });
+                list.appendChild(item);
+            });
+        }
+        search.addEventListener('input', function () { paint(search.value); });
+        search.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') closeChartMenu();
+        });
+        menu.appendChild(search);
+        menu.appendChild(list);
+        paint('');
+        document.body.appendChild(menu);
+        var rect = toggle.getBoundingClientRect();
+        var width = 240;
+        var left = rect.right - width;
+        if (left < 8) left = 8;
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.left = left + 'px';
+        menu.style.width = width + 'px';
+        search.focus();
+    }
+
     function sliceChart(data) {
         var body = el('div', 'asset-tree-chart-body');
         body.appendChild(donutChart(data));
         var legend = el('div', 'asset-tree-legend');
         data.forEach(function (item) {
-            var line = button(item.label + ' ' + item.count, 'asset-tree-legend-btn', function () {
+            var line = button('', 'asset-tree-legend-btn', function () {
                 if (item.activate) item.activate();
             });
             var dot = el('i');
             dot.style.background = item.color;
-            line.insertBefore(dot, line.firstChild);
+            var name = el('span', 'asset-tree-legend-label', item.label);
+            var count = el('span', 'asset-tree-legend-count', '(' + item.count + ')');
+            line.appendChild(dot);
+            line.appendChild(name);
+            line.appendChild(count);
             legend.appendChild(line);
         });
         body.appendChild(legend);
@@ -6815,7 +6954,7 @@
         if (!row || !row.activate) return;
         node.style.cursor = 'pointer';
         var title = svgEl('title');
-        title.textContent = row.label + ' ' + row.count;
+        title.textContent = row.label + ' (' + row.count + ')';
         node.appendChild(title);
         node.addEventListener('click', function () { row.activate(); });
     }
