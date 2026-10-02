@@ -370,7 +370,7 @@
 }
 
 .asset-tree-search input,
-.asset-tree-field input,
+.asset-tree-field input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
 .asset-tree-field select,
 .asset-tree-field textarea {
     width: 100%;
@@ -1001,9 +1001,16 @@ html.asset-tree-dragging * {
 
 .asset-tree-check {
     display: flex;
+    flex-direction: row;
+    justify-content: flex-start;
     gap: 8px;
     align-items: center;
+    width: auto;
+    max-width: 100%;
     margin: 8px 0;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
 }
 
 .asset-tree-meta {
@@ -1150,11 +1157,62 @@ html.asset-tree-dragging * {
 .asset-tree-choices {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 2px;
+    width: 100%;
 }
 
 .asset-tree-choices .asset-tree-check {
     margin: 0;
+}
+
+#asset-tree-app .asset-tree-check,
+.asset-tree-dialog .asset-tree-check {
+    display: inline-flex !important;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
+    width: auto !important;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    float: none !important;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 14px;
+    font-weight: 400;
+    color: #172b4d;
+    cursor: pointer;
+}
+
+#asset-tree-app .asset-tree-check > span,
+.asset-tree-dialog .asset-tree-check > span {
+    flex: 0 1 auto;
+    width: auto !important;
+    margin: 0;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: #172b4d;
+}
+
+#asset-tree-app .asset-tree-check input[type="checkbox"],
+#asset-tree-app .asset-tree-check input[type="radio"],
+.asset-tree-dialog .asset-tree-check input[type="checkbox"],
+.asset-tree-dialog .asset-tree-check input[type="radio"] {
+    flex: 0 0 16px;
+    width: 16px !important;
+    min-width: 16px !important;
+    max-width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
 }
 
 select.asset-tree-multi {
@@ -1294,7 +1352,7 @@ a.asset-tree-url {
     color: #6b778c;
 }
 
-.asset-tree-dialog input:not([type="checkbox"]):not([type="hidden"]),
+.asset-tree-dialog input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
 .asset-tree-dialog select,
 .asset-tree-dialog textarea {
     display: block !important;
@@ -1314,10 +1372,15 @@ a.asset-tree-url {
     box-shadow: none;
 }
 
-.asset-tree-dialog input[type="checkbox"] {
+.asset-tree-dialog input[type="checkbox"],
+.asset-tree-dialog input[type="radio"] {
     width: 16px !important;
-    min-height: 16px;
-    margin: 0 6px 0 0 !important;
+    min-width: 16px !important;
+    max-width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .asset-tree-dialog .asset-tree-hint {
