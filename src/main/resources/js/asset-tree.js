@@ -6723,8 +6723,12 @@
         });
         list.appendChild(empty);
         applyListFilter(state.statusQuery, rows, empty);
-        var form = el('form', 'asset-tree-status-add');
-        form.appendChild(field(t('name'), input('status-label', '', false), true));
+        var form = el('form', 'asset-tree-status-row asset-tree-status-add');
+        var nameInput = input('status-label', '', false);
+        nameInput.placeholder = t('name');
+        nameInput.setAttribute('aria-label', t('name'));
+        form.appendChild(el('span', 'asset-tree-status-slot'));
+        form.appendChild(nameInput);
         var chosenCategory = 'todo';
         var trigger = colorTrigger('todo', function (value) {
             chosenCategory = value;
@@ -6733,7 +6737,6 @@
         form.appendChild(trigger);
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
-        form.appendChild(error);
         form.appendChild(button(t('statusAdd'), 'asset-tree-btn primary', function () {
             var label = document.getElementById('status-label').value.trim();
             if (!label) {
@@ -6754,10 +6757,11 @@
                 }
             });
         }));
+        form.appendChild(error);
         form.addEventListener('submit', function (event) {
             event.preventDefault();
         });
-        block.appendChild(form);
+        list.insertBefore(form, list.firstChild);
         block.appendChild(list);
         panel.appendChild(block);
     }

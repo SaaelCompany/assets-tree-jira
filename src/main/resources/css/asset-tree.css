@@ -2732,17 +2732,53 @@ html.asset-tree-dragging * {
     margin-left: auto;
 }
 
-.asset-tree-status-add {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    flex-wrap: wrap;
+#asset-tree-app .asset-tree-status-list > .asset-tree-status-row,
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add {
+    display: grid !important;
+    grid-template-columns: 152px minmax(160px, 320px) 28px minmax(0, 1fr) auto;
+    align-items: center !important;
+    column-gap: 10px;
+    row-gap: 6px;
+    float: none !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
 }
 
-.asset-tree-status-add .asset-tree-field {
-    flex: 1 1 220px;
-    max-width: 360px;
-    margin-bottom: 0;
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add {
+    background: #fafbfc;
+}
+
+#asset-tree-app .asset-tree-status-list .asset-tree-status-row input,
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > input {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+}
+
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > button.asset-tree-btn {
+    width: auto !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    margin: 0 !important;
+    justify-self: start;
+}
+
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > .asset-tree-form-error {
+    grid-column: 1 / -1;
+    margin: 0;
+}
+
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > .asset-tree-form-error[hidden] {
+    display: none !important;
+}
+
+#asset-tree-app .asset-tree-status-list .asset-tree-key {
+    margin-left: 0 !important;
 }
 
 #asset-tree-app button.asset-tree-color-trigger,
