@@ -82,6 +82,7 @@
         pane: 'list',
         activityTab: 'all',
         mineAssets: null,
+        mineQuery: '',
         searchHits: null,
         searching: false,
         searchToken: 0,
@@ -1394,6 +1395,24 @@
                 }
             });
             actions.appendChild(scope);
+        }
+        if (state.view === 'mine') {
+            var mineSearch = el('input', 'asset-tree-search');
+            mineSearch.type = 'search';
+            mineSearch.id = 'asset-tree-mine-search';
+            mineSearch.placeholder = t('mineSearch');
+            mineSearch.value = state.mineQuery || '';
+            mineSearch.setAttribute('aria-label', t('mineSearch'));
+            var mineTimer = null;
+            mineSearch.addEventListener('input', function () {
+                var value = mineSearch.value;
+                clearTimeout(mineTimer);
+                mineTimer = setTimeout(function () {
+                    state.mineQuery = value;
+                    renderFrame();
+                }, 120);
+            });
+            actions.appendChild(mineSearch);
         }
         row.appendChild(titles);
         row.appendChild(actions);
@@ -6839,6 +6858,30 @@
         });
     }
 
+    function mineNeedle() {
+        return String(state.mineQuery || '').trim().toLowerCase();
+    }
+
+    function mineHaystack(asset) {
+        return [
+            haystack(asset),
+            asset.projectName || '',
+            asset.projectKey || '',
+            statusLabel(asset.status),
+            asset.location || t('root')
+        ].join('\n').toLowerCase();
+    }
+
+    function mineVisible(assets) {
+        var needle = mineNeedle();
+        if (!needle) {
+            return assets;
+        }
+        return assets.filter(function (asset) {
+            return mineHaystack(asset).indexOf(needle) >= 0;
+        });
+    }
+
     function renderMine() {
         var panel = el('section', 'asset-tree-report');
         var title = state.displayName ? t('menuMine') + ' · ' + state.displayName : t('menuMine');
@@ -6852,7 +6895,12 @@
             panel.appendChild(el('p', 'asset-tree-hint', t('mineEmpty')));
             return panel;
         }
-        panel.appendChild(selectableTable(state.mineAssets.map(function (asset) {
+        var rows = mineVisible(state.mineAssets);
+        if (!rows.length) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('noResults')));
+            return panel;
+        }
+        panel.appendChild(selectableTable(rows.map(function (asset) {
             return [
                 nameCell(asset, function () { goToAsset(asset.projectKey, asset.id); }),
                 asset.objectKey || '',
@@ -6862,7 +6910,7 @@
             ];
         }), [t('name'), t('keyLabel'), t('project'), t('status'), t('parent')], {
             scope: 'mine',
-            rows: state.mineAssets.map(function (asset) {
+            rows: rows.map(function (asset) {
                 return {
                     key: String(asset.id),
                     kind: typeOf(asset.typeKey).location ? 'place' : 'object',

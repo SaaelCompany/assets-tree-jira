@@ -319,6 +319,7 @@ public final class UiCatalog {
             "backToList",
             "mineHint",
             "mineEmpty",
+            "mineSearch",
             "searchHint",
             "searchPrompt",
             "searchScopeProject",

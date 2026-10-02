@@ -91,6 +91,7 @@ import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.ObjectKeys;
 import com.assetstree.jira.model.PlaceHistory;
 import com.assetstree.jira.model.PortalConditionDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
@@ -392,7 +393,7 @@ public class AssetServiceImpl implements AssetService {
                 Date now = new Date();
                 AssetEntity entity = ao().create(AssetEntity.class,
                         new DBParam("NAME", draft.getName().trim()),
-                        new DBParam("OBJECT_KEY", nextKey()),
+                        new DBParam("OBJECT_KEY", nextKey(project.getKey())),
                         new DBParam("DESCRIPTION", draft.getDescription() == null ? "" : draft.getDescription()),
                         new DBParam("TYPE_KEY", type.getTypeKey()),
                         new DBParam("STATUS", resolveStatus(project.getKey(), draft.getStatus())),
@@ -2295,7 +2296,7 @@ public class AssetServiceImpl implements AssetService {
         Integer parentId = Integer.valueOf(change.getParentId());
         AssetEntity entity = ao().create(AssetEntity.class,
                 new DBParam("NAME", change.getName()),
-                new DBParam("OBJECT_KEY", nextKey()),
+                new DBParam("OBJECT_KEY", nextKey(projectKey)),
                 new DBParam("DESCRIPTION", change.getDescription() == null ? "" : change.getDescription()),
                 new DBParam("TYPE_KEY", change.getTypeKey()),
                 new DBParam("STATUS", change.getStatusKey()),
@@ -2446,21 +2447,39 @@ public class AssetServiceImpl implements AssetService {
                 || (match.getDisplayName() != null && text.equalsIgnoreCase(match.getDisplayName()));
     }
 
-    private String nextKey() {
-        for (int attempt = 0; attempt < 5; attempt++) {
-            AssetCounterEntity[] rows = ao().find(AssetCounterEntity.class);
-            AssetCounterEntity counter = rows.length == 0
-                    ? ao().create(AssetCounterEntity.class, new DBParam("NEXT_VALUE", 1))
-                    : rows[0];
+    private String nextKey(String projectKey) {
+        String prefix = ObjectKeys.prefix(projectKey);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            AssetCounterEntity counter = counterFor(prefix);
             int value = Math.max(counter.getNextValue(), 1);
             counter.setNextValue(value + 1);
             counter.save();
-            String key = "AST-" + value;
-            if (ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
+            String key = prefix + "-" + value;
+            if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
                 return key;
             }
         }
         throw new AssetException(500, "asset-tree.error.unexpected");
+    }
+
+    private AssetCounterEntity counterFor(String prefix) {
+        AssetCounterEntity[] rows = ao().find(AssetCounterEntity.class, Query.select().where("PROJECT_KEY = ?", prefix));
+        if (rows.length > 0) {
+            return rows[0];
+        }
+        int start = 1;
+        AssetEntity[] existing = ao().find(AssetEntity.class, Query.select().where("OBJECT_KEY LIKE ?", prefix + "-%"));
+        if (existing != null) {
+            for (AssetEntity row : existing) {
+                int suffix = ObjectKeys.suffix(prefix, row.getObjectKey());
+                if (suffix >= start) {
+                    start = suffix + 1;
+                }
+            }
+        }
+        return ao().create(AssetCounterEntity.class,
+                new DBParam("NEXT_VALUE", start),
+                new DBParam("PROJECT_KEY", prefix));
     }
 
     private int nextSort(Integer parentId, String projectKey) {

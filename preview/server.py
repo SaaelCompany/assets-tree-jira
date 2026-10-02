@@ -170,7 +170,7 @@ def canonical_field_value(kind, options, raw):
 CAP_ORDER = ["view", "places", "types", "object", "assets", "admin"]
 STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
-PROJECTS = [{"key": "TEST", "name": "test"}]
+PROJECTS = [{"key": "TEST", "name": "test"}, {"key": "STP", "name": "STP"}]
 USERS = {
     "ivanov": {"userKey": "ivanov", "username": "ivanov", "displayName": "Иванов Сергей", "email": "ivanov@example.com", "phone": "+7 495 000-11-22", "department": "ИТ-поддержка", "title": "Инженер", "directory": "Active Directory", "active": True},
     "petrova": {"userKey": "petrova", "username": "petrova", "displayName": "Петрова Анна", "email": "petrova@example.com", "phone": "+7 495 000-33-44", "department": "Хирургия", "title": "Старшая медсестра", "directory": "Active Directory", "active": True},
@@ -478,11 +478,30 @@ def copy_name(base, word, taken):
     return stem[:255]
 
 
+def object_prefix(project):
+    raw = (project or "").strip().upper()
+    prefix = "".join(ch for ch in raw if ch.isalnum())
+    if not prefix:
+        prefix = "AST"
+    return prefix[:20]
+
+
+def next_object_key(project):
+    prefix = object_prefix(project)
+    head = prefix + "-"
+    highest = 0
+    for asset in STATE["assets"].values():
+        key = str(asset.get("objectKey") or "")
+        if len(key) > len(head) and key.upper().startswith(head) and key[len(head):].isdigit():
+            highest = max(highest, int(key[len(head):]))
+    return "%s-%s" % (prefix, highest + 1)
+
+
 def add_asset(project, type_key, name, parent, status, custodian, values):
     asset_id = STATE["seq"]
     STATE["seq"] += 1
     STATE["assets"][asset_id] = {
-        "id": asset_id, "objectKey": "AST-%s" % asset_id, "projectKey": project, "name": name,
+        "id": asset_id, "objectKey": next_object_key(project), "projectKey": project, "name": name,
         "description": "", "typeKey": type_key, "status": status, "parentId": parent,
         "sortOrder": asset_id, "custodianKey": custodian, "created": "2026-09-26T09:00:00Z",
         "updated": "2026-09-26T09:00:00Z", "values": values, "offeredTypes": [],
@@ -1952,7 +1971,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.78",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.79",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1992,6 +2011,7 @@ setTimeout(function () {
                     dto = asset_dto(asset, text, False)
                     dto["holderRole"] = role
                     result.append(dto)
+            result.sort(key=lambda item: ((item.get("projectName") or "").lower(), (item.get("name") or "").lower()))
             return 200, result
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/inventory", path)
         if match and method == "GET":
