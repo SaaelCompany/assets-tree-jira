@@ -2171,21 +2171,19 @@
                 openFieldModal(type);
             }));
         }
+        var direct = equipmentIn(group.placeId, group.typeKey).length;
+        var offered = place && (place.offeredTypes || []).indexOf(group.typeKey) >= 0;
+        if (!direct && offered && state.canPlaces) {
+            tools.appendChild(button(t('removeTypeHere'), 'asset-tree-btn', function () {
+                if (!window.confirm(t('removeTypeHereConfirm', type.label || group.typeKey))) return;
+                withdrawType(group.placeId, group.typeKey);
+            }));
+        }
         head.appendChild(tools);
         section.appendChild(head);
         section.appendChild(filterBar());
         if (!kids.length) {
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
-            var direct = equipmentIn(group.placeId, group.typeKey).length;
-            var offered = place && (place.offeredTypes || []).indexOf(group.typeKey) >= 0;
-            if (!direct && offered && state.canPlaces) {
-                var away = el('div', 'asset-tree-type-remove-row');
-                away.appendChild(button(t('removeTypeHere'), 'asset-tree-btn', function () {
-                    if (!window.confirm(t('removeTypeHereConfirm', type.label || group.typeKey))) return;
-                    withdrawType(group.placeId, group.typeKey);
-                }));
-                section.appendChild(away);
-            }
             return section;
         }
         section.appendChild(selectableTable(kids.map(function (child) {

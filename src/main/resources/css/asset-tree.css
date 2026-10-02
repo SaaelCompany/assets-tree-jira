@@ -3828,10 +3828,6 @@ a.asset-tree-url {
     display: none !important;
 }
 
-#asset-tree-app .asset-tree-type-remove-row {
-    margin-top: 16px;
-}
-
 #asset-tree-app .asset-tree-offer-list {
     display: flex;
     flex-direction: column;
