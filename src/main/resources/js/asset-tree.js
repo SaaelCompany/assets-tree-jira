@@ -1172,7 +1172,7 @@
             }
             var field = control.classList && control.classList.contains('asset-tree-field-value')
                 ? control
-                : control.querySelector('input, select');
+                : control.querySelector('input:not([type="hidden"]), select');
             if (field) {
                 field.addEventListener('keydown', function (keyEvent) {
                     if (keyEvent.key === 'Escape') {
@@ -1979,13 +1979,15 @@
         } else {
             window.location.hash = String(id);
         }
+        state.assetFetch = (state.assetFetch || 0) + 1;
+        var fetchId = state.assetFetch;
         if (folder) {
             state.pane = 'list';
             state.detail = asset;
             renderNodes();
             replaceDetail();
             ajax('GET', '/assets/' + id, null, function (status, payload) {
-                if (state.selectedId !== id || state.dirty || state.editing) {
+                if (fetchId !== state.assetFetch || state.selectedId !== id || state.dirty || state.editing) {
                     return;
                 }
                 if (status === 200) {
@@ -1999,10 +2001,14 @@
         renderNodes();
         showDetail(asset, true);
         ajax('GET', '/assets/' + id, null, function (status, payload) {
-            if (state.selectedId !== id || state.dirty) {
+            if (fetchId !== state.assetFetch || state.selectedId !== id || state.dirty) {
+                return;
+            }
+            if (document.querySelector('.asset-tree-inline.is-editing')) {
                 return;
             }
             if (status === 200) {
+                state.detail = payload;
                 showDetail(payload, false);
             } else if (status === 404) {
                 state.selectedId = null;
@@ -3057,7 +3063,8 @@
             if (changes && typeof changes.onError === 'function') changes.onError();
             return;
         }
-        var attributes = (asset.attributes || []).map(function (attribute) {
+        var source = state.detail && state.detail.id === asset.id && state.detail.attributes ? state.detail : asset;
+        var attributes = (source.attributes || []).map(function (attribute) {
             return { fieldKey: attribute.fieldKey, value: attribute.value || '' };
         });
         if (changes && changes.attributes) {
@@ -3074,17 +3081,17 @@
                 if (!seen[key]) attributes.push({ fieldKey: key, value: patch[key] });
             });
         }
-        var custodianKey = asset.custodian && asset.custodian.userKey ? asset.custodian.userKey : '';
+        var custodianKey = source.custodian && source.custodian.userKey ? source.custodian.userKey : '';
         if (changes && Object.prototype.hasOwnProperty.call(changes, 'custodianKey')) {
             custodianKey = changes.custodianKey || '';
         }
         setBusy(true);
         ajax('PUT', '/assets/' + asset.id, {
-            name: changes && Object.prototype.hasOwnProperty.call(changes, 'name') ? changes.name : asset.name,
-            projectKey: asset.projectKey || state.projectKey,
-            typeKey: asset.typeKey,
-            status: changes && changes.status ? changes.status : asset.status,
-            description: changes && Object.prototype.hasOwnProperty.call(changes, 'description') ? changes.description : (asset.description || ''),
+            name: changes && Object.prototype.hasOwnProperty.call(changes, 'name') ? changes.name : source.name,
+            projectKey: source.projectKey || asset.projectKey || state.projectKey,
+            typeKey: source.typeKey || asset.typeKey,
+            status: changes && changes.status ? changes.status : source.status,
+            description: changes && Object.prototype.hasOwnProperty.call(changes, 'description') ? changes.description : (source.description || ''),
             custodianKey: custodianKey,
             attributes: attributes
         }, function (code, payload) {
