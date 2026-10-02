@@ -2345,6 +2345,7 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend {
+    position: relative !important;
     flex: 0 1 auto;
     align-items: flex-start;
     max-width: 100%;
@@ -2355,6 +2356,11 @@ html.asset-tree-dragging * {
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend.is-expanded {
     max-height: 240px;
+}
+
+#asset-tree-app .asset-tree-dashboard .asset-tree-legend > .asset-tree-legend-btn,
+#asset-tree-app .asset-tree-dashboard .asset-tree-legend > .asset-tree-legend-more {
+    flex: 0 0 auto;
 }
 
 #asset-tree-app .asset-tree-dash-list {
@@ -2435,6 +2441,8 @@ html.asset-tree-dragging * {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    max-height: 150px;
+    overflow: auto;
 }
 
 #asset-tree-app .asset-tree-legend-pick {

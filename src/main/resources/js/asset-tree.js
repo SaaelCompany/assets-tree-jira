@@ -5893,7 +5893,10 @@
             chevron.textContent = open ? '\u25BE' : '\u25B8';
             chevron.title = open ? t('chartRestHide') : t('chartRest');
             chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
-            if (open && find) find.focus();
+            if (open) {
+                legend.scrollTop = block.offsetTop;
+                if (find) find.focus();
+            }
         });
         chevron.title = t('chartRest');
         chevron.setAttribute('aria-expanded', 'false');
