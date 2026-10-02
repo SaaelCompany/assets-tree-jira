@@ -18,6 +18,7 @@ import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
 import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.web.PortalLookup;
 import com.assetstree.jira.model.TypeDraft;
@@ -102,6 +103,40 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.updateAsset(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/plans")
+    public Response createPlan(@PathParam("id") final int id, final ServicePlanDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.createPlan(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("assets/{id}/plans/{planId}")
+    public Response updatePlan(@PathParam("id") final int id, @PathParam("planId") final int planId, final ServicePlanDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updatePlan(user(), id, planId, draft)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/plans/{planId}")
+    public Response deletePlan(@PathParam("id") final int id, @PathParam("planId") final int planId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deletePlan(user(), id, planId);
+                return Response.noContent().build();
             }
         });
     }

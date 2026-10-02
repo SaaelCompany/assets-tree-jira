@@ -34,6 +34,8 @@ public class AssetDto {
     private List<CommentDto> comments;
     private List<FileDto> files;
     private List<ActivityDto> activities;
+    private List<ServicePlanDto> plans;
+    private String serviceDue;
 
     public int getId() {
         return id;
@@ -241,5 +243,21 @@ public class AssetDto {
 
     public void setActivities(List<ActivityDto> activities) {
         this.activities = activities;
+    }
+
+    public List<ServicePlanDto> getPlans() {
+        return plans;
+    }
+
+    public void setPlans(List<ServicePlanDto> plans) {
+        this.plans = plans;
+    }
+
+    public String getServiceDue() {
+        return serviceDue;
+    }
+
+    public void setServiceDue(String serviceDue) {
+        this.serviceDue = serviceDue;
     }
 }

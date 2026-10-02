@@ -2603,9 +2603,15 @@
     }
 
     function nameCell(asset, onOpen) {
-        if (!asset || isFolder(asset) || !mayEdit(asset)) return openName(asset ? asset.name : '', onOpen);
+        var due = asset && asset.serviceDue;
+        var copyable = asset && !isFolder(asset) && mayEdit(asset);
+        if (!copyable && !due) return openName(asset ? asset.name : '', onOpen);
         var line = el('span', 'asset-tree-name-line');
         line.appendChild(openName(asset.name, onOpen));
+        if (!copyable) {
+            if (due) line.appendChild(dueMark(asset));
+            return line;
+        }
         var copy = button('', 'asset-tree-row-copy', function (event) {
             event.stopPropagation();
             event.preventDefault();
@@ -2615,7 +2621,143 @@
         copy.setAttribute('aria-label', t('copy'));
         copy.appendChild(toolIcon('copy'));
         line.appendChild(copy);
+        if (due) line.appendChild(dueMark(asset));
         return line;
+    }
+
+    function dueMark(asset) {
+        var mark = el('span', 'asset-tree-due-mark', t('serviceDueMark'));
+        mark.title = asset.serviceDue || '';
+        return mark;
+    }
+
+    function reloadCard(id) {
+        reloadTree(function () {
+            selectAsset(id, true);
+        });
+    }
+
+    function serviceBlock(asset) {
+        if (!asset || isFolder(asset) || !asset.plans) return null;
+        if (!asset.plans.length && !mayEdit(asset)) return null;
+        var body = el('div', 'asset-tree-service');
+        body.appendChild(el('p', 'asset-tree-hint', t('serviceHint')));
+        var due = asset.plans.filter(function (plan) { return plan.due; });
+        if (due.length) {
+            body.appendChild(el('div', 'asset-tree-service-banner', t('serviceDue') + ': ' + due.map(function (plan) {
+                return plan.name;
+            }).join(', ')));
+        }
+        asset.plans.forEach(function (plan) {
+            body.appendChild(mayEdit(asset) ? serviceEditor(asset, plan) : serviceRead(plan));
+        });
+        if (!asset.plans.length) body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
+        if (mayEdit(asset)) body.appendChild(serviceEditor(asset, null));
+        return moduleBlock(t('serviceTitle'), body);
+    }
+
+    function serviceRead(plan) {
+        var row = el('div', 'asset-tree-plan' + (plan.due ? ' is-due' : ''));
+        var unit = plan.everyUnit === 'day' ? t('serviceUnitDay') : t('serviceUnitMonth');
+        row.appendChild(el('span', 'asset-tree-plan-next', plan.name + ' · ' + t('serviceLast') + ' ' + formatFieldDate(plan.lastDone)
+            + ' · ' + t('serviceEvery') + ' ' + plan.everyCount + ' ' + unit
+            + ' · ' + t('serviceNext') + ' ' + formatFieldDate(plan.nextDue)));
+        if (plan.statusKey) row.appendChild(lozenge(plan.statusKey));
+        return row;
+    }
+
+    function planField(label, control) {
+        var field = el('label', 'asset-tree-plan-field');
+        field.appendChild(el('span', null, label));
+        field.appendChild(control);
+        return field;
+    }
+
+    function serviceEditor(asset, plan) {
+        var creating = !plan;
+        var row = el('form', 'asset-tree-plan' + (plan && plan.due ? ' is-due' : ''));
+        row.addEventListener('submit', function (event) { event.preventDefault(); });
+        var name = input('', plan ? plan.name : '', false);
+        name.placeholder = t('serviceName');
+        name.setAttribute('aria-label', t('serviceName'));
+        var last = document.createElement('input');
+        last.type = 'date';
+        last.value = plan && plan.lastDone ? plan.lastDone : '';
+        var every = document.createElement('input');
+        every.type = 'number';
+        every.min = '1';
+        every.value = plan ? String(plan.everyCount || 1) : '1';
+        var unit = document.createElement('select');
+        [['month', 'serviceUnitMonth'], ['day', 'serviceUnitDay']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            unit.appendChild(option);
+        });
+        unit.value = plan && plan.everyUnit === 'day' ? 'day' : 'month';
+        var everyWrap = el('div', 'asset-tree-plan-every');
+        everyWrap.appendChild(every);
+        everyWrap.appendChild(unit);
+        var status = document.createElement('select');
+        var keep = document.createElement('option');
+        keep.value = '';
+        keep.textContent = t('serviceKeepStatus');
+        status.appendChild(keep);
+        statusChoices().forEach(function (choice) {
+            var option = document.createElement('option');
+            option.value = choice.value;
+            option.textContent = choice.label;
+            status.appendChild(option);
+        });
+        if (plan && plan.statusKey) status.value = plan.statusKey;
+        var notify = el('label', 'asset-tree-check asset-tree-plan-notify');
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !plan || !!plan.notify;
+        notify.appendChild(box);
+        notify.appendChild(document.createTextNode(t('serviceNotify')));
+        var next = el('div', 'asset-tree-plan-next', plan && plan.nextDue ? formatFieldDate(plan.nextDue) : '');
+        function payload(done) {
+            var body = {
+                name: name.value.trim(),
+                lastDone: last.value,
+                everyCount: parseInt(every.value, 10) || 0,
+                everyUnit: unit.value,
+                statusKey: status.value,
+                notify: box.checked
+            };
+            if (done) body.done = true;
+            return body;
+        }
+        function send(done) {
+            var path = creating ? '/assets/' + asset.id + '/plans' : '/assets/' + asset.id + '/plans/' + plan.id;
+            ajax(creating ? 'POST' : 'PUT', path, payload(done), function (statusCode, response) {
+                if (statusCode >= 200 && statusCode < 300) reloadCard(asset.id);
+                else notify((response && response.message) || t('errorTitle'));
+            });
+        }
+        row.appendChild(planField(t('serviceName'), name));
+        row.appendChild(planField(t('serviceLast'), last));
+        row.appendChild(planField(t('serviceEvery'), everyWrap));
+        row.appendChild(planField(t('serviceNext'), next));
+        row.appendChild(planField(t('status'), status));
+        row.appendChild(notify);
+        var actions = el('div', 'asset-tree-plan-actions');
+        actions.appendChild(button(creating ? t('serviceAdd') : t('save'), 'asset-tree-btn' + (creating ? ' primary' : ''), function () {
+            send(false);
+        }));
+        if (!creating) {
+            actions.appendChild(button(t('serviceDone'), 'asset-tree-btn', function () { send(true); }));
+            actions.appendChild(button(t('delete'), 'asset-tree-btn', function () {
+                if (!window.confirm(t('serviceDeleteConfirm', plan.name))) return;
+                ajax('DELETE', '/assets/' + asset.id + '/plans/' + plan.id, null, function (statusCode, response) {
+                    if (statusCode >= 200 && statusCode < 300) reloadCard(asset.id);
+                    else notify((response && response.message) || t('errorTitle'));
+                });
+            }));
+        }
+        row.appendChild(actions);
+        return row;
     }
 
     function lozenge(status) {
@@ -3323,6 +3465,7 @@
         if (item.action === 'place_remove') return t('actPlaceRemove');
         if (item.action === 'place_in') return t('actPlaceIn');
         if (item.action === 'place_out') return t('actPlaceOut');
+        if (item.action === 'service_due') return t('actServiceDue');
         return t('actUpdated');
     }
 
@@ -3353,7 +3496,9 @@
         if (field) change.appendChild(el('span', 'asset-tree-history-field', field));
         var oldText = historyValue(item, item.oldValue);
         var newText = historyValue(item, item.newValue);
-        if (item.action === 'file' || item.action === 'file_delete' || item.action === 'comment' || item.action === 'comment_delete') {
+        if (item.action === 'service_due') {
+            change.appendChild(el('span', null, (item.field ? item.field + ' · ' : '') + formatFieldDate(item.newValue)));
+        } else if (item.action === 'file' || item.action === 'file_delete' || item.action === 'comment' || item.action === 'comment_delete') {
             change.appendChild(el('span', null, newText || oldText));
         } else if (item.action === 'status') {
             if (item.oldValue) change.appendChild(el('span', 'asset-tree-lozenge ' + statusClass(item.oldValue), statusLabel(item.oldValue)));
@@ -3716,6 +3861,8 @@
             items.push(detailItem(attribute.name || attribute.fieldKey, inlineAttribute(asset, attribute)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
+        var service = serviceBlock(asset);
+        if (service) main.appendChild(service);
         main.appendChild(descriptionModule(asset, true));
         main.appendChild(fileBlock(asset));
 

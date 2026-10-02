@@ -28,6 +28,8 @@ import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.dto.ServicePlanDto;
+import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.TypeDraft;
 
@@ -125,4 +127,13 @@ public interface AssetService {
     void syncRequestAsset(ApplicationUser user, Issue issue, String previousAssetId, String nextAssetId);
 
     String describeAsset(String assetId);
+
+    ServicePlanDto createPlan(ApplicationUser user, int assetId, ServicePlanDraft draft);
+
+    ServicePlanDto updatePlan(ApplicationUser user, int assetId, int planId, ServicePlanDraft draft);
+
+    void deletePlan(ApplicationUser user, int assetId, int planId);
+
+    /** Moves equipment whose service date has arrived and queues the letters. */
+    void applyDuePlans();
 }

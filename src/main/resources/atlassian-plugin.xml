@@ -26,6 +26,7 @@
         <entity>com.assetstree.jira.ao.ProjectGrantEntity</entity>
         <entity>com.assetstree.jira.ao.PortalRuleEntity</entity>
         <entity>com.assetstree.jira.ao.PortalRuleConditionEntity</entity>
+        <entity>com.assetstree.jira.ao.ServicePlanEntity</entity>
     </ao>
 
     <customfield-type key="asset-cf" name="Project asset" i18n-name-key="asset-tree.field.cf.name" class="com.assetstree.jira.field.AssetCustomField">

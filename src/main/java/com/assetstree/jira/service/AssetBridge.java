@@ -14,6 +14,7 @@ public final class AssetBridge {
         synchronized (AssetBridge.class) {
             if (service == null) {
                 service = new AssetServiceImpl();
+                ServiceDueScheduler.ensureStarted();
             }
             return service;
         }

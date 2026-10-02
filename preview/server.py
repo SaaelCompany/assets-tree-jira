@@ -6,6 +6,7 @@ Projects are not invented here: in Jira the list comes from the instance.
 """
 
 import base64
+import calendar
 import csv
 import datetime
 import json
@@ -195,6 +196,7 @@ STATE = {
     "portal_rules": [], "portal_seq": 1, "portal_demo": False,
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
+    "plan_seq": 1, "plans": {}, "mails": [],
 }
 
 
@@ -646,8 +648,10 @@ def asset_dto(asset, text, with_issues):
         "createdBy": USERS["ivanov"]["displayName"], "updatedBy": USERS["ivanov"]["displayName"], "projectKey": asset["projectKey"],
         "projectName": next(item["name"] for item in PROJECTS if item["key"] == asset["projectKey"]),
         "location": location_of(asset), "editable": True, "custodian": holder, "attributes": attributes,
+        "serviceDue": service_due_names(asset["id"]),
     }
     if with_issues:
+        dto["plans"] = plan_dtos(asset["id"])
         dto["issues"] = [dict(ISSUES_BY_ID[link["issueId"]]) for link in STATE["links"] if link["assetId"] == asset["id"] and link["issueId"] in ISSUES_BY_ID]
         dto["comments"] = [comment_dto(row) for row in comments_of(asset["id"])]
         dto["files"] = [file_dto(row) for row in files_of(asset["id"])]
@@ -685,9 +689,13 @@ def activities_of(asset_id):
 
 
 def activity_dto(row):
-    author = USERS.get(row.get("authorKey") or "")
+    author_key = row.get("authorKey") or ""
+    author = USERS.get(author_key)
     if not author:
-        author = {"userKey": row.get("authorKey") or "", "displayName": row.get("authorKey") or "Preview", "active": False}
+        if not author_key:
+            author = {"userKey": "", "displayName": "Дерево активов", "active": True}
+        else:
+            author = {"userKey": author_key, "displayName": author_key, "active": False}
     return {
         "id": row["id"], "action": row["action"], "field": row.get("field") or "",
         "oldValue": row.get("oldValue") or "", "newValue": row.get("newValue") or "",
@@ -695,22 +703,173 @@ def activity_dto(row):
     }
 
 
-def record_activity(asset_id, kind, field, old_value, new_value):
+def record_activity(asset_id, kind, field, old_value, new_value, author="ivanov"):
     activity_id = STATE["activity_seq"]
     STATE["activity_seq"] += 1
     STATE["activities"][activity_id] = {
-        "id": activity_id, "assetId": asset_id, "authorKey": "ivanov",
+        "id": activity_id, "assetId": asset_id, "authorKey": author or "",
         "action": kind, "field": field or "", "oldValue": (old_value or "")[:500], "newValue": (new_value or "")[:500],
         "created": now_stamp(),
     }
 
 
-def log_activity(asset_id, kind, field, old_value, new_value):
+def log_activity(asset_id, kind, field, old_value, new_value, author="ivanov"):
     left = old_value or ""
     right = new_value or ""
     if left == right:
         return
-    record_activity(asset_id, kind, field, left, right)
+    record_activity(asset_id, kind, field, left, right, author)
+
+
+def plan_rows(asset_id):
+    rows = [row for row in STATE["plans"].values() if row["assetId"] == asset_id]
+    rows.sort(key=lambda item: item["id"])
+    return rows
+
+
+def add_months(day, count):
+    month_index = day.month - 1 + count
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    last = calendar.monthrange(year, month)[1]
+    return datetime.date(year, month, min(day.day, last))
+
+
+def parse_plan_date(value):
+    text = (value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def plan_next(row):
+    last = parse_plan_date(row.get("lastDone"))
+    count = int(row.get("everyCount") or 0)
+    unit = row.get("everyUnit") or ""
+    if not last or count < 1:
+        return None
+    if unit == "day" and count <= 3650:
+        return last + datetime.timedelta(days=count)
+    if unit == "month" and count <= 120:
+        return add_months(last, count)
+    return None
+
+
+def plan_due(row, today=None):
+    nxt = plan_next(row)
+    if not nxt:
+        return False
+    return nxt <= (today or datetime.date.today())
+
+
+def plan_dto(row):
+    nxt = plan_next(row)
+    return {
+        "id": row["id"],
+        "name": row.get("name") or "",
+        "lastDone": row.get("lastDone") or "",
+        "everyCount": row.get("everyCount") or 0,
+        "everyUnit": row.get("everyUnit") or "",
+        "statusKey": row.get("statusKey") or "",
+        "notify": bool(row.get("notify", True)),
+        "nextDue": nxt.isoformat() if nxt else "",
+        "due": plan_due(row),
+    }
+
+
+def plan_dtos(asset_id):
+    return [plan_dto(row) for row in plan_rows(asset_id)]
+
+
+def service_due_names(asset_id):
+    names = [row.get("name") or "" for row in plan_rows(asset_id) if plan_due(row)]
+    return ", ".join(names)
+
+
+def apply_due(project_key=None):
+    today = datetime.date.today()
+    for row in sorted(STATE["plans"].values(), key=lambda item: item["id"]):
+        asset = STATE["assets"].get(row["assetId"])
+        if not asset or is_location_id(asset["id"]):
+            continue
+        if project_key and asset["projectKey"] != project_key:
+            continue
+        nxt = plan_next(row)
+        if not nxt or nxt > today:
+            continue
+        due_key = nxt.isoformat()
+        if row.get("appliedFor") == due_key:
+            continue
+        status_key = (row.get("statusKey") or "").strip()
+        if status_key and status_known(asset["projectKey"], status_key, messages("ru")):
+            old = canonical(asset.get("status"))
+            if old != status_key:
+                asset["status"] = status_key
+                asset["updated"] = now_stamp()
+                log_activity(asset["id"], "status", "", old, status_key, "")
+        record_activity(asset["id"], "service_due", row.get("name") or "", row.get("lastDone") or "", due_key, "")
+        row["appliedFor"] = due_key
+        if row.get("notify", True):
+            person = USERS.get(asset.get("custodianKey") or "")
+            email = (person or {}).get("email") or ""
+            if email:
+                subject = "Подошёл срок %s: %s" % (row.get("name") or "", asset.get("name") or "")
+                body = "%s (%s)\n%s: %s -> %s\nhttp://127.0.0.1:47121/plugins/servlet/asset-tree?project=%s&view=all#%s" % (
+                    asset.get("name") or "", asset.get("objectKey") or "", row.get("name") or "",
+                    row.get("lastDone") or "", due_key, asset.get("projectKey") or "", asset["id"],
+                )
+                STATE["mails"].append({"to": email, "subject": subject, "body": body, "assetId": asset["id"]})
+
+
+def fill_plan(row, body, creating, project_key, text):
+    body = body or {}
+    if body.get("done") is True:
+        row["lastDone"] = datetime.date.today().isoformat()
+        row["appliedFor"] = ""
+    elif body.get("lastDone") is not None or creating:
+        parsed = parse_plan_date(body.get("lastDone"))
+        if not parsed:
+            return text.get("asset-tree.error.service", "Schedule")
+        iso = parsed.isoformat()
+        if iso != row.get("lastDone"):
+            row["lastDone"] = iso
+            row["appliedFor"] = ""
+    if body.get("name") is not None or creating:
+        name = (body.get("name") or "").strip()
+        if not name or len(name) > 80:
+            return text.get("asset-tree.error.service", "Schedule")
+        row["name"] = name
+    unit = row.get("everyUnit") or ""
+    count = int(row.get("everyCount") or 0)
+    if body.get("everyUnit") is not None or creating:
+        unit = (body.get("everyUnit") or "").strip().lower()
+        if unit not in ("day", "month"):
+            unit = ""
+    if body.get("everyCount") is not None or creating:
+        try:
+            count = int(body.get("everyCount") or 0)
+        except (TypeError, ValueError):
+            count = 0
+    allowed = (unit == "day" and 1 <= count <= 3650) or (unit == "month" and 1 <= count <= 120)
+    if (body.get("everyUnit") is not None or body.get("everyCount") is not None or creating) and not allowed:
+        return text.get("asset-tree.error.service", "Schedule")
+    if unit != (row.get("everyUnit") or "") or count != int(row.get("everyCount") or 0):
+        row["appliedFor"] = ""
+    row["everyUnit"] = unit
+    row["everyCount"] = count
+    if body.get("statusKey") is not None or creating:
+        status_key = (body.get("statusKey") or "").strip()
+        if status_key and not status_known(project_key, status_key, text):
+            return text.get("asset-tree.error.status", "Status")
+        row["statusKey"] = status_key
+    if body.get("notify") is not None or creating:
+        row["notify"] = True if body.get("notify") is None else bool(body.get("notify"))
+    if not row.get("name") or not row.get("lastDone") or not row.get("everyUnit"):
+        return text.get("asset-tree.error.service", "Schedule")
+    return None
 
 
 def is_location_id(asset_id):
@@ -1539,6 +1698,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         query = parse_qs(parsed.query)
+        if path == "/preview/mails" and method == "GET":
+            return self.respond(200, json.dumps(STATE["mails"]).encode("utf-8"), "application/json; charset=utf-8")
         if path in ("/", "/plugins/servlet/asset-tree"):
             return self.serve_page(query)
         if path == "/issue":
@@ -1788,7 +1949,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.73",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.74",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1800,6 +1961,7 @@ setTimeout(function () {
             if project_key not in {item["key"] for item in PROJECTS}:
                 return 400, {"message": text["asset-tree.error.project.required"]}
             needle = (query.get("q") or [""])[0].strip().lower()
+            apply_due(project_key)
             rows = project_assets(project_key)
             if needle:
                 rows = [row for row in rows if needle in (row["name"] + row["objectKey"] + location_of(row)).lower()][:30]
@@ -1906,6 +2068,14 @@ setTimeout(function () {
             } for row in rows]
         if path == "/types" and method == "POST":
             return self.create_type(self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/plans", path)
+        if match and method == "POST":
+            return self.create_plan(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/plans/(\d+)", path)
+        if match and method == "PUT":
+            return self.update_plan(int(match.group(1)), int(match.group(2)), self.read_json(), text)
+        if match and method == "DELETE":
+            return self.delete_plan(int(match.group(1)), int(match.group(2)), text)
         match = re.fullmatch(r"/assets/(\d+)/copy", path)
         if match and method == "POST":
             return self.copy_asset(int(match.group(1)), text)
@@ -1914,6 +2084,8 @@ setTimeout(function () {
             asset = STATE["assets"].get(int(match.group(1)))
             if not asset:
                 return 404, {"message": text["asset-tree.error.notFound"]}
+            apply_due(asset["projectKey"])
+            asset = STATE["assets"].get(int(match.group(1)))
             return 200, asset_dto(asset, text, True)
         if match and method == "PUT":
             return self.update_asset(int(match.group(1)), self.read_json(), text)
@@ -2145,6 +2317,42 @@ setTimeout(function () {
             values[field["fieldKey"]] = stored
         return None, values
 
+    def create_plan(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        if is_location_id(asset_id):
+            return 400, {"message": text.get("asset-tree.error.service.place", "Equipment")}
+        if len(plan_rows(asset_id)) >= 12:
+            return 400, {"message": text.get("asset-tree.error.service.limit", "Limit")}
+        plan_id = STATE["plan_seq"]
+        STATE["plan_seq"] += 1
+        row = {"id": plan_id, "assetId": asset_id, "appliedFor": "", "notify": True}
+        error = fill_plan(row, body, True, asset["projectKey"], text)
+        if error:
+            return 400, {"message": error}
+        STATE["plans"][plan_id] = row
+        apply_due(asset["projectKey"])
+        return 201, plan_dto(STATE["plans"][plan_id])
+
+    def update_plan(self, asset_id, plan_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        row = STATE["plans"].get(plan_id)
+        if not asset or not row or row["assetId"] != asset_id:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        error = fill_plan(row, body, False, asset["projectKey"], text)
+        if error:
+            return 400, {"message": error}
+        apply_due(asset["projectKey"])
+        return 200, plan_dto(row)
+
+    def delete_plan(self, asset_id, plan_id, text):
+        row = STATE["plans"].get(plan_id)
+        if not STATE["assets"].get(asset_id) or not row or row["assetId"] != asset_id:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        STATE["plans"].pop(plan_id, None)
+        return 204, None
+
     def create_asset(self, body, text):
         if not body or not (body.get("name") or "").strip():
             return 400, {"message": text["asset-tree.error.name.required"]}
@@ -2267,6 +2475,8 @@ setTimeout(function () {
                 delete_preview_file(file_id)
             for activity_id in [row["id"] for row in activities_of(current)]:
                 STATE["activities"].pop(activity_id, None)
+            for plan_id in [row["id"] for row in plan_rows(current)]:
+                STATE["plans"].pop(plan_id, None)
         return 204, None
 
     def move_asset(self, asset_id, body, text):
