@@ -2910,7 +2910,7 @@ a.asset-tree-url {
     border-bottom: 0;
 }
 
-.asset-tree-status-list .asset-tree-status-row input {
+.asset-tree-status-list .asset-tree-status-row input:not([type="checkbox"]) {
     flex: 1 1 180px;
     max-width: 320px;
 }
@@ -2922,7 +2922,7 @@ a.asset-tree-url {
 #asset-tree-app .asset-tree-status-list > .asset-tree-status-row,
 #asset-tree-app .asset-tree-status-list > form.asset-tree-status-add {
     display: grid !important;
-    grid-template-columns: 152px minmax(160px, 320px) 28px minmax(0, 1fr) auto;
+    grid-template-columns: 152px minmax(140px, 280px) 28px auto minmax(0, 1fr) auto;
     align-items: center !important;
     column-gap: 10px;
     row-gap: 6px;
@@ -2936,8 +2936,8 @@ a.asset-tree-url {
     background: #fafbfc;
 }
 
-#asset-tree-app .asset-tree-status-list .asset-tree-status-row input,
-#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > input {
+#asset-tree-app .asset-tree-status-list .asset-tree-status-row input:not([type="checkbox"]),
+#asset-tree-app .asset-tree-status-list > form.asset-tree-status-add > input:not([type="checkbox"]) {
     width: 100% !important;
     max-width: none !important;
     min-width: 0 !important;
@@ -2966,6 +2966,30 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-status-list .asset-tree-key {
     margin-left: 0 !important;
+}
+
+#asset-tree-app .asset-tree-status-list .asset-tree-status-summary {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    width: auto !important;
+    margin: 0 !important;
+    justify-self: start;
+    white-space: nowrap;
+    text-transform: none;
+    font-weight: 400;
+}
+
+#asset-tree-app .asset-tree-status-list .asset-tree-status-summary input {
+    width: 16px !important;
+    min-width: 16px !important;
+    max-width: 16px !important;
+    height: 16px !important;
+    min-height: 16px !important;
+    flex: 0 0 16px !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 #asset-tree-app button.asset-tree-color-trigger,
@@ -3381,7 +3405,7 @@ a.asset-tree-url {
     margin: 0 0 8px;
 }
 
-.asset-tree-status-row input,
+.asset-tree-status-row input:not([type="checkbox"]),
 .asset-tree-status-row select {
     min-height: 32px;
     min-width: 160px;

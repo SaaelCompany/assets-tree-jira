@@ -36,6 +36,7 @@ DEFAULT_STATUSES = [
     ("maintenance", "asset-tree.ui.statusMaintenance", "progress"),
     ("written_off", "asset-tree.ui.statusWrittenOff", "done"),
 ]
+SUMMARY_DEFAULTS = {"repair", "maintenance", "written_off"}
 CATEGORY_COLOR = {
     "todo": "#4a6785", "progress": "#ffd351", "done": "#14892c",
     "blue": "#0052cc", "orange": "#ff8b00", "red": "#de350b", "purple": "#6554c0",
@@ -344,6 +345,26 @@ def unique_key(base, taken):
     return seed
 
 
+def shows_in_summary(row):
+    mode = int(row.get("summaryMode") or 0)
+    if mode == 1:
+        return True
+    if mode == 2:
+        return False
+    return row.get("statusKey") in SUMMARY_DEFAULTS
+
+
+def status_payload(row, count):
+    return {
+        "statusKey": row["statusKey"],
+        "label": row["label"],
+        "category": row["category"],
+        "sortOrder": row["sortOrder"],
+        "assetCount": count,
+        "inSummary": shows_in_summary(row),
+    }
+
+
 def ensure_statuses(project_key, text):
     bucket = STATE["statuses"].setdefault(project_key, [])
     if bucket:
@@ -354,6 +375,7 @@ def ensure_statuses(project_key, text):
             "label": text.get(item[1], item[0]),
             "category": item[2],
             "sortOrder": index,
+            "summaryMode": 1 if item[0] in SUMMARY_DEFAULTS else 0,
         })
     return bucket
 
@@ -364,13 +386,7 @@ def status_dtos(project_key, text):
     result = []
     for row in rows:
         count = len([asset for asset in assets if canonical(asset.get("status")) == row["statusKey"]])
-        result.append({
-            "statusKey": row["statusKey"],
-            "label": row["label"],
-            "category": row["category"],
-            "sortOrder": row["sortOrder"],
-            "assetCount": count,
-        })
+        result.append(status_payload(row, count))
     return result
 
 
@@ -1772,7 +1788,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.72",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.73",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2019,9 +2035,17 @@ setTimeout(function () {
         key = unique_key(slug(label), taken)
         if not STATUS_KEY.match(key):
             return 400, {"message": text["asset-tree.error.status"]}
-        row = {"statusKey": key, "label": label, "category": category, "sortOrder": len(rows)}
+        raw_summary = (body or {}).get("inSummary", None)
+        if "inSummary" not in (body or {}) or raw_summary is None:
+            mode = 1
+        else:
+            mode = 1 if raw_summary else 2
+        row = {
+            "statusKey": key, "label": label, "category": category,
+            "sortOrder": len(rows), "summaryMode": mode,
+        }
         rows.append(row)
-        return 201, dict(row, assetCount=0)
+        return 201, status_payload(row, 0)
 
     def update_status(self, project_key, status_key, body, text):
         rows = ensure_statuses(project_key, text)
@@ -2038,8 +2062,10 @@ setTimeout(function () {
             if category not in CATEGORY_COLOR:
                 return 400, {"message": text["asset-tree.error.status"]}
             row["category"] = category
+        if "inSummary" in (body or {}) and (body or {}).get("inSummary") is not None:
+            row["summaryMode"] = 1 if body.get("inSummary") else 2
         count = len([asset for asset in project_assets(project_key) if canonical(asset.get("status")) == status_key])
-        return 200, dict(row, assetCount=count)
+        return 200, status_payload(row, count)
 
     def delete_status(self, project_key, status_key, text):
         rows = ensure_statuses(project_key, text)

@@ -5848,6 +5848,46 @@
         return dash;
     }
 
+    function showsInSummary(item) {
+        if (!item) return false;
+        if (item.inSummary === true) return true;
+        if (item.inSummary === false) return false;
+        return item.statusKey === 'repair' || item.statusKey === 'maintenance' || item.statusKey === 'written_off';
+    }
+
+    function summaryTone(item) {
+        var category = item.category || '';
+        if (category === 'done' || item.statusKey === 'written_off') return 'off';
+        return category === 'progress' ? 'warn' : '';
+    }
+
+    function summaryStatuses() {
+        var list = state.statuses || [];
+        if (!list.length) {
+            return [
+                { statusKey: 'repair', label: t('statusRepair'), category: 'progress', inSummary: true },
+                { statusKey: 'maintenance', label: t('statusMaintenance'), category: 'progress', inSummary: true },
+                { statusKey: 'written_off', label: t('statusWrittenOff'), category: 'done', inSummary: true }
+            ];
+        }
+        return list.filter(showsInSummary);
+    }
+
+    function summaryBox(checked, onChange) {
+        var label = el('label', 'asset-tree-check asset-tree-status-summary');
+        label.title = t('statusInSummary');
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!checked;
+        box.setAttribute('aria-label', t('statusInSummary'));
+        box.addEventListener('change', function () {
+            onChange(box.checked);
+        });
+        label.appendChild(box);
+        label.appendChild(document.createTextNode(t('statusInSummary')));
+        return label;
+    }
+
     function dashStat(label, value, onClick, tone) {
         var className = 'asset-tree-stat' + (onClick ? ' is-action' : '') + (tone ? ' is-' + tone : '');
         var card = onClick ? button('', className, onClick) : el('div', className);
@@ -5908,18 +5948,14 @@
             showAllAssets();
         }));
         totals.appendChild(dashStat(t('reportPlaces'), places < 0 ? 0 : places));
-        totals.appendChild(dashStat(t('statusRepair'), bucketCount(report.byStatus, 'repair'), function () {
-            focusMatches({ field: 'status', op: 'eq', value: 'repair' });
-        }, 'warn'));
-        totals.appendChild(dashStat(t('statusMaintenance'), bucketCount(report.byStatus, 'maintenance'), function () {
-            focusMatches({ field: 'status', op: 'eq', value: 'maintenance' });
-        }, 'warn'));
+        summaryStatuses().forEach(function (item) {
+            totals.appendChild(dashStat(item.label || statusLabel(item.statusKey), bucketCount(report.byStatus, item.statusKey), function () {
+                focusMatches({ field: 'status', op: 'eq', value: item.statusKey });
+            }, summaryTone(item)));
+        });
         totals.appendChild(dashStat(t('reportUnassigned'), report.unassigned || 0, function () {
             focusMatches({ field: 'custodian', op: 'empty', value: '' });
         }, report.unassigned ? 'warn' : ''));
-        totals.appendChild(dashStat(t('statusWrittenOff'), bucketCount(report.byStatus, 'written_off'), function () {
-            focusMatches({ field: 'status', op: 'eq', value: 'written_off' });
-        }, 'off'));
 
         var row = el('div', 'asset-tree-dash');
         row.appendChild(summaryChartCard());
@@ -7201,6 +7237,14 @@
                     else notify((payload && payload.message) || t('errorTitle'));
                 });
             }));
+            row.appendChild(summaryBox(showsInSummary(item), function (checked) {
+                ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/statuses/' + encodeURIComponent(item.statusKey), {
+                    inSummary: checked
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300) refreshSettings();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
             row.appendChild(el('span', 'asset-tree-key', t('statusInUseCount', item.assetCount || 0)));
             if (!(item.assetCount || 0) && state.statuses.length > 1) {
                 row.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
@@ -7228,6 +7272,10 @@
             paintDot(trigger, value);
         });
         form.appendChild(trigger);
+        var summaryOn = true;
+        form.appendChild(summaryBox(true, function (checked) {
+            summaryOn = checked;
+        }));
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
         form.appendChild(button(t('statusAdd'), 'asset-tree-btn primary', function () {
@@ -7239,7 +7287,8 @@
             }
             ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/statuses', {
                 label: label,
-                category: chosenCategory
+                category: chosenCategory,
+                inSummary: summaryOn
             }, function (status, payload) {
                 if (status >= 200 && status < 300) {
                     state.statusQuery = '';

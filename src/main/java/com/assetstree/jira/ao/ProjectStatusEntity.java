@@ -36,4 +36,13 @@ public interface ProjectStatusEntity extends Entity {
     int getSortOrder();
 
     void setSortOrder(int sortOrder);
+
+    /**
+     * 0 — not chosen yet (repair, maintenance and written off stay visible),
+     * 1 — show the count in the summary, 2 — hide it.
+     * A new Active Objects column reads as 0 on rows that already exist.
+     */
+    int getSummaryMode();
+
+    void setSummaryMode(int summaryMode);
 }

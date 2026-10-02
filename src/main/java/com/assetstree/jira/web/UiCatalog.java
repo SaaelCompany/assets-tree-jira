@@ -321,6 +321,7 @@ public final class UiCatalog {
             "settingsProject",
             "statusSection",
             "statusSectionHint",
+            "statusInSummary",
             "statusAdd",
             "statusCategory",
             "statusTodo",

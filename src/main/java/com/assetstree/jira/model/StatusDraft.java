@@ -7,6 +7,8 @@ import javax.xml.bind.annotation.XmlAccessorType;
 public class StatusDraft {
     private String label;
     private String category;
+    /** Absent when a rename or a color change must leave the summary flag alone. */
+    private Boolean inSummary;
 
     public String getLabel() {
         return label;
@@ -22,5 +24,13 @@ public class StatusDraft {
 
     public void setCategory(String category) {
         this.category = category;
+    }
+
+    public Boolean getInSummary() {
+        return inSummary;
+    }
+
+    public void setInSummary(Boolean inSummary) {
+        this.inSummary = inSummary;
     }
 }

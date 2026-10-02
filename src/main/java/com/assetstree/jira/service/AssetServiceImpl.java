@@ -93,6 +93,7 @@ import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
 import com.assetstree.jira.model.Statuses;
+import com.assetstree.jira.model.StatusSummary;
 import com.assetstree.jira.model.TreeLogic;
 import com.assetstree.jira.model.TypeDraft;
 import com.assetstree.jira.model.TypeIcons;
@@ -970,7 +971,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("STATUS_KEY", key),
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("CATEGORY", category),
-                        new DBParam("SORT_ORDER", maxOrder + 1));
+                        new DBParam("SORT_ORDER", maxOrder + 1),
+                        new DBParam("SUMMARY_MODE", StatusSummary.createMode(draft.getInSummary())));
                 return toStatusDto(created, Integer.valueOf(0));
             }
         });
@@ -998,6 +1000,10 @@ public class AssetServiceImpl implements AssetService {
                 }
                 if (draft.getCategory() != null && !draft.getCategory().trim().isEmpty()) {
                     row.setCategory(normalizeCategory(draft.getCategory()));
+                }
+                int summaryMode = StatusSummary.updateMode(draft.getInSummary(), row.getSummaryMode());
+                if (summaryMode != row.getSummaryMode()) {
+                    row.setSummaryMode(summaryMode);
                 }
                 row.save();
                 return toStatusDto(row, Integer.valueOf(countStatus(project.getKey(), row.getStatusKey())));
@@ -3011,7 +3017,8 @@ public class AssetServiceImpl implements AssetService {
                     new DBParam("STATUS_KEY", keys[i]),
                     new DBParam("LABEL", label),
                     new DBParam("CATEGORY", categories[i]),
-                    new DBParam("SORT_ORDER", i));
+                    new DBParam("SORT_ORDER", i),
+                    new DBParam("SUMMARY_MODE", StatusSummary.seedMode(keys[i])));
         }
     }
 
@@ -3052,6 +3059,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setCategory(row.getCategory());
         dto.setSortOrder(row.getSortOrder());
         dto.setAssetCount(count == null ? 0 : count.intValue());
+        dto.setInSummary(StatusSummary.shows(row.getSummaryMode(), row.getStatusKey()));
         return dto;
     }
 
