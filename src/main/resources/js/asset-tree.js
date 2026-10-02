@@ -2657,7 +2657,9 @@
         asset.plans.forEach(function (plan) {
             body.appendChild(mayEdit(asset) ? serviceEditor(asset, plan) : serviceRead(plan));
         });
-        if (!asset.plans.length) body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
+        if (!asset.plans.length && state.serviceOpen !== asset.id) {
+            body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
+        }
         if (offered && mayEdit(asset)) {
             if (state.serviceOpen === asset.id) {
                 body.appendChild(serviceEditor(asset, null));
