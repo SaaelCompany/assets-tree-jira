@@ -2031,6 +2031,10 @@ a.asset-tree-url {
     font-size: 14px;
 }
 
+#asset-tree-app input#asset-tree-mine-search {
+    width: 340px;
+}
+
 #asset-tree-app select#asset-tree-scope,
 #asset-tree-app select#asset-tree-sort,
 #asset-tree-app select#asset-tree-saved-filter {
