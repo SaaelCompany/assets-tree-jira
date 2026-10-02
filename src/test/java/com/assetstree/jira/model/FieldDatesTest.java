@@ -19,5 +19,7 @@ public class FieldDatesTest {
         assertNull(FieldDates.canonical("29.02.2023"));
         assertNull(FieldDates.canonical("вчера"));
         assertNull(FieldDates.canonical("1899-12-31"));
+        assertEquals("15.03.2024", FieldDates.display("2024-03-15", true));
+        assertEquals("2024-03-15", FieldDates.display("15.03.2024", false));
     }
 }

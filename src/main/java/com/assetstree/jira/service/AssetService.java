@@ -24,6 +24,7 @@ import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
+import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
@@ -97,9 +98,9 @@ public interface AssetService {
 
     ReportDto report(ApplicationUser user, String projectKey);
 
-    String exportEquipment(ApplicationUser user, String projectKey);
+    byte[] exportEquipment(ApplicationUser user, String projectKey);
 
-    ImportResultDto importEquipment(ApplicationUser user, String projectKey, String csv);
+    ImportResultDto importEquipment(ApplicationUser user, String projectKey, ImportDraft draft);
 
     BulkResultDto applyBulk(ApplicationUser user, String projectKey, BulkDraft draft);
 

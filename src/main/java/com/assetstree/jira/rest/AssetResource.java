@@ -286,15 +286,15 @@ public class AssetResource {
     }
 
     @GET
-    @Path("projects/{projectKey}/equipment.csv")
-    @Produces("text/csv")
+    @Path("projects/{projectKey}/equipment.xlsx")
+    @Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     public Response exportEquipment(@PathParam("projectKey") final String projectKey) {
         return invoke(new Callable<Response>() {
             @Override
             public Response call() {
-                String csv = assetService.exportEquipment(user(), projectKey);
-                String file = "equipment-" + projectKey + ".csv";
-                return Response.ok(csv, "text/csv;charset=UTF-8")
+                byte[] book = assetService.exportEquipment(user(), projectKey);
+                String file = "equipment-" + projectKey + ".xlsx";
+                return Response.ok(book, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                         .header("Content-Disposition", "attachment; filename=\"" + file + "\"")
                         .build();
             }
@@ -318,8 +318,7 @@ public class AssetResource {
         return invoke(new Callable<Response>() {
             @Override
             public Response call() {
-                String csv = draft == null ? "" : draft.getCsv();
-                return Response.ok(assetService.importEquipment(user(), projectKey, csv)).build();
+                return Response.ok(assetService.importEquipment(user(), projectKey, draft)).build();
             }
         });
     }

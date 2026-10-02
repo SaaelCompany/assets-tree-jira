@@ -5895,7 +5895,7 @@
         var file = el('input', 'asset-tree-import-file');
         file.type = 'file';
         file.id = 'asset-tree-import-file';
-        file.accept = '.csv,text/csv,text/plain';
+        file.accept = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.csv,text/csv';
         var picker = el('div', 'asset-tree-import-picker');
         var chosen = el('span', 'asset-tree-import-name', t('exchangeEmpty'));
         file.addEventListener('change', function () {
@@ -5912,7 +5912,7 @@
         actions.appendChild(button(t('exchangeExport'), 'asset-tree-btn', function () {
             var frame = document.createElement('iframe');
             frame.hidden = true;
-            frame.src = state.rest + '/projects/' + encodeURIComponent(state.projectKey) + '/equipment.csv';
+            frame.src = state.rest + '/projects/' + encodeURIComponent(state.projectKey) + '/equipment.xlsx';
             document.body.appendChild(frame);
             setTimeout(function () {
                 if (frame.parentNode) frame.parentNode.removeChild(frame);
@@ -5926,9 +5926,20 @@
             }
             var reader = new FileReader();
             reader.onload = function () {
-                var text = decodeSheet(reader.result);
+                var name = chosen.name || '';
+                var lower = name.toLowerCase();
+                var bytes = new Uint8Array(reader.result || []);
+                var excel = lower.endsWith('.xlsx') || (bytes.length >= 2 && bytes[0] === 80 && bytes[1] === 75);
+                var legacy = lower.endsWith('.xls') && !lower.endsWith('.xlsx');
+                if (legacy) {
+                    notify(t('exchangeWorkbook'));
+                    return;
+                }
+                var body = excel
+                    ? { name: name, content: bytesToBase64(bytes) }
+                    : { name: name, csv: decodeSheet(reader.result) };
                 setBusy(true);
-                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/equipment', { csv: text }, function (status, payload) {
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/equipment', body, function (status, payload) {
                     setBusy(false);
                     if (status < 200 || status >= 300) {
                         state.importResult = null;
@@ -5965,6 +5976,16 @@
             }
         }
         panel.appendChild(block);
+    }
+
+    function bytesToBase64(bytes) {
+        var binary = '';
+        var size = 0x8000;
+        for (var i = 0; i < bytes.length; i += size) {
+            var slice = bytes.subarray(i, i + size);
+            binary += String.fromCharCode.apply(null, slice);
+        }
+        return btoa(binary);
     }
 
     function decodeSheet(buffer) {

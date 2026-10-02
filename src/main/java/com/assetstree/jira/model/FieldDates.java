@@ -45,6 +45,18 @@ public final class FieldDates {
         return null;
     }
 
+    /** A stored day written for a spreadsheet. Day-first is DD.MM.YYYY. */
+    public static String display(String raw, boolean dayFirst) {
+        String iso = canonical(raw);
+        if (iso == null) {
+            return raw == null ? "" : raw.trim();
+        }
+        if (iso.isEmpty() || !dayFirst) {
+            return iso;
+        }
+        return iso.substring(8, 10) + "." + iso.substring(5, 7) + "." + iso.substring(0, 4);
+    }
+
     private static String checked(int year, int month, int day) {
         if (year < MIN_YEAR || year > MAX_YEAR) {
             return null;

@@ -5,14 +5,17 @@ This is not the Jira plugin. It serves the same page and REST contract.
 Projects are not invented here: in Jira the list comes from the instance.
 """
 
+import base64
 import csv
 import datetime
 import json
 import os
 import re
 import threading
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from io import StringIO
+from io import BytesIO, StringIO
+from xml.etree import ElementTree as ET
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -763,20 +766,40 @@ def equipment_headers(text):
     ]
 
 
-def equipment_csv(project_key, text):
+def display_date(value, day_first):
+    iso = canonical_date(value)
+    if not iso:
+        return value or ""
+    if not day_first:
+        return iso
+    year, month, day = iso.split("-")
+    return "%s.%s.%s" % (day, month, year)
+
+
+def equipment_table(project_key, text, day_first):
     headers = equipment_headers(text)
     statuses = {row["statusKey"]: row["label"] for row in status_dtos(project_key, text)}
     types = {row["typeKey"]: row for row in STATE["types"].values() if row["projectKey"] == project_key}
-    rows = [asset for asset in project_assets(project_key) if not (types.get(asset["typeKey"]) or {}).get("location")]
-    rows.sort(key=lambda item: item["objectKey"])
-    buffer = StringIO()
-    buffer.write("\ufeff")
-    writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
-    writer.writerow(headers)
-    for asset in rows:
+    fields = []
+    seen = {header.strip().lower() for header in headers}
+    for kind in types.values():
+        if kind.get("location"):
+            continue
+        for field in kind.get("fields") or []:
+            label = label_of(field["label"], text)
+            marker = label.strip().lower()
+            if not marker or marker in seen:
+                continue
+            seen.add(marker)
+            fields.append((field, label))
+            headers.append(label)
+    assets = [asset for asset in project_assets(project_key) if not (types.get(asset["typeKey"]) or {}).get("location")]
+    assets.sort(key=lambda item: item["objectKey"])
+    lines = []
+    for asset in assets:
         kind = types.get(asset["typeKey"]) or {}
         person = USERS.get(asset.get("custodianKey") or "")
-        writer.writerow([
+        line = [
             asset["objectKey"],
             asset["name"],
             kind.get("label") or asset["typeKey"],
@@ -784,8 +807,208 @@ def equipment_csv(project_key, text):
             location_of(asset),
             person["displayName"] if person else "",
             asset.get("description") or "",
-        ])
+        ]
+        values = asset.get("values") or {}
+        for field, _label in fields:
+            value = values.get(field["fieldKey"]) or ""
+            if field.get("kind") == "date" and value:
+                value = display_date(value, day_first)
+            line.append(value)
+        lines.append(line)
+    return headers, lines
+
+
+def equipment_csv(project_key, text):
+    headers, rows = equipment_table(project_key, text, True)
+    buffer = StringIO()
+    buffer.write("\ufeff")
+    writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
+    writer.writerow(headers)
+    writer.writerows(rows)
     return buffer.getvalue()
+
+
+def xml_text(value):
+    text = value or ""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def column_name(index):
+    name = ""
+    number = index + 1
+    while number:
+        number, rem = divmod(number - 1, 26)
+        name = chr(65 + rem) + name
+    return name
+
+
+def workbook_bytes(headers, rows):
+    sheet = ["<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+             "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"]
+    table = [headers] + rows
+    for number, cells in enumerate(table, start=1):
+        sheet.append("<row r=\"%d\">" % number)
+        for index, cell in enumerate(cells):
+            sheet.append("<c r=\"%s%d\" t=\"inlineStr\"><is><t xml:space=\"preserve\">%s</t></is></c>"
+                         % (column_name(index), number, xml_text(cell)))
+        sheet.append("</row>")
+    sheet.append("</sheetData></worksheet>")
+    parts = {
+        "[Content_Types].xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>""",
+        "_rels/.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>""",
+        "xl/workbook.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="Equipment" sheetId="1" r:id="rId1"/></sheets></workbook>""",
+        "xl/_rels/workbook.xml.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>""",
+        "xl/styles.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<borders count="1"><border/></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+</styleSheet>""",
+        "xl/worksheets/sheet1.xml": "".join(sheet),
+    }
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as book:
+        for name, xml in parts.items():
+            book.writestr(name, xml.encode("utf-8"))
+    return buffer.getvalue()
+
+
+def equipment_xlsx(project_key, text, day_first):
+    headers, rows = equipment_table(project_key, text, day_first)
+    return workbook_bytes(headers, rows)
+
+
+def xml_local(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def column_index(ref):
+    column = 0
+    used = 0
+    for ch in ref or "":
+        if "A" <= ch <= "Z" or "a" <= ch <= "z":
+            column = column * 26 + (ord(ch.upper()) - 64)
+            used += 1
+        else:
+            break
+    return column - 1 if used else -1
+
+
+def plain_number(raw):
+    try:
+        value = float(raw)
+    except ValueError:
+        return raw
+    if abs(value) < 1e15 and abs(value - round(value)) < 1e-6:
+        return str(int(round(value)))
+    return raw
+
+
+def excel_date(raw):
+    try:
+        days = int(float(raw))
+        return (datetime.date(1970, 1, 1) + datetime.timedelta(days=days - 25569)).isoformat()
+    except (ValueError, OverflowError):
+        return raw
+
+
+def parse_workbook(data):
+    with zipfile.ZipFile(BytesIO(data)) as book:
+        names = {}
+        for name in book.namelist():
+            names[name.replace("\\", "/").lstrip("/")] = name
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(book.read(names["xl/sharedStrings.xml"]))
+            for node in root:
+                if xml_local(node.tag) != "si":
+                    continue
+                parts = []
+                for child in node.iter():
+                    if xml_local(child.tag) == "t" and child.text:
+                        parts.append(child.text)
+                shared.append("".join(parts))
+        sheet_name = names.get("xl/worksheets/sheet1.xml")
+        if not sheet_name:
+            for key, original in names.items():
+                if key.startswith("xl/worksheets/") and key.endswith(".xml"):
+                    sheet_name = original
+                    break
+        if not sheet_name:
+            raise ValueError("sheet")
+        root = ET.fromstring(book.read(sheet_name))
+    headers = []
+    records = []
+    for row in root.iter():
+        if xml_local(row.tag) != "row":
+            continue
+        cells = {}
+        next_column = 0
+        for cell in list(row):
+            if xml_local(cell.tag) != "c":
+                continue
+            column = column_index(cell.attrib.get("r"))
+            if column < 0:
+                column = next_column
+            cells[column] = workbook_cell(cell, shared)
+            next_column = column + 1
+        if not cells:
+            continue
+        line = [cells.get(index, "") for index in range(max(cells) + 1)]
+        if not any(item.strip() for item in line):
+            continue
+        if not headers:
+            headers = [item.strip() for item in line]
+        else:
+            try:
+                number = int(row.attrib.get("r") or 0)
+            except ValueError:
+                number = 0
+            records.append((number or len(records) + 2, line))
+    return headers, records
+
+
+def workbook_cell(cell, shared):
+    kind = cell.attrib.get("t")
+    texts = []
+    value = ""
+    for node in cell.iter():
+        name = xml_local(node.tag)
+        if name == "t" and node.text:
+            texts.append(node.text)
+        elif name == "v" and node.text:
+            value = node.text.strip()
+    if kind == "inlineStr" or (texts and kind != "s" and not value):
+        return "".join(texts)
+    if kind == "s":
+        try:
+            index = int(value)
+        except ValueError:
+            return ""
+        return shared[index] if 0 <= index < len(shared) else ""
+    if kind == "b":
+        return "true" if value == "1" else "false"
+    if kind == "str" or not value:
+        return value or "".join(texts)
+    return plain_number(value)
 
 
 def parse_sheet(source):
@@ -854,8 +1077,39 @@ def find_preview_place(project_key, path):
     return parent
 
 
+def import_request(project_key, body, text):
+    body = body or {}
+    content = body.get("content") or ""
+    if content:
+        try:
+            data = base64.b64decode(content)
+        except Exception:
+            message = text.get("asset-tree.error.import.workbook", "Workbook")
+            return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
+        name = (body.get("name") or "").lower()
+        if data[:4] == b"\xd0\xcf\x11\xe0" or (name.endswith(".xls") and not name.endswith(".xlsx")):
+            message = text.get("asset-tree.error.import.workbook", "Workbook")
+            return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
+        if data[:2] == b"PK":
+            try:
+                headers, records = parse_workbook(data)
+            except Exception:
+                message = text.get("asset-tree.error.import.workbook", "Workbook")
+                return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
+            return import_rows(project_key, headers, records, text)
+        source = data.decode("utf-8", "replace")
+    else:
+        source = body.get("csv") or ""
+    headers, records = parse_sheet(source)
+    return import_rows(project_key, headers, records, text)
+
+
 def import_equipment(project_key, source, text):
     headers, records = parse_sheet(source)
+    return import_rows(project_key, headers, records, text)
+
+
+def import_rows(project_key, headers, records, text):
     roles = {}
     for index, header in enumerate(headers):
         role = sheet_role(header)
@@ -1153,6 +1407,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve_static(path.rsplit("/", 1)[-1])
         if path.startswith("/rest/asset-tree/1.0/"):
             rest = path[len("/rest/asset-tree/1.0"):]
+            if method == "GET" and re.fullmatch(r"/projects/[A-Za-z0-9]+/equipment\.xlsx", rest):
+                project_key = rest.split("/")[2]
+                body = equipment_xlsx(project_key, self.text(), self.lang() != "en")
+                return self.respond(200, body, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", {
+                    "Content-Disposition": 'attachment; filename="equipment-%s.xlsx"' % project_key,
+                })
             if method == "GET" and re.fullmatch(r"/projects/[A-Za-z0-9]+/equipment\.csv", rest):
                 project_key = rest.split("/")[2]
                 body = equipment_csv(project_key, self.text()).encode("utf-8")
@@ -1381,7 +1641,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.56",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.57",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1437,7 +1697,7 @@ setTimeout(function () {
             if match.group(1) not in {item["key"] for item in PROJECTS}:
                 return 400, {"message": text["asset-tree.error.project.required"]}
             body = self.read_json() or {}
-            return 200, import_equipment(match.group(1), body.get("csv") or "", text)
+            return 200, import_request(match.group(1), body, text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)

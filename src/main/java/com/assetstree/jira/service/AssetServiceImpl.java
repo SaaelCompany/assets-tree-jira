@@ -76,6 +76,8 @@ import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.DefaultTypes;
 import com.assetstree.jira.model.EquipmentExchange;
 import com.assetstree.jira.model.EquipmentSheet;
+import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.model.WorkbookSheet;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FieldKinds;
@@ -1284,27 +1286,24 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
-    public String exportEquipment(ApplicationUser user, String projectKey) {
+    public byte[] exportEquipment(ApplicationUser user, String projectKey) {
         final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
-        return ao().executeInTransaction(new TransactionCallback<String>() {
+        return ao().executeInTransaction(new TransactionCallback<byte[]>() {
             @Override
-            public String doInTransaction() {
-                return buildEquipmentCsv(project.getKey());
+            public byte[] doInTransaction() {
+                return buildEquipmentBook(project.getKey());
             }
         });
     }
 
     @Override
-    public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final String csv) {
+    public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final ImportDraft draft) {
         final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
-        if (csv != null && csv.length() > 1500000) {
-            throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
-        }
-        final String source = csv == null ? "" : csv;
+        final EquipmentSheet.Sheet sheet = equipmentSheet(draft);
         return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
             @Override
             public ImportResultDto doInTransaction() {
-                return applyEquipmentCsv(user, project.getKey(), source);
+                return applyEquipmentSheet(user, project.getKey(), sheet);
             }
         });
     }
@@ -1814,7 +1813,31 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private String buildEquipmentCsv(String projectKey) {
+    private EquipmentSheet.Sheet equipmentSheet(ImportDraft draft) {
+        String content = draft == null ? null : draft.getContent();
+        if (content != null && !content.trim().isEmpty()) {
+            if (content.length() > 4_000_000) {
+                throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+            }
+            byte[] bytes;
+            try {
+                bytes = java.util.Base64.getMimeDecoder().decode(content.trim());
+            } catch (IllegalArgumentException ex) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            if (bytes.length > 2_000_000) {
+                throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+            }
+            return WorkbookSheet.read(bytes);
+        }
+        String csv = draft == null || draft.getCsv() == null ? "" : draft.getCsv();
+        if (csv.length() > 1_500_000) {
+            throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+        }
+        return EquipmentSheet.read(csv);
+    }
+
+    private byte[] buildEquipmentBook(String projectKey) {
         ensureStatuses(projectKey);
         AssetEntity[] rows = assetsIn(projectKey);
         List<AssetTypeDto> types = typeDtos(projectKey, rows);
@@ -1826,6 +1849,7 @@ public class AssetServiceImpl implements AssetService {
             statusLabels.put(status.getStatusKey(), status.getLabel());
         }
         I18nHelper labels = i18n();
+        boolean dayFirst = labels.getLocale() != null && "ru".equalsIgnoreCase(labels.getLocale().getLanguage());
         List<String> headers = new ArrayList<String>();
         headers.add(labels.getText("asset-tree.ui.keyLabel"));
         headers.add(labels.getText("asset-tree.ui.name"));
@@ -1885,14 +1909,17 @@ public class AssetServiceImpl implements AssetService {
                 if (FieldKinds.USER.equals(field.getKind()) && value != null && !value.isEmpty()) {
                     value = displayName(value);
                 }
+                if (FieldKinds.DATE.equals(field.getKind())) {
+                    value = FieldDates.display(value, dayFirst);
+                }
                 line.add(value == null ? "" : value);
             }
             lines.add(line);
         }
-        return EquipmentSheet.write(headers, lines);
+        return WorkbookSheet.write(headers, lines);
     }
 
-    private ImportResultDto applyEquipmentCsv(ApplicationUser user, String projectKey, String csv) {
+    private ImportResultDto applyEquipmentSheet(ApplicationUser user, String projectKey, EquipmentSheet.Sheet sheet) {
         ensureStatuses(projectKey);
         AssetEntity[] rows = assetsIn(projectKey);
         List<AssetTypeDto> typeDtos = typeDtos(projectKey, rows);
@@ -1931,7 +1958,7 @@ public class AssetServiceImpl implements AssetService {
         headerLabels.put("place", labels.getText("asset-tree.ui.exchangePlace"));
         headerLabels.put("custodian", labels.getText("asset-tree.ui.custodian"));
         headerLabels.put("description", labels.getText("asset-tree.ui.description"));
-        EquipmentExchange.Plan plan = EquipmentExchange.plan(EquipmentSheet.read(csv), types, statuses, nodes,
+        EquipmentExchange.Plan plan = EquipmentExchange.plan(sheet, types, statuses, nodes,
                 Statuses.IN_USE, headerLabels, new EquipmentExchange.Directory() {
                     @Override
                     public EquipmentExchange.Person find(String raw) {
