@@ -2353,6 +2353,10 @@ html.asset-tree-dragging * {
     overflow: auto;
 }
 
+#asset-tree-app .asset-tree-dashboard .asset-tree-legend.is-expanded {
+    max-height: 240px;
+}
+
 #asset-tree-app .asset-tree-dash-list {
     max-height: 220px;
     overflow: auto;
@@ -2382,12 +2386,91 @@ html.asset-tree-dragging * {
     white-space: nowrap;
 }
 
-#asset-tree-app .asset-tree-legend-count {
+#asset-tree-app .asset-tree-legend-count,
+#asset-tree-app .asset-tree-legend-share {
     flex: 0 0 auto;
     margin-left: 6px;
     color: #5e6c84 !important;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+#asset-tree-app .asset-tree-legend-more-head {
+    display: flex !important;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+
+#asset-tree-app button.asset-tree-legend-chevron {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 16px;
+    width: 16px !important;
+    min-width: 16px !important;
+    height: 16px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 3px;
+    background: transparent !important;
+    color: #5e6c84 !important;
+    font-size: 10px !important;
+    line-height: 16px !important;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+#asset-tree-app .asset-tree-legend-nested {
+    display: none;
+    margin: 0 0 2px 14px;
+}
+
+#asset-tree-app .asset-tree-legend-more.is-open .asset-tree-legend-nested {
+    display: block;
+}
+
+#asset-tree-app .asset-tree-legend-nested-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+#asset-tree-app .asset-tree-legend-pick {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    margin: 0;
+}
+
+#asset-tree-app .asset-tree-legend-pick input {
+    flex: 0 0 14px;
+    width: 14px !important;
+    height: 14px !important;
+    margin: 0 !important;
+}
+
+#asset-tree-app .asset-tree-legend-selected {
+    margin: 2px 0 4px;
+    color: #172b4d;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#asset-tree-app input.asset-tree-legend-find {
+    box-sizing: border-box;
+    width: 100% !important;
+    height: 26px !important;
+    margin: 2px 0 4px !important;
+    padding: 0 6px !important;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+    color: #172b4d;
+    font: inherit;
+    font-size: 12px;
 }
 
 #asset-tree-app button.asset-tree-summary-toggle,

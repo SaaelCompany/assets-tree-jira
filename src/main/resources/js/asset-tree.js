@@ -5693,6 +5693,8 @@
             var otherCount = 0;
             var otherValues = [];
             overflow.forEach(function (row) {
+                row.color = '#6B778C';
+                row.activate = function () { focusMatches(sliceRule(dim, row)); };
                 otherCount += row.count;
                 otherValues = otherValues.concat(row.values);
             });
@@ -5701,6 +5703,7 @@
                 label: t('chartOther'),
                 count: otherCount,
                 values: otherValues,
+                members: overflow,
                 color: '#6B778C'
             };
             other.activate = function () { focusMatches(sliceRule(dim, other)); };
@@ -5816,22 +5819,111 @@
         search.focus();
     }
 
+    function shareLabel(count, total) {
+        if (!total || !count) return '0%';
+        var pct = 100 * count / total;
+        if (pct < 0.5) return '<1%';
+        return Math.round(pct) + '%';
+    }
+
+    function legendButton(item) {
+        var line = button('', 'asset-tree-legend-btn', function () {
+            if (item.activate) item.activate();
+        });
+        var dot = el('i');
+        dot.style.background = item.color;
+        line.appendChild(dot);
+        line.appendChild(el('span', 'asset-tree-legend-label', item.label));
+        line.appendChild(el('span', 'asset-tree-legend-count', '(' + item.count + ')'));
+        if (item.share) line.appendChild(el('span', 'asset-tree-legend-share', item.share));
+        return line;
+    }
+
+    function otherLegend(item, legend, total) {
+        var block = el('div', 'asset-tree-legend-more');
+        var head = el('div', 'asset-tree-legend-more-head');
+        var nested = el('div', 'asset-tree-legend-nested');
+        var rows = el('div', 'asset-tree-legend-nested-rows');
+        var selected = el('div', 'asset-tree-legend-selected');
+        selected.hidden = true;
+        var find = null;
+        if (item.members.length > 8) {
+            find = el('input', 'asset-tree-legend-find');
+            find.type = 'search';
+            find.placeholder = t('chartFindValue');
+            find.setAttribute('aria-label', t('chartFindValue'));
+        }
+        function paintSelection() {
+            var picked = 0;
+            item.members.forEach(function (member) {
+                if (member.picked) picked += member.count;
+            });
+            selected.hidden = !picked;
+            selected.textContent = picked ? t('chartSelected', String(picked) + ' \u00B7 ' + shareLabel(picked, total)) : '';
+        }
+        function paint(query) {
+            rows.innerHTML = '';
+            var needle = String(query || '').trim().toLowerCase();
+            var shown = item.members.filter(function (member) {
+                return !needle || String(member.label).toLowerCase().indexOf(needle) >= 0;
+            });
+            if (!shown.length) {
+                rows.appendChild(el('p', 'asset-tree-hint', t('noResults')));
+                return;
+            }
+            shown.forEach(function (member) {
+                var pick = el('div', 'asset-tree-legend-pick');
+                var box = el('input');
+                box.type = 'checkbox';
+                box.checked = !!member.picked;
+                box.title = member.label;
+                box.addEventListener('click', function (event) { event.stopPropagation(); });
+                box.addEventListener('change', function () {
+                    member.picked = box.checked;
+                    paintSelection();
+                });
+                pick.appendChild(box);
+                pick.appendChild(legendButton(member));
+                rows.appendChild(pick);
+            });
+        }
+        var chevron = button('\u25B8', 'asset-tree-legend-chevron', function () {
+            var open = block.classList.toggle('is-open');
+            legend.classList.toggle('is-expanded', !!legend.querySelector('.asset-tree-legend-more.is-open'));
+            chevron.textContent = open ? '\u25BE' : '\u25B8';
+            chevron.title = open ? t('chartRestHide') : t('chartRest');
+            chevron.setAttribute('aria-expanded', open ? 'true' : 'false');
+            if (open && find) find.focus();
+        });
+        chevron.title = t('chartRest');
+        chevron.setAttribute('aria-expanded', 'false');
+        chevron.setAttribute('aria-label', t('chartRest'));
+        if (find) find.addEventListener('input', function () { paint(find.value); });
+        head.appendChild(chevron);
+        head.appendChild(legendButton(item));
+        block.appendChild(head);
+        if (find) nested.appendChild(find);
+        nested.appendChild(selected);
+        nested.appendChild(rows);
+        paint('');
+        block.appendChild(nested);
+        return block;
+    }
+
     function sliceChart(data) {
+        var total = 0;
+        data.forEach(function (item) { total += item.count || 0; });
+        data.forEach(function (item) {
+            item.share = shareLabel(item.count, total);
+            (item.members || []).forEach(function (member) {
+                member.share = shareLabel(member.count, total);
+            });
+        });
         var body = el('div', 'asset-tree-chart-body');
         body.appendChild(donutChart(data));
         var legend = el('div', 'asset-tree-legend');
         data.forEach(function (item) {
-            var line = button('', 'asset-tree-legend-btn', function () {
-                if (item.activate) item.activate();
-            });
-            var dot = el('i');
-            dot.style.background = item.color;
-            var name = el('span', 'asset-tree-legend-label', item.label);
-            var count = el('span', 'asset-tree-legend-count', '(' + item.count + ')');
-            line.appendChild(dot);
-            line.appendChild(name);
-            line.appendChild(count);
-            legend.appendChild(line);
+            legend.appendChild(item.members && item.members.length ? otherLegend(item, legend, total) : legendButton(item));
         });
         body.appendChild(legend);
         return body;
