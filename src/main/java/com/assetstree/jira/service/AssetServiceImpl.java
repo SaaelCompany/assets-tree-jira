@@ -98,6 +98,7 @@ import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
 import com.assetstree.jira.model.ServiceDue;
+import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.Statuses;
 import com.assetstree.jira.model.StatusSummary;
@@ -3332,6 +3333,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setAttributes(attributeDtos(type, attributes));
         List<ServicePlanEntity> plans = plansOf(entity.getID());
         dto.setServiceDue(dueNames(plans, LocalDate.now()));
+        dto.setOfferedTypes(type != null && type.isLocation() ? offeredKeys(entity.getOfferedTypes()) : new ArrayList<String>());
         if (withIssues) {
             dto.setIssues(issuesFor(entity.getID()));
             dto.setComments(commentDtos(entity.getID()));
@@ -3770,6 +3772,80 @@ public class AssetServiceImpl implements AssetService {
                 return null;
             }
         });
+    }
+
+    @Override
+    public AssetDto offerType(ApplicationUser user, final int assetId, final PlaceTypeDraft draft, final boolean present) {
+        final String typeKey = draft == null || draft.getTypeKey() == null ? "" : draft.getTypeKey().trim();
+        if (typeKey.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.notFound");
+        }
+        return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
+            @Override
+            public AssetDto doInTransaction() {
+                AssetEntity place = requireAssetCap(user, assetId, GrantCaps.PLACES);
+                if (!isLocation(place)) {
+                    throw new AssetException(400, "asset-tree.error.type.place");
+                }
+                AssetTypeEntity type = requireType(typeKey);
+                if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
+                    throw new AssetException(400, "asset-tree.error.type");
+                }
+                List<String> keys = offeredKeys(place.getOfferedTypes());
+                if (present) {
+                    if (!keys.contains(type.getTypeKey())) {
+                        keys.add(type.getTypeKey());
+                    }
+                } else {
+                    if (placeHasEquipment(place, type.getTypeKey())) {
+                        throw new AssetException(409, "asset-tree.error.type.busy");
+                    }
+                    keys.remove(type.getTypeKey());
+                }
+                place.setOfferedTypes(joinOffered(keys));
+                place.setUpdated(new Date());
+                place.setUpdatedBy(user.getKey());
+                place.save();
+                AssetEntity[] rows = assetsIn(place.getProjectKey());
+                return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
+            }
+        });
+    }
+
+    private List<String> offeredKeys(String raw) {
+        List<String> keys = new ArrayList<String>();
+        if (raw == null || raw.isEmpty()) {
+            return keys;
+        }
+        for (String part : raw.split("\n")) {
+            String key = part.trim();
+            if (!key.isEmpty() && !keys.contains(key)) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    private String joinOffered(List<String> keys) {
+        StringBuilder builder = new StringBuilder();
+        for (String key : keys) {
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append(key);
+        }
+        return builder.toString();
+    }
+
+    private boolean placeHasEquipment(AssetEntity place, String typeKey) {
+        for (AssetEntity asset : assetsIn(place.getProjectKey())) {
+            Integer parent = TreeLogic.normalizeParent(asset.getParentId());
+            if (parent != null && parent.intValue() == place.getID()
+                    && typeKey.equals(asset.getTypeKey()) && !isLocation(asset)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

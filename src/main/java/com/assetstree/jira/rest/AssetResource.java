@@ -18,6 +18,7 @@ import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
 import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.web.PortalLookup;
@@ -103,6 +104,31 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.updateAsset(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/types")
+    public Response offerType(@PathParam("id") final int id, final PlaceTypeDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.offerType(user(), id, draft, true)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/types/{typeKey}")
+    public Response withdrawType(@PathParam("id") final int id, @PathParam("typeKey") final String typeKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                PlaceTypeDraft draft = new PlaceTypeDraft();
+                draft.setTypeKey(typeKey);
+                assetService.offerType(user(), id, draft, false);
+                return Response.noContent().build();
             }
         });
     }

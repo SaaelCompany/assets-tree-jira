@@ -485,7 +485,7 @@ def add_asset(project, type_key, name, parent, status, custodian, values):
         "id": asset_id, "objectKey": "AST-%s" % asset_id, "projectKey": project, "name": name,
         "description": "", "typeKey": type_key, "status": status, "parentId": parent,
         "sortOrder": asset_id, "custodianKey": custodian, "created": "2026-09-26T09:00:00Z",
-        "updated": "2026-09-26T09:00:00Z", "values": values,
+        "updated": "2026-09-26T09:00:00Z", "values": values, "offeredTypes": [],
     }
     return asset_id
 
@@ -651,6 +651,7 @@ def asset_dto(asset, text, with_issues):
         "projectName": next(item["name"] for item in PROJECTS if item["key"] == asset["projectKey"]),
         "location": location_of(asset), "editable": True, "custodian": holder, "attributes": attributes,
         "serviceDue": service_due_names(asset["id"]),
+        "offeredTypes": list(asset.get("offeredTypes") or []) if is_location_id(asset["id"]) else [],
     }
     if with_issues:
         dto["plans"] = plan_dtos(asset["id"])
@@ -1951,7 +1952,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.75",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.76",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2070,6 +2071,12 @@ setTimeout(function () {
             } for row in rows]
         if path == "/types" and method == "POST":
             return self.create_type(self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/types", path)
+        if match and method == "POST":
+            return self.offer_type(int(match.group(1)), self.read_json(), True, text)
+        match = re.fullmatch(r"/assets/(\d+)/types/([^/]+)", path)
+        if match and method == "DELETE":
+            return self.offer_type(int(match.group(1)), {"typeKey": match.group(2)}, False, text)
         match = re.fullmatch(r"/assets/(\d+)/plans", path)
         if match and method == "POST":
             return self.create_plan(int(match.group(1)), self.read_json(), text)
@@ -2318,6 +2325,31 @@ setTimeout(function () {
                 return text["asset-tree.error.user"], {}
             values[field["fieldKey"]] = stored
         return None, values
+
+    def offer_type(self, asset_id, body, present, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        if not is_location_id(asset_id):
+            return 400, {"message": text.get("asset-tree.error.type.place", "Place")}
+        type_key = ((body or {}).get("typeKey") or "").strip()
+        row = STATE["types"].get(type_key)
+        if not row or row.get("location") or row.get("projectKey") != asset["projectKey"]:
+            return 400, {"message": text["asset-tree.error.type"]}
+        offered = list(asset.get("offeredTypes") or [])
+        if present:
+            if type_key not in offered:
+                offered.append(type_key)
+        else:
+            direct = any(
+                item.get("parentId") == asset_id and item.get("typeKey") == type_key and not is_location_id(item["id"])
+                for item in STATE["assets"].values()
+            )
+            if direct:
+                return 409, {"message": text.get("asset-tree.error.type.busy", "Busy")}
+            offered = [key for key in offered if key != type_key]
+        asset["offeredTypes"] = offered
+        return (200, asset_dto(asset, text, False)) if present else (204, None)
 
     def create_plan(self, asset_id, body, text):
         asset = STATE["assets"].get(asset_id)

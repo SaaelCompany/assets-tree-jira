@@ -27,6 +27,7 @@ import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.model.ServicePlanDraft;
@@ -129,6 +130,9 @@ public interface AssetService {
     String describeAsset(String assetId);
 
     ServicePlanDto createPlan(ApplicationUser user, int assetId, ServicePlanDraft draft);
+
+    /** Pins an equipment type to one place, or removes that pin when the place has no such equipment. */
+    AssetDto offerType(ApplicationUser user, int assetId, PlaceTypeDraft draft, boolean present);
 
     ServicePlanDto updatePlan(ApplicationUser user, int assetId, int planId, ServicePlanDraft draft);
 

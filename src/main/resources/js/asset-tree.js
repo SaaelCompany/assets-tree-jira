@@ -1032,11 +1032,11 @@
         if (!place || !isFolder(place)) return [];
         var used = {};
         equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
-        var childPlaces = childrenOf(placeId).filter(isFolder);
+        var offered = {};
+        (place.offeredTypes || []).forEach(function (key) { offered[key] = true; });
         return state.types.filter(function (type) {
             if (type.location) return false;
-            if (childPlaces.length) return !!used[type.typeKey];
-            return true;
+            return !!used[type.typeKey] || !!offered[type.typeKey];
         });
     }
 
@@ -1705,6 +1705,9 @@
         row.appendChild(name);
         var count = equipmentIn(placeId, type.typeKey).length;
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
+        if (!count && state.canPlaces) {
+            row.appendChild(typeRemoveButton(placeId, type));
+        }
         if (state.canObjects) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
@@ -1721,6 +1724,83 @@
         });
         branch.appendChild(row);
         return branch;
+    }
+
+    function typeRemoveButton(placeId, type) {
+        var remove = el('button', 'asset-tree-type-remove', '\u00D7');
+        remove.type = 'button';
+        remove.title = t('removeTypeHere');
+        remove.setAttribute('aria-label', t('removeTypeHere'));
+        remove.addEventListener('click', function (event) {
+            event.stopPropagation();
+            if (!window.confirm(t('removeTypeHereConfirm', type.label))) return;
+            withdrawType(placeId, type.typeKey);
+        });
+        return remove;
+    }
+
+    function offerType(placeId, typeKey) {
+        ajax('POST', '/assets/' + placeId + '/types', { typeKey: typeKey }, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                reloadTree(function () {
+                    selectTypeGroup(placeId, typeKey);
+                });
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function withdrawType(placeId, typeKey) {
+        ajax('DELETE', '/assets/' + placeId + '/types/' + encodeURIComponent(typeKey), null, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                reloadTree(function () {
+                    if (state.typeGroup && state.typeGroup.placeId === placeId && state.typeGroup.typeKey === typeKey) {
+                        state.typeGroup = null;
+                        state.selectedId = placeId;
+                        state.pane = 'list';
+                    }
+                    renderNodes();
+                    replaceDetail();
+                });
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function openOfferType(placeId) {
+        var present = {};
+        typeGroupsFor(placeId).forEach(function (type) { present[type.typeKey] = true; });
+        var available = state.types.filter(function (type) { return !type.location && !present[type.typeKey]; });
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('offerTypeTitle')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('offerTypeHint')));
+            if (!available.length) {
+                dialog.appendChild(el('p', null, t('offerTypeEmpty')));
+            } else {
+                var list = el('div', 'asset-tree-offer-list');
+                available.forEach(function (type) {
+                    var pick = button('', 'asset-tree-offer-type', function () {
+                        closeModal();
+                        offerType(placeId, type.typeKey);
+                    });
+                    pick.appendChild(typeTile(type, 'sm'));
+                    pick.appendChild(el('span', null, type.label));
+                    list.appendChild(pick);
+                });
+                dialog.appendChild(list);
+            }
+            var actions = el('div', 'asset-tree-dialog-actions');
+            if (state.canConfigure) {
+                actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn', function () {
+                    closeModal();
+                    openTypes();
+                }));
+            }
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
     }
 
     function selectTypeGroup(placeId, typeKey, scope) {
@@ -2310,18 +2390,22 @@
         return wrap;
     }
 
-    function moduleBlock(title, bodyNode) {
-        var block = el('div', 'asset-tree-module');
+    function moduleBlock(title, bodyNode, collapsed) {
+        var block = el('div', 'asset-tree-module' + (collapsed ? ' is-collapsed' : ''));
         var head = el('button', 'asset-tree-module-head');
         head.type = 'button';
-        var caret = el('span', 'asset-tree-caret', '\u25BE');
+        head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        var caret = el('span', 'asset-tree-caret', collapsed ? '\u25B8' : '\u25BE');
         head.appendChild(caret);
         head.appendChild(el('span', null, title));
         var body = el('div', 'asset-tree-module-body');
         if (bodyNode) body.appendChild(bodyNode);
+        if (collapsed) body.hidden = true;
         head.addEventListener('click', function () {
             body.hidden = !body.hidden;
+            block.classList.toggle('is-collapsed', body.hidden);
             caret.textContent = body.hidden ? '\u25B8' : '\u25BE';
+            head.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
         });
         block.appendChild(head);
         block.appendChild(body);
@@ -2436,9 +2520,15 @@
             types.forEach(function (type) {
                 var count = 0;
                 gear.forEach(function (item) { if (item.typeKey === type.typeKey) count++; });
-                typeBlock.appendChild(linkLine(type.label, t('childCount', count), function () {
-                    selectTypeGroup(asset.id, type.typeKey, 'under');
-                }, type.color, type));
+                var line = linkLine(type.label, t('childCount', count), function () {
+                    selectTypeGroup(asset.id, type.typeKey, count ? 'under' : 'direct');
+                }, type.color, type);
+                var direct = equipmentIn(asset.id, type.typeKey).length;
+                var offered = (full.offeredTypes || asset.offeredTypes || []).indexOf(type.typeKey) >= 0;
+                if (!direct && offered && state.canPlaces) {
+                    line.appendChild(typeRemoveButton(asset.id, type));
+                }
+                typeBlock.appendChild(line);
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
@@ -2670,7 +2760,7 @@
                 }));
             }
         }
-        return moduleBlock(t('serviceTitle'), body);
+        return moduleBlock(t('serviceTitle'), body, true);
     }
 
     function serviceRead(plan) {
@@ -4598,10 +4688,10 @@
                     closeModal();
                     openCreate(parentId, 'place');
                 }));
-                if (state.canConfigure) {
+                if (state.canPlaces && parentId) {
                     choose.appendChild(button(t('addTypeHere'), 'asset-tree-btn' + (hasTypes ? '' : ' primary'), function () {
                         closeModal();
-                        openTypes();
+                        openOfferType(parentId);
                     }));
                 }
                 choose.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));

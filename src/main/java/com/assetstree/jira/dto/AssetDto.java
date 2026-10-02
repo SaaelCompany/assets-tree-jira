@@ -36,6 +36,7 @@ public class AssetDto {
     private List<ActivityDto> activities;
     private List<ServicePlanDto> plans;
     private String serviceDue;
+    private List<String> offeredTypes = new ArrayList<String>();
 
     public int getId() {
         return id;
@@ -259,5 +260,13 @@ public class AssetDto {
 
     public void setServiceDue(String serviceDue) {
         this.serviceDue = serviceDue;
+    }
+
+    public List<String> getOfferedTypes() {
+        return offeredTypes;
+    }
+
+    public void setOfferedTypes(List<String> offeredTypes) {
+        this.offeredTypes = offeredTypes == null ? new ArrayList<String>() : offeredTypes;
     }
 }
