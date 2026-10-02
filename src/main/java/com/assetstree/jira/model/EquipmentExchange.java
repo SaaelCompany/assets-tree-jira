@@ -72,12 +72,18 @@ public final class EquipmentExchange {
         private final String label;
         private final String kind;
         private final boolean required;
+        private final String options;
 
         public FieldRef(String key, String label, String kind, boolean required) {
+            this(key, label, kind, required, "");
+        }
+
+        public FieldRef(String key, String label, String kind, boolean required, String options) {
             this.key = key;
             this.label = label;
             this.kind = kind;
             this.required = required;
+            this.options = options == null ? "" : options;
         }
 
         public String getKey() {
@@ -94,6 +100,10 @@ public final class EquipmentExchange {
 
         public boolean isRequired() {
             return required;
+        }
+
+        public String getOptions() {
+            return options;
         }
     }
 
@@ -488,6 +498,14 @@ public final class EquipmentExchange {
                     return null;
                 }
                 value = canonical;
+            }
+            if (FieldChoices.handles(field.getKind()) && !value.isEmpty()) {
+                String normalized = FieldChoices.canonicalValue(field.getKind(), field.getOptions(), value);
+                if (normalized == null) {
+                    issues.add(new Issue(row, FieldChoices.errorKey(field.getKind()), field.getLabel()));
+                    return null;
+                }
+                value = normalized;
             }
             if (FieldKinds.USER.equals(field.getKind()) && !value.isEmpty()) {
                 Person person = people == null ? Person.missing() : people.find(value);

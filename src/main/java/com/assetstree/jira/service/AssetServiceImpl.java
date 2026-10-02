@@ -78,6 +78,7 @@ import com.assetstree.jira.model.EquipmentExchange;
 import com.assetstree.jira.model.EquipmentSheet;
 import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.model.WorkbookSheet;
+import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FieldKinds;
@@ -821,6 +822,15 @@ public class AssetServiceImpl implements AssetService {
         if (!FieldKinds.isKind(draft.getKind())) {
             throw new AssetException(400, "asset-tree.error.field.kind");
         }
+        final String storedOptions;
+        if (FieldChoices.needsOptions(draft.getKind())) {
+            storedOptions = FieldChoices.canonicalOptions(draft.getOptions());
+            if (storedOptions == null) {
+                throw new AssetException(400, "asset-tree.error.field.options");
+            }
+        } else {
+            storedOptions = "";
+        }
         return ao().executeInTransaction(new TransactionCallback<FieldDto>() {
             @Override
             public FieldDto doInTransaction() {
@@ -849,7 +859,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("KIND", draft.getKind()),
                         new DBParam("REQUIRED", Boolean.valueOf(draft.isRequired())),
-                        new DBParam("POSITION", max + 1));
+                        new DBParam("POSITION", max + 1),
+                        new DBParam("OPTIONS", storedOptions));
                 return toFieldDto(created, i18n());
             }
         });
@@ -1912,6 +1923,9 @@ public class AssetServiceImpl implements AssetService {
                 if (FieldKinds.DATE.equals(field.getKind())) {
                     value = FieldDates.display(value, dayFirst);
                 }
+                if (FieldChoices.handles(field.getKind())) {
+                    value = FieldChoices.display(value);
+                }
                 line.add(value == null ? "" : value);
             }
             lines.add(line);
@@ -1928,7 +1942,8 @@ public class AssetServiceImpl implements AssetService {
             List<EquipmentExchange.FieldRef> fields = new ArrayList<EquipmentExchange.FieldRef>();
             if (type.getFields() != null) {
                 for (FieldDto field : type.getFields()) {
-                    fields.add(new EquipmentExchange.FieldRef(field.getFieldKey(), field.getLabel(), field.getKind(), field.isRequired()));
+                    String options = field.getOptions() == null ? "" : String.join("\n", field.getOptions());
+                    fields.add(new EquipmentExchange.FieldRef(field.getFieldKey(), field.getLabel(), field.getKind(), field.isRequired(), options));
                 }
             }
             types.add(new EquipmentExchange.TypeRef(type.getTypeKey(), type.getLabel(), type.isLocation(), fields));
@@ -2422,6 +2437,13 @@ public class AssetServiceImpl implements AssetService {
             if (!trimmed.isEmpty() && FieldKinds.USER.equals(field.getKind()) && userManager().getUserByKey(trimmed) == null) {
                 throw new AssetException(400, "asset-tree.error.user");
             }
+            if (!trimmed.isEmpty() && FieldChoices.handles(field.getKind())) {
+                String normalized = FieldChoices.canonicalValue(field.getKind(), field.getOptions(), trimmed);
+                if (normalized == null) {
+                    throw new AssetException(400, FieldChoices.errorKey(field.getKind()));
+                }
+                value = normalized;
+            }
             if (trimmed.length() > AssetValidator.MAX_ATTR_VALUE) {
                 throw new AssetException(400, "asset-tree.error.attribute.value.length");
             }
@@ -2887,6 +2909,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setRequired(field.isRequired());
         dto.setPosition(field.getPosition());
         dto.setLabel(fieldLabel(field, labels));
+        dto.setOptions(FieldChoices.optionsOf(field.getOptions()));
         return dto;
     }
 

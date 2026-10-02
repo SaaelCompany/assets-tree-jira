@@ -680,7 +680,12 @@
             (type.fields || []).forEach(function (field) {
                 if (!field.fieldKey || seen[field.fieldKey]) return;
                 seen[field.fieldKey] = true;
-                fields.push({ key: 'attr:' + field.fieldKey, label: field.label, kind: field.kind || 'text' });
+                fields.push({
+                    key: 'attr:' + field.fieldKey,
+                    label: field.label,
+                    kind: field.kind || 'text',
+                    options: fieldOptions(field)
+                });
             });
         });
         return fields;
@@ -696,7 +701,8 @@
 
     function opsFor(kind) {
         if (kind === 'number' || kind === 'date') return ['eq', 'gt', 'lt', 'empty', 'notEmpty'];
-        if (kind === 'type' || kind === 'status') return ['eq'];
+        if (kind === 'type' || kind === 'status' || kind === 'select' || kind === 'radio') return ['eq', 'empty', 'notEmpty'];
+        if (kind === 'checks' || kind === 'selects' || kind === 'labels' || kind === 'version') return ['contains', 'empty', 'notEmpty'];
         return ['contains', 'eq', 'empty', 'notEmpty'];
     }
 
@@ -1060,8 +1066,32 @@
     function attributeText(attribute) {
         var raw = attribute && attribute.value ? String(attribute.value) : '';
         if (!raw) return '';
-        if (attribute.kind === 'date') return formatFieldDate(raw);
+        var kind = attribute.kind;
+        if (kind === 'date') return formatFieldDate(raw);
+        if (kind === 'selects' || kind === 'checks' || kind === 'labels' || kind === 'version') {
+            return splitStored(raw).join(', ');
+        }
         return raw;
+    }
+
+    function attributeView(attribute) {
+        var raw = attribute && attribute.value ? String(attribute.value) : '';
+        if (!raw) return el('span', 'is-empty', t('emptyValue'));
+        if (attribute.kind === 'url' && /^https?:\/\//i.test(raw)) {
+            var link = el('a', 'asset-tree-url', raw);
+            link.href = raw;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            return link;
+        }
+        if (attribute.kind === 'labels' || attribute.kind === 'version' || attribute.kind === 'checks' || attribute.kind === 'selects') {
+            var wrap = el('span', 'asset-tree-tags is-static');
+            splitStored(raw).forEach(function (item) {
+                wrap.appendChild(el('span', 'asset-tree-chip', item));
+            });
+            return wrap;
+        }
+        return el('span', null, attributeText(attribute));
     }
 
     function formatDate(iso) {
@@ -2255,8 +2285,7 @@
             placeItems.push(detailItem(parentCaption(full), el('span', null, byId()[full.parentId].name)));
         }
         (full.attributes || []).forEach(function (attribute) {
-            var shown = attributeText(attribute) || t('emptyValue');
-            placeItems.push(detailItem(attribute.name || attribute.fieldKey, el('span', attribute.value ? null : 'is-empty', shown)));
+            placeItems.push(detailItem(attribute.name || attribute.fieldKey, attributeView(attribute)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(placeItems)));
         main.appendChild(descriptionModule(full, true));
@@ -3497,8 +3526,7 @@
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
         items.push(detailItem(parentCaption(asset), el('span', null, place)));
         (asset.attributes || []).forEach(function (attribute) {
-            var shown = attributeText(attribute) || t('emptyValue');
-            items.push(detailItem(attribute.name || attribute.fieldKey, el('span', attribute.value ? null : 'is-empty', shown)));
+            items.push(detailItem(attribute.name || attribute.fieldKey, attributeView(attribute)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
         main.appendChild(descriptionModule(asset, true));
@@ -3957,8 +3985,236 @@
             { value: 'textarea', label: t('kindTextarea') },
             { value: 'number', label: t('kindNumber') },
             { value: 'date', label: t('kindDate') },
-            { value: 'user', label: t('kindUser') }
+            { value: 'user', label: t('kindUser') },
+            { value: 'select', label: t('kindSelect') },
+            { value: 'selects', label: t('kindSelects') },
+            { value: 'checks', label: t('kindChecks') },
+            { value: 'radio', label: t('kindRadio') },
+            { value: 'labels', label: t('kindLabels') },
+            { value: 'url', label: t('kindUrl') },
+            { value: 'version', label: t('kindVersion') }
         ], selected || 'text', false);
+    }
+
+    function needsOptions(kind) {
+        return kind === 'select' || kind === 'selects' || kind === 'checks' || kind === 'radio';
+    }
+
+    function optionLines(text) {
+        return String(text || '').split(/\r?\n/).map(function (item) {
+            return item.trim();
+        }).filter(Boolean);
+    }
+
+    function splitStored(value) {
+        return optionLines(value);
+    }
+
+    function fieldOptions(fieldDef) {
+        var raw = fieldDef && fieldDef.options;
+        if (!raw) return [];
+        if (Object.prototype.toString.call(raw) === '[object Array]') {
+            return raw.map(function (item) { return String(item || '').trim(); }).filter(Boolean);
+        }
+        return optionLines(raw);
+    }
+
+    function optionsEditor(id, value) {
+        var area = el('textarea');
+        if (id) area.id = id;
+        area.rows = 4;
+        area.value = value || '';
+        area.placeholder = t('fieldOptionsHint');
+        return area;
+    }
+
+    function singleSelect(options, value, disabled) {
+        var node = el('select', 'asset-tree-field-value');
+        var blank = el('option', null, '—');
+        blank.value = '';
+        node.appendChild(blank);
+        options.forEach(function (option) {
+            var item = el('option', null, option);
+            item.value = option;
+            if (option === value) item.selected = true;
+            node.appendChild(item);
+        });
+        node.disabled = !!disabled;
+        return node;
+    }
+
+    function multiSelect(options, value, disabled) {
+        var picked = {};
+        splitStored(value).forEach(function (item) { picked[item] = true; });
+        var wrap = el('div', 'asset-tree-choices');
+        var hidden = el('input', 'asset-tree-field-value');
+        hidden.type = 'hidden';
+        var node = el('select', 'asset-tree-multi');
+        node.multiple = true;
+        node.size = Math.min(Math.max(options.length, 3), 6);
+        node.disabled = !!disabled;
+        options.forEach(function (option) {
+            var item = el('option', null, option);
+            item.value = option;
+            item.selected = !!picked[option];
+            node.appendChild(item);
+        });
+        function sync() {
+            var next = [];
+            for (var i = 0; i < node.options.length; i++) {
+                if (node.options[i].selected && node.options[i].value) next.push(node.options[i].value);
+            }
+            hidden.value = next.join('\n');
+        }
+        node.addEventListener('change', sync);
+        sync();
+        wrap.appendChild(hidden);
+        wrap.appendChild(node);
+        return wrap;
+    }
+
+    function choiceGroup(kind, options, value, disabled) {
+        var picked = {};
+        splitStored(value).forEach(function (item) { picked[item] = true; });
+        var wrap = el('div', 'asset-tree-choices');
+        var hidden = el('input', 'asset-tree-field-value');
+        hidden.type = 'hidden';
+        var group = 'choice-' + Math.random().toString(36).slice(2);
+        function sync() {
+            var next = [];
+            var boxes = wrap.querySelectorAll('input[type="checkbox"],input[type="radio"]');
+            for (var i = 0; i < boxes.length; i++) {
+                if (boxes[i].checked) next.push(boxes[i].value);
+            }
+            hidden.value = next.join('\n');
+        }
+        options.forEach(function (option) {
+            var label = el('label', 'asset-tree-check');
+            var box = el('input');
+            box.type = kind === 'radio' ? 'radio' : 'checkbox';
+            box.name = group;
+            box.value = option;
+            box.checked = !!picked[option];
+            box.disabled = !!disabled;
+            box.addEventListener('change', sync);
+            label.appendChild(box);
+            label.appendChild(el('span', null, option));
+            wrap.appendChild(label);
+        });
+        sync();
+        wrap.appendChild(hidden);
+        return wrap;
+    }
+
+    function tagEditor(kind, value, disabled) {
+        var box = el('div', 'asset-tree-tags');
+        var hidden = el('input', 'asset-tree-field-value');
+        hidden.type = 'hidden';
+        var items = splitStored(value);
+        var list = el('span', 'asset-tree-tag-list');
+        var text = el('input');
+        text.type = 'text';
+        text.placeholder = kind === 'version' ? t('versionHint') : t('labelsHint');
+        text.disabled = !!disabled;
+        function commit() {
+            hidden.value = items.join('\n');
+        }
+        function paint() {
+            list.innerHTML = '';
+            items.forEach(function (item, index) {
+                var chip = el('span', 'asset-tree-chip');
+                chip.appendChild(document.createTextNode(item));
+                if (!disabled) {
+                    chip.appendChild(button('\u00d7', 'asset-tree-chip-x', function () {
+                        items.splice(index, 1);
+                        paint();
+                    }));
+                }
+                list.appendChild(chip);
+            });
+            commit();
+        }
+        function known(token) {
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].toLowerCase() === token.toLowerCase()) return true;
+            }
+            return false;
+        }
+        function accept(raw) {
+            var parts = String(raw || '').split(',');
+            var added = false;
+            parts.forEach(function (part) {
+                var token = part.trim();
+                if (!token || known(token)) return;
+                if (kind === 'labels') {
+                    if (token.length > 40 || items.length >= 20) return;
+                } else if (!/^(?=.*\d)[0-9A-Za-z][0-9A-Za-z .+_-]{0,39}$/.test(token) || items.length >= 12) {
+                    return;
+                }
+                items.push(token);
+                added = true;
+            });
+            if (added) {
+                text.value = '';
+                paint();
+            }
+        }
+        text.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ',') {
+                event.preventDefault();
+                accept(text.value);
+            } else if (event.key === 'Backspace' && !text.value && items.length) {
+                items.pop();
+                paint();
+            }
+        });
+        text.addEventListener('blur', function () {
+            if (text.value.trim()) accept(text.value);
+        });
+        box.appendChild(hidden);
+        box.appendChild(list);
+        if (!disabled) box.appendChild(text);
+        paint();
+        return box;
+    }
+
+    function fieldControl(fieldDef, value, disabled) {
+        var kind = (fieldDef && fieldDef.kind) || 'text';
+        var options = fieldOptions(fieldDef);
+        if (kind === 'textarea') {
+            var area = area('', value || '', !!disabled);
+            area.classList.add('asset-tree-field-value');
+            return area;
+        }
+        if (kind === 'user') return userBox(value || '', !!disabled);
+        if (kind === 'date') {
+            var date = input('', value || '', !!disabled);
+            date.type = 'date';
+            date.classList.add('asset-tree-field-value');
+            return date;
+        }
+        if (needsOptions(kind)) {
+            if (!options.length) {
+                var missing = el('div', 'asset-tree-choices');
+                var hidden = el('input', 'asset-tree-field-value');
+                hidden.type = 'hidden';
+                missing.appendChild(hidden);
+                missing.appendChild(el('p', 'asset-tree-hint', t('fieldOptionsHint')));
+                return missing;
+            }
+            if (kind === 'select') return singleSelect(options, value || '', !!disabled);
+            if (kind === 'selects') return multiSelect(options, value || '', !!disabled);
+            return choiceGroup(kind, options, value || '', !!disabled);
+        }
+        if (kind === 'labels' || kind === 'version') return tagEditor(kind, value || '', !!disabled);
+        var control = input('', value || '', !!disabled);
+        if (kind === 'number') control.inputMode = 'decimal';
+        if (kind === 'url') {
+            control.type = 'url';
+            control.placeholder = 'https://';
+        }
+        control.classList.add('asset-tree-field-value');
+        return control;
     }
 
     function openCreate(parentId, kind, typeKey) {
@@ -4067,7 +4323,16 @@
             var fieldForm = el('div', 'asset-tree-inline-field');
             fieldForm.hidden = true;
             fieldForm.appendChild(field(t('fieldLabel'), input('create-extra-label', '', false), true));
-            fieldForm.appendChild(field(t('fieldKind'), kindSelect('create-extra-kind', 'text'), true));
+            var extraKind = kindSelect('create-extra-kind', 'text');
+            fieldForm.appendChild(field(t('fieldKind'), extraKind, true));
+            var extraOptions = optionsEditor('create-extra-options', '');
+            var extraOptionsWrap = field(t('fieldOptions'), extraOptions, true);
+            extraOptionsWrap.appendChild(el('p', 'asset-tree-hint', t('fieldOptionsHint')));
+            extraOptionsWrap.hidden = true;
+            fieldForm.appendChild(extraOptionsWrap);
+            extraKind.addEventListener('change', function () {
+                extraOptionsWrap.hidden = !needsOptions(extraKind.value);
+            });
             var extraRequired = el('label', 'asset-tree-check');
             var extraBox = el('input');
             extraBox.type = 'checkbox';
@@ -4223,10 +4488,8 @@
             function draftValue(row) {
                 var node = row.querySelector('.asset-tree-draft-input');
                 if (!node) return '';
-                if (node.classList.contains('asset-tree-userbox')) {
-                    var hidden = node.querySelector('.asset-tree-field-value');
-                    return hidden ? hidden.value : '';
-                }
+                var hidden = node.querySelector('.asset-tree-field-value');
+                if (hidden) return hidden.value || '';
                 return node.value || '';
             }
 
@@ -4235,10 +4498,12 @@
                 var next = [];
                 for (var i = 0; i < rows.length; i++) {
                     var row = rows[i];
+                    var optionsBox = row.querySelector('.asset-tree-draft-options');
                     next.push({
                         id: row.getAttribute('data-draft'),
                         label: row.querySelector('.asset-tree-draft-label').value,
                         kind: row.querySelector('.asset-tree-draft-kind').value,
+                        options: optionsBox ? optionsBox.value : '',
                         required: row.querySelector('.asset-tree-draft-required').checked,
                         value: draftValue(row)
                     });
@@ -4265,18 +4530,15 @@
                 required.checked = !!draft.required;
                 requiredLabel.appendChild(required);
                 requiredLabel.appendChild(el('span', null, t('fieldRequired')));
-                var valueControl;
-                if (draft.kind === 'textarea') {
-                    valueControl = area('', draft.value || '', false);
-                } else if (draft.kind === 'user') {
-                    valueControl = userBox(draft.value || '', false);
-                } else if (draft.kind === 'date') {
-                    valueControl = input('', draft.value || '', false);
-                    valueControl.type = 'date';
-                } else {
-                    valueControl = input('', draft.value || '', false);
-                    if (draft.kind === 'number') valueControl.inputMode = 'decimal';
-                }
+                var options = optionsEditor('', draft.options || '');
+                options.className = 'asset-tree-draft-options';
+                options.addEventListener('change', function () {
+                    drafts = readDrafts();
+                    paintDrafts();
+                });
+                var optionsWrap = field(t('fieldOptions'), options, true);
+                optionsWrap.hidden = !needsOptions(draft.kind);
+                var valueControl = fieldControl({ kind: draft.kind, options: optionLines(draft.options || '') }, draft.value || '', false);
                 valueControl.classList.add('asset-tree-draft-input');
                 var top = el('div', 'asset-tree-draft-top');
                 top.appendChild(label);
@@ -4287,6 +4549,7 @@
                     paintDrafts();
                 }));
                 row.appendChild(top);
+                row.appendChild(optionsWrap);
                 row.appendChild(field(t('fieldValue'), valueControl, true));
                 return row;
             }
@@ -4370,7 +4633,8 @@
                 ajax('POST', '/types/' + encodeURIComponent(typeKey) + '/fields', {
                     label: rows[index].label,
                     kind: rows[index].kind,
-                    required: rows[index].required
+                    required: rows[index].required,
+                    options: rows[index].options || ''
                 }, function (status, payload) {
                     if (status < 200 || status >= 300) {
                         reloadTree(function () {
@@ -4392,12 +4656,18 @@
                     showError(t('fieldNameRequired'));
                     return;
                 }
+                var kind = document.getElementById('create-extra-kind').value;
+                if (needsOptions(kind) && !optionLines(document.getElementById('create-extra-options').value).length) {
+                    showError(t('fieldOptionsRequired'));
+                    return;
+                }
                 var kept = collectAttributes(form);
                 var typeKey = typeControl.value;
                 ajax('POST', '/types/' + encodeURIComponent(typeKey) + '/fields', {
                     label: label.trim(),
-                    kind: document.getElementById('create-extra-kind').value,
-                    required: document.getElementById('create-extra-required').checked
+                    kind: kind,
+                    required: document.getElementById('create-extra-required').checked,
+                    options: document.getElementById('create-extra-options').value
                 }, function (status, payload) {
                     if (status < 200 || status >= 300) {
                         showError((payload && payload.message) || t('errorTitle'));
@@ -4442,6 +4712,10 @@
                 for (var i = 0; i < rows.length; i++) {
                     if (!rows[i].label.trim()) {
                         showError(t('fieldNameRequired'));
+                        return;
+                    }
+                    if (needsOptions(rows[i].kind) && !optionLines(rows[i].options).length) {
+                        showError(t('fieldOptionsRequired'));
                         return;
                     }
                     if (rows[i].required && !String(rows[i].value || '').trim()) {
@@ -4550,7 +4824,16 @@
             dialog.appendChild(el('p', 'asset-tree-hint', type.label));
             var form = el('form');
             form.appendChild(field(t('fieldLabel'), input('field-label', '', false), true));
-            form.appendChild(field(t('fieldKind'), kindSelect('field-kind', 'text'), true));
+            var fieldKind = kindSelect('field-kind', 'text');
+            form.appendChild(field(t('fieldKind'), fieldKind, true));
+            var fieldOptionsBox = optionsEditor('field-options', '');
+            var fieldOptionsWrap = field(t('fieldOptions'), fieldOptionsBox, true);
+            fieldOptionsWrap.appendChild(el('p', 'asset-tree-hint', t('fieldOptionsHint')));
+            fieldOptionsWrap.hidden = true;
+            form.appendChild(fieldOptionsWrap);
+            fieldKind.addEventListener('change', function () {
+                fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
+            });
             var requiredLabel = el('label', 'asset-tree-check');
             var required = el('input');
             required.type = 'checkbox';
@@ -4563,15 +4846,22 @@
             form.appendChild(error);
             function saveField() {
                 var label = document.getElementById('field-label').value;
+                var kind = document.getElementById('field-kind').value;
                 if (!label.trim()) {
                     error.hidden = false;
                     error.textContent = t('fieldNameRequired');
                     return;
                 }
+                if (needsOptions(kind) && !optionLines(document.getElementById('field-options').value).length) {
+                    error.hidden = false;
+                    error.textContent = t('fieldOptionsRequired');
+                    return;
+                }
                 ajax('POST', '/types/' + encodeURIComponent(type.typeKey) + '/fields', {
                     label: label.trim(),
-                    kind: document.getElementById('field-kind').value,
-                    required: document.getElementById('field-required').checked
+                    kind: kind,
+                    required: document.getElementById('field-required').checked,
+                    options: document.getElementById('field-options').value
                 }, function (status, payload) {
                     if (status >= 200 && status < 300) {
                         if (done) {
@@ -5046,6 +5336,13 @@
         if (kind === 'date') return t('kindDate');
         if (kind === 'user') return t('kindUser');
         if (kind === 'textarea') return t('kindTextarea');
+        if (kind === 'select') return t('kindSelect');
+        if (kind === 'selects') return t('kindSelects');
+        if (kind === 'checks') return t('kindChecks');
+        if (kind === 'radio') return t('kindRadio');
+        if (kind === 'labels') return t('kindLabels');
+        if (kind === 'url') return t('kindUrl');
+        if (kind === 'version') return t('kindVersion');
         return t('kindText');
     }
 
@@ -5139,22 +5436,8 @@
             byKey[item.fieldKey || item.name] = item.value || '';
         });
         fieldsOf(typeKey).forEach(function (fieldDef) {
-            var control;
             var current = byKey[fieldDef.fieldKey] || '';
-            if (fieldDef.kind === 'textarea') {
-                control = area('', current, !state.canEdit);
-                control.classList.add('asset-tree-field-value');
-            } else if (fieldDef.kind === 'user') {
-                control = userBox(current, !state.canEdit);
-            } else if (fieldDef.kind === 'date') {
-                control = input('', current, !state.canEdit);
-                control.type = 'date';
-                control.classList.add('asset-tree-field-value');
-            } else {
-                control = input('', current, !state.canEdit);
-                if (fieldDef.kind === 'number') control.inputMode = 'decimal';
-                control.classList.add('asset-tree-field-value');
-            }
+            var control = fieldControl(fieldDef, current, !state.canEdit);
             var wrap = field(fieldDef.label + (fieldDef.required ? ' *' : ''), control, true);
             wrap.setAttribute('data-field-key', fieldDef.fieldKey);
             container.appendChild(wrap);
@@ -5515,7 +5798,7 @@
             if (type.location) return;
             (type.fields || []).forEach(function (field) {
                 var kind = field.kind || 'text';
-                if (kind === 'textarea' || kind === 'user' || !field.fieldKey) return;
+                if (kind === 'textarea' || kind === 'user' || kind === 'url' || !field.fieldKey) return;
                 var label = String(field.label || '').trim();
                 if (!label) return;
                 var id = 'field:' + label.toLowerCase();
@@ -5576,7 +5859,7 @@
         var key = chartBucketKey(raw, dim.kind);
         return {
             key: key,
-            label: key ? (dim.kind === 'date' ? formatFieldDate(raw) : raw) : t('chartUnset'),
+            label: key ? (dim.kind === 'date' ? formatFieldDate(raw) : attributeText({ kind: dim.kind, value: raw })) : t('chartUnset'),
             raw: raw
         };
     }
@@ -6247,6 +6530,14 @@
                             valueBox = input('', rule.value || '', false);
                             valueBox.type = 'date';
                             valueBox.className = 'asset-tree-rule-value';
+                        } else if (spec.options && spec.options.length && (spec.kind === 'select' || spec.kind === 'radio' || spec.kind === 'checks' || spec.kind === 'selects')) {
+                            valueBox = el('select', 'asset-tree-rule-value');
+                            spec.options.forEach(function (option) {
+                                var item = el('option', null, option);
+                                item.value = option;
+                                if (option === rule.value) item.selected = true;
+                                valueBox.appendChild(item);
+                            });
                         } else {
                             valueBox = input('', rule.value || '', false);
                             valueBox.className = 'asset-tree-rule-value';

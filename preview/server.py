@@ -63,6 +63,108 @@ def resolve_icon(raw, location):
     if icon not in ICONS:
         return None
     return icon
+
+
+FIELD_KINDS = {
+    "text", "textarea", "number", "user", "date",
+    "select", "selects", "checks", "radio", "labels", "url", "version",
+}
+OPTION_KINDS = {"select", "selects", "checks", "radio"}
+VERSION_VALUE = re.compile(r"^(?=.*\d)[0-9A-Za-z][0-9A-Za-z .+_-]{0,39}$")
+URL_VALUE = re.compile(r"^https?://\S{1,480}$", re.IGNORECASE)
+
+
+def option_lines(raw):
+    return [line.strip() for line in str(raw or "").replace("\r\n", "\n").replace("\r", "\n").split("\n") if line.strip()]
+
+
+def canonical_options(raw):
+    lines = option_lines(raw)
+    if not lines or len(lines) > 40:
+        return None
+    seen = set()
+    kept = []
+    for line in lines:
+        if len(line) > 80:
+            return None
+        key = line.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(line)
+    return kept or None
+
+
+def match_option(options, token):
+    for item in options:
+        if item == token:
+            return item
+    low = token.lower()
+    for item in options:
+        if item.lower() == low:
+            return item
+    return None
+
+
+def value_tokens(raw, options):
+    text = str(raw or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return []
+    if "\n" in text:
+        return option_lines(text)
+    if options is not None and match_option(options, text):
+        return [text]
+    if "," not in text:
+        return [text]
+    parts = [part.strip() for part in text.split(",")]
+    if any(not part for part in parts):
+        return None
+    return parts
+
+
+def canonical_field_value(kind, options, raw):
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if kind in ("select", "radio"):
+        return match_option(options or [], text)
+    if kind in ("selects", "checks"):
+        tokens = value_tokens(text, options or [])
+        if not tokens:
+            return None
+        ordered = []
+        for option in options or []:
+            if any(option.lower() == token.lower() for token in tokens) and option not in ordered:
+                ordered.append(option)
+        unique = {token.lower() for token in tokens}
+        if len(ordered) != len(unique):
+            return None
+        return "\n".join(ordered)
+    if kind == "labels":
+        tokens = value_tokens(text, None)
+        if not tokens or len(tokens) > 20:
+            return None
+        kept = []
+        for token in tokens:
+            if len(token) > 40 or "," in token:
+                return None
+            if token.lower() not in {item.lower() for item in kept}:
+                kept.append(token)
+        return "\n".join(kept) if kept else None
+    if kind == "url":
+        return text if URL_VALUE.match(text) else None
+    if kind == "version":
+        tokens = value_tokens(text, None)
+        if not tokens or len(tokens) > 12:
+            return None
+        kept = []
+        for token in tokens:
+            if not VERSION_VALUE.match(token):
+                return None
+            if token.lower() not in {item.lower() for item in kept}:
+                kept.append(token)
+        return "\n".join(kept) if kept else None
+    return text
 CAP_ORDER = ["view", "places", "types", "object", "assets", "admin"]
 STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
@@ -486,6 +588,7 @@ def type_dto(row, text, rows):
         "fields": [{
             "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
             "required": field["required"], "position": field["position"],
+            "options": field.get("options") or [],
         } for field in row["fields"]],
     }
 
@@ -1644,7 +1747,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.68",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.69",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1969,6 +2072,16 @@ setTimeout(function () {
             if field["required"] and not value:
                 return text["asset-tree.error.field.required"].replace("{0}", label_of(field["label"], text)), {}
             stored = incoming.get(field["fieldKey"]) or ""
+            if field["kind"] in OPTION_KINDS | {"labels", "url", "version"} and value:
+                stored = canonical_field_value(field["kind"], field.get("options") or [], value)
+                if stored is None:
+                    if field["kind"] == "url":
+                        return text.get("asset-tree.error.url", "Link"), {}
+                    if field["kind"] == "version":
+                        return text.get("asset-tree.error.version", "Version"), {}
+                    if field["kind"] == "labels":
+                        return text.get("asset-tree.error.label", "Label"), {}
+                    return text.get("asset-tree.error.field.choice", "Choice"), {}
             if field["kind"] == "date" and value:
                 stored = canonical_date(value)
                 if not stored:
@@ -2191,13 +2304,24 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.type.notFound"]}
         if not label:
             return 400, {"message": text["asset-tree.error.field.label"]}
-        if kind not in ("text", "textarea", "number", "user", "date"):
+        if kind not in FIELD_KINDS:
             return 400, {"message": text["asset-tree.error.field.kind"]}
+        options = []
+        if kind in OPTION_KINDS:
+            options = canonical_options((body or {}).get("options"))
+            if options is None:
+                return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
         taken = {field["fieldKey"] for field in row["fields"]}
         field_key = unique_key(slug(label) or "field", taken)
-        field = {"fieldKey": field_key, "label": label, "kind": kind, "required": bool((body or {}).get("required")), "position": len(row["fields"])}
+        field = {
+            "fieldKey": field_key, "label": label, "kind": kind, "required": bool((body or {}).get("required")),
+            "position": len(row["fields"]), "options": options,
+        }
         row["fields"].append(field)
-        return 201, {"fieldKey": field_key, "label": label, "kind": kind, "required": field["required"], "position": field["position"]}
+        return 201, {
+            "fieldKey": field_key, "label": label, "kind": kind, "required": field["required"],
+            "position": field["position"], "options": options,
+        }
 
     def ancestors_of(self, asset):
         chain = []

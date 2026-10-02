@@ -1117,6 +1117,55 @@ html.asset-tree-dragging * {
     align-items: center;
 }
 
+.asset-tree-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    min-height: 32px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: #fff;
+}
+
+.asset-tree-tags.is-static {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.asset-tree-tags input {
+    flex: 1 1 120px;
+    min-width: 120px;
+    height: 24px;
+    border: 0;
+    outline: none;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+}
+
+.asset-tree-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.asset-tree-choices .asset-tree-check {
+    margin: 0;
+}
+
+select.asset-tree-multi {
+    min-height: 96px;
+}
+
+a.asset-tree-url {
+    color: #0052cc;
+    word-break: break-all;
+}
+
 .asset-tree-dialog.is-wide {
     width: min(760px, 100%);
 }
@@ -1160,6 +1209,11 @@ html.asset-tree-dragging * {
 }
 
 .asset-tree-dialog [hidden] {
+    display: none !important;
+}
+
+.asset-tree-dialog label.asset-tree-field[hidden],
+#asset-tree-app label.asset-tree-field[hidden] {
     display: none !important;
 }
 
