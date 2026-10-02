@@ -2345,17 +2345,16 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend {
-    position: relative !important;
-    flex: 0 1 auto;
-    align-items: flex-start;
+    flex: 1 1 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: center;
+    gap: 4px 16px;
     max-width: 100%;
     min-width: 0;
-    max-height: 156px;
-    overflow: auto;
-}
-
-#asset-tree-app .asset-tree-dashboard .asset-tree-legend.is-expanded {
-    max-height: 240px;
+    max-height: none;
+    overflow: visible;
 }
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend > .asset-tree-legend-btn,
@@ -2401,6 +2400,12 @@ html.asset-tree-dragging * {
     white-space: nowrap;
 }
 
+#asset-tree-app .asset-tree-legend-more {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+}
+
 #asset-tree-app .asset-tree-legend-more-head {
     display: flex !important;
     align-items: center;
@@ -2433,16 +2438,27 @@ html.asset-tree-dragging * {
     margin: 0 0 2px 14px;
 }
 
+#asset-tree-app .asset-tree-legend-more.is-open {
+    flex: 1 0 100%;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
 #asset-tree-app .asset-tree-legend-more.is-open .asset-tree-legend-nested {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    margin: 4px 0 0;
 }
 
 #asset-tree-app .asset-tree-legend-nested-rows {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: 150px;
-    overflow: auto;
+    flex-flow: row wrap;
+    gap: 4px 16px;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
 }
 
 #asset-tree-app .asset-tree-legend-pick {
