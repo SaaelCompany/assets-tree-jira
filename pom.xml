@@ -6,7 +6,7 @@
 
     <groupId>com.assetstree.jira</groupId>
     <artifactId>asset-tree</artifactId>
-    <version>1.2.61</version>
+    <version>1.2.62</version>
     <packaging>atlassian-plugin</packaging>
 
     <name>Asset Tree</name>

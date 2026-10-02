@@ -5592,6 +5592,29 @@
         return rule;
     }
 
+    function naturalCompare(left, right) {
+        var a = String(left == null ? '' : left);
+        var b = String(right == null ? '' : right);
+        var partsA = a.match(/(\d+)|(\D+)/g) || [];
+        var partsB = b.match(/(\d+)|(\D+)/g) || [];
+        var length = Math.max(partsA.length, partsB.length);
+        for (var i = 0; i < length; i++) {
+            var partA = partsA[i] || '';
+            var partB = partsB[i] || '';
+            var numA = /^\d+$/.test(partA);
+            var numB = /^\d+$/.test(partB);
+            if (numA && numB) {
+                var valueA = parseInt(partA, 10);
+                var valueB = parseInt(partB, 10);
+                if (valueA !== valueB) return valueA - valueB;
+            } else {
+                var text = partA.localeCompare(partB, state.locale || 'ru');
+                if (text) return text;
+            }
+        }
+        return a.length - b.length;
+    }
+
     function chartSlices(dim) {
         var counts = {};
         var meta = {};
@@ -5642,7 +5665,8 @@
             rows.sort(function (left, right) {
                 if (!left.key) return 1;
                 if (!right.key) return -1;
-                return right.count - left.count || String(left.label).localeCompare(String(right.label), state.locale || 'ru');
+                if (right.count !== left.count) return right.count - left.count;
+                return naturalCompare(left.label, right.label);
             });
         }
         var empty = null;

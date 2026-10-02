@@ -2345,9 +2345,12 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend {
+    flex: 0 1 auto;
+    align-items: flex-start;
+    max-width: 100%;
+    min-width: 0;
     max-height: 156px;
     overflow: auto;
-    flex: 1 1 auto;
 }
 
 #asset-tree-app .asset-tree-dash-list {
@@ -2361,18 +2364,30 @@ html.asset-tree-dragging * {
     height: 8px !important;
 }
 
+#asset-tree-app button.asset-tree-legend-btn {
+    display: inline-flex !important;
+    width: auto !important;
+    max-width: 100% !important;
+    align-self: flex-start;
+}
+
 #asset-tree-app .asset-tree-legend-label {
-    flex: 1 1 auto;
+    display: block !important;
+    flex: 0 1 auto;
     min-width: 0;
+    overflow: hidden;
     color: #172b4d !important;
     text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #asset-tree-app .asset-tree-legend-count {
     flex: 0 0 auto;
-    margin-left: 12px;
+    margin-left: 6px;
     color: #5e6c84 !important;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 #asset-tree-app button.asset-tree-summary-toggle,
