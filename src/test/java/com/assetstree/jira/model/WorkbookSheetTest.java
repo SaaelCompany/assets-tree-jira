@@ -54,6 +54,43 @@ public class WorkbookSheetTest {
     }
 
     @Test
+    public void namedSheetReadsEscapedSharedText() throws Exception {
+        String workbook = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<workbook xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+                + "<sheets><sheet name=\"Equipment\" sheetId=\"1\" r:id=\"rId9\"/></sheets></workbook>";
+        String rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                + "<Relationships><Relationship Id=\"rId9\" Target=\"worksheets/sheet2.xml\"/></Relationships>";
+        String shared = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><sst><si><t>A &amp; B&#10;C</t>"
+                + "<rPh sb=\"0\" eb=\"1\"><t>skip</t></rPh></si></sst>";
+        String sheet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet><sheetData>"
+                + "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c></row>"
+                + "<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>ok</t></is></c></row>"
+                + "</sheetData></worksheet>";
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        ZipOutputStream zip = new ZipOutputStream(bytes);
+        entry(zip, "xl/workbook.xml", workbook);
+        entry(zip, "xl/_rels/workbook.xml.rels", rels);
+        entry(zip, "xl/sharedStrings.xml", shared);
+        entry(zip, "xl/worksheets/sheet2.xml", sheet);
+        zip.close();
+        EquipmentSheet.Sheet read = WorkbookSheet.read(bytes.toByteArray());
+        assertEquals("A & B\nC", read.getHeaders().get(0));
+        assertEquals("ok", read.getRecords().get(0).cell(0));
+    }
+
+    @Test
+    public void documentTypeIsRejected() throws Exception {
+        String sheet = "<?xml version=\"1.0\"?><!DOCTYPE worksheet [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"
+                + "<worksheet><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>&xxe;</t></is></c></row></sheetData></worksheet>";
+        try {
+            WorkbookSheet.read(pack("", "", sheet));
+            fail("doctype");
+        } catch (AssetException ex) {
+            assertEquals("asset-tree.error.import.workbook", ex.getMessageKey());
+        }
+    }
+
+    @Test
     public void oldExcelFormatIsRejected() {
         try {
             WorkbookSheet.read(new byte[] {(byte) 0xd0, (byte) 0xcf, 0x11, (byte) 0xe0, 0, 0});

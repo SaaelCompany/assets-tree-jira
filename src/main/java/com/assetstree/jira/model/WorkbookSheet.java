@@ -13,14 +13,11 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
-import javax.xml.stream.XMLStreamReader;
-
 /**
  * Equipment book in the Excel .xlsx package. Cells are written as text so a
  * place path or a key is not rewritten as a number. A date that Excel stored
- * as a serial is read back as yyyy-MM-dd.
+ * as a serial is read back as yyyy-MM-dd. The sheet XML is read without the
+ * JDK XML factory: inside Jira that factory has no provider.
  */
 public final class WorkbookSheet {
     private static final int MAX_BYTES = 8_000_000;
@@ -232,35 +229,35 @@ public final class WorkbookSheet {
             return null;
         }
         String relation = null;
-        XMLStreamReader reader = reader(workbook);
+        XmlCursor reader = cursor(workbook);
         try {
             while (reader.hasNext()) {
-                if (reader.next() == XMLStreamConstants.START_ELEMENT && "sheet".equals(reader.getLocalName())) {
-                    relation = attr(reader, "id");
+                if (reader.next() == XmlCursor.START && "sheet".equals(reader.localName())) {
+                    relation = reader.attr("id");
                     break;
                 }
             }
+        } catch (AssetException ex) {
+            throw ex;
         } catch (Exception ex) {
             return null;
-        } finally {
-            close(reader);
         }
         if (relation == null) {
             return null;
         }
-        reader = reader(rels);
+        reader = cursor(rels);
         try {
             while (reader.hasNext()) {
-                if (reader.next() == XMLStreamConstants.START_ELEMENT && "Relationship".equals(reader.getLocalName())) {
-                    if (relation.equals(attr(reader, "Id"))) {
-                        return resolve(attr(reader, "Target"));
+                if (reader.next() == XmlCursor.START && "Relationship".equals(reader.localName())) {
+                    if (relation.equals(reader.attr("Id"))) {
+                        return resolve(reader.attr("Target"));
                     }
                 }
             }
+        } catch (AssetException ex) {
+            throw ex;
         } catch (Exception ex) {
             return null;
-        } finally {
-            close(reader);
         }
         return null;
     }
@@ -281,15 +278,15 @@ public final class WorkbookSheet {
 
     private static List<String> sharedStrings(byte[] xml) {
         List<String> strings = new ArrayList<String>();
-        XMLStreamReader reader = reader(xml);
+        XmlCursor reader = cursor(xml);
         StringBuilder current = null;
         boolean inText = false;
         int skip = 0;
         try {
             while (reader.hasNext()) {
                 int event = reader.next();
-                if (event == XMLStreamConstants.START_ELEMENT) {
-                    String name = reader.getLocalName();
+                if (event == XmlCursor.START) {
+                    String name = reader.localName();
                     if ("si".equals(name)) {
                         current = new StringBuilder();
                     } else if ("rPh".equals(name) || "phoneticPr".equals(name)) {
@@ -297,10 +294,10 @@ public final class WorkbookSheet {
                     } else if ("t".equals(name) && current != null && skip == 0) {
                         inText = true;
                     }
-                } else if ((event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA) && inText && current != null) {
-                    current.append(reader.getText());
-                } else if (event == XMLStreamConstants.END_ELEMENT) {
-                    String name = reader.getLocalName();
+                } else if (event == XmlCursor.TEXT && inText && current != null) {
+                    current.append(reader.text());
+                } else if (event == XmlCursor.END) {
+                    String name = reader.localName();
                     if ("t".equals(name)) {
                         inText = false;
                     } else if ("rPh".equals(name) || "phoneticPr".equals(name)) {
@@ -314,10 +311,10 @@ public final class WorkbookSheet {
                     }
                 }
             }
+        } catch (AssetException ex) {
+            throw ex;
         } catch (Exception ex) {
             throw new AssetException(400, "asset-tree.error.import.workbook");
-        } finally {
-            close(reader);
         }
         return strings;
     }
@@ -329,27 +326,27 @@ public final class WorkbookSheet {
         List<Integer> formats = new ArrayList<Integer>();
         Map<Integer, String> custom = new HashMap<Integer, String>();
         boolean inXfs = false;
-        XMLStreamReader reader = reader(xml);
+        XmlCursor reader = cursor(xml);
         try {
             while (reader.hasNext()) {
                 int event = reader.next();
-                if (event == XMLStreamConstants.START_ELEMENT) {
-                    String name = reader.getLocalName();
+                if (event == XmlCursor.START) {
+                    String name = reader.localName();
                     if ("numFmt".equals(name)) {
-                        custom.put(Integer.valueOf(number(attr(reader, "numFmtId"))), attr(reader, "formatCode"));
+                        custom.put(Integer.valueOf(number(reader.attr("numFmtId"))), reader.attr("formatCode"));
                     } else if ("cellXfs".equals(name)) {
                         inXfs = true;
                     } else if (inXfs && "xf".equals(name)) {
-                        formats.add(Integer.valueOf(number(attr(reader, "numFmtId"))));
+                        formats.add(Integer.valueOf(number(reader.attr("numFmtId"))));
                     }
-                } else if (event == XMLStreamConstants.END_ELEMENT && "cellXfs".equals(reader.getLocalName())) {
+                } else if (event == XmlCursor.END && "cellXfs".equals(reader.localName())) {
                     inXfs = false;
                 }
             }
+        } catch (AssetException ex) {
+            throw ex;
         } catch (Exception ex) {
             return new boolean[0];
-        } finally {
-            close(reader);
         }
         boolean[] dates = new boolean[formats.size()];
         for (int i = 0; i < formats.size(); i++) {
@@ -429,11 +426,11 @@ public final class WorkbookSheet {
     private static EquipmentSheet.Sheet rows(byte[] xml, List<String> strings, boolean[] dates) {
         List<String> headers = new ArrayList<String>();
         List<EquipmentSheet.Record> records = new ArrayList<EquipmentSheet.Record>();
-        XMLStreamReader reader = reader(xml);
+        XmlCursor reader = cursor(xml);
         try {
             while (reader.hasNext()) {
-                if (reader.next() == XMLStreamConstants.START_ELEMENT && "row".equals(reader.getLocalName())) {
-                    int rowNumber = number(attr(reader, "r"));
+                if (reader.next() == XmlCursor.START && "row".equals(reader.localName())) {
+                    int rowNumber = number(reader.attr("r"));
                     List<String> cells = readRow(reader, strings, dates);
                     if (blank(cells)) {
                         continue;
@@ -451,26 +448,24 @@ public final class WorkbookSheet {
             throw ex;
         } catch (Exception ex) {
             throw new AssetException(400, "asset-tree.error.import.workbook");
-        } finally {
-            close(reader);
         }
         return new EquipmentSheet.Sheet(headers, records);
     }
 
-    private static List<String> readRow(XMLStreamReader reader, List<String> strings, boolean[] dates) throws Exception {
+    private static List<String> readRow(XmlCursor reader, List<String> strings, boolean[] dates) {
         String[] cells = new String[0];
         int next = 0;
         int depth = 1;
         while (depth > 0 && reader.hasNext()) {
             int event = reader.next();
-            if (event == XMLStreamConstants.START_ELEMENT) {
-                if (depth == 1 && "c".equals(reader.getLocalName())) {
-                    int column = columnIndex(attr(reader, "r"));
+            if (event == XmlCursor.START) {
+                if (depth == 1 && "c".equals(reader.localName())) {
+                    int column = columnIndex(reader.attr("r"));
                     if (column < 0) {
                         column = next;
                     }
-                    String type = attr(reader, "t");
-                    String styleAttr = attr(reader, "s");
+                    String type = reader.attr("t");
+                    String styleAttr = reader.attr("s");
                     int style = styleAttr == null ? -1 : number(styleAttr);
                     String value = readCell(reader, type, style, strings, dates);
                     if (column >= 0 && column < MAX_COLUMNS) {
@@ -485,7 +480,7 @@ public final class WorkbookSheet {
                 } else {
                     depth++;
                 }
-            } else if (event == XMLStreamConstants.END_ELEMENT) {
+            } else if (event == XmlCursor.END) {
                 depth--;
             }
         }
@@ -496,7 +491,7 @@ public final class WorkbookSheet {
         return row;
     }
 
-    private static String readCell(XMLStreamReader reader, String type, int style, List<String> strings, boolean[] dates) throws Exception {
+    private static String readCell(XmlCursor reader, String type, int style, List<String> strings, boolean[] dates) {
         StringBuilder text = new StringBuilder();
         StringBuilder value = new StringBuilder();
         boolean inText = false;
@@ -504,22 +499,22 @@ public final class WorkbookSheet {
         int depth = 1;
         while (depth > 0 && reader.hasNext()) {
             int event = reader.next();
-            if (event == XMLStreamConstants.START_ELEMENT) {
+            if (event == XmlCursor.START) {
                 depth++;
-                String name = reader.getLocalName();
+                String name = reader.localName();
                 if ("t".equals(name)) {
                     inText = true;
                 } else if ("v".equals(name)) {
                     inValue = true;
                 }
-            } else if ((event == XMLStreamConstants.CHARACTERS || event == XMLStreamConstants.CDATA)) {
+            } else if (event == XmlCursor.TEXT) {
                 if (inText) {
-                    text.append(reader.getText());
+                    text.append(reader.text());
                 } else if (inValue) {
-                    value.append(reader.getText());
+                    value.append(reader.text());
                 }
-            } else if (event == XMLStreamConstants.END_ELEMENT) {
-                String name = reader.getLocalName();
+            } else if (event == XmlCursor.END) {
+                String name = reader.localName();
                 if ("t".equals(name)) {
                     inText = false;
                 } else if ("v".equals(name)) {
@@ -618,34 +613,266 @@ public final class WorkbookSheet {
         }
     }
 
-    private static String attr(XMLStreamReader reader, String local) {
-        for (int i = 0; i < reader.getAttributeCount(); i++) {
-            if (local.equals(reader.getAttributeLocalName(i))) {
-                return reader.getAttributeValue(i);
+    private static XmlCursor cursor(byte[] xml) {
+        return new XmlCursor(xml);
+    }
+
+    /**
+     * Pull reader for the small XML subset stored in an xlsx package.
+     * A document type is rejected so the book cannot pull in external files.
+     */
+    private static final class XmlCursor {
+        static final int START = 1;
+        static final int END = 2;
+        static final int TEXT = 4;
+
+        private final String xml;
+        private int index;
+        private String name = "";
+        private String text = "";
+        private final Map<String, String> attributes = new HashMap<String, String>();
+        private boolean closeAfterStart;
+
+        private XmlCursor(byte[] bytes) {
+            String decoded = new String(bytes, StandardCharsets.UTF_8);
+            if (decoded.startsWith("\uFEFF")) {
+                decoded = decoded.substring(1);
+            }
+            this.xml = decoded;
+        }
+
+        private boolean hasNext() {
+            if (closeAfterStart) {
+                return true;
+            }
+            int saved = index;
+            skipMeta();
+            boolean more = index < xml.length();
+            index = saved;
+            return more;
+        }
+
+        private int next() {
+            if (closeAfterStart) {
+                closeAfterStart = false;
+                text = "";
+                return END;
+            }
+            skipMeta();
+            if (index >= xml.length()) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            if (xml.charAt(index) != '<') {
+                text = readCharacters('<');
+                name = "";
+                attributes.clear();
+                return TEXT;
+            }
+            if (starts("</")) {
+                index += 2;
+                name = local(readName());
+                skipSpace();
+                expect('>');
+                text = "";
+                attributes.clear();
+                return END;
+            }
+            if (starts("<![CDATA[")) {
+                index += 9;
+                int end = xml.indexOf("]]>", index);
+                if (end < 0) {
+                    throw new AssetException(400, "asset-tree.error.import.workbook");
+                }
+                text = xml.substring(index, end);
+                index = end + 3;
+                name = "";
+                attributes.clear();
+                return TEXT;
+            }
+            index++;
+            name = local(readName());
+            attributes.clear();
+            boolean self = false;
+            while (index < xml.length()) {
+                skipSpace();
+                if (index >= xml.length()) {
+                    break;
+                }
+                char ch = xml.charAt(index);
+                if (ch == '>') {
+                    index++;
+                    break;
+                }
+                if (ch == '/') {
+                    self = true;
+                    index++;
+                    skipSpace();
+                    expect('>');
+                    break;
+                }
+                String attrName = local(readName());
+                skipSpace();
+                expect('=');
+                skipSpace();
+                attributes.put(attrName, readQuoted());
+            }
+            text = "";
+            closeAfterStart = self;
+            return START;
+        }
+
+        private String localName() {
+            return name;
+        }
+
+        private String text() {
+            return text;
+        }
+
+        private String attr(String local) {
+            return attributes.get(local);
+        }
+
+        private void skipMeta() {
+            while (index < xml.length()) {
+                if (starts("<?")) {
+                    int end = xml.indexOf("?>", index);
+                    if (end < 0) {
+                        throw new AssetException(400, "asset-tree.error.import.workbook");
+                    }
+                    index = end + 2;
+                    continue;
+                }
+                if (starts("<!--")) {
+                    int end = xml.indexOf("-->", index);
+                    if (end < 0) {
+                        throw new AssetException(400, "asset-tree.error.import.workbook");
+                    }
+                    index = end + 3;
+                    continue;
+                }
+                if (starts("<!DOCTYPE") || starts("<!doctype") || starts("<!ENTITY") || starts("<!entity")) {
+                    throw new AssetException(400, "asset-tree.error.import.workbook");
+                }
+                break;
             }
         }
-        return null;
-    }
 
-    private static XMLStreamReader reader(byte[] xml) {
-        try {
-            XMLInputFactory factory = XMLInputFactory.newFactory();
-            factory.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
-            factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
-            return factory.createXMLStreamReader(new ByteArrayInputStream(xml), "UTF-8");
-        } catch (Exception ex) {
-            throw new AssetException(400, "asset-tree.error.import.workbook");
+        private String readName() {
+            int start = index;
+            while (index < xml.length()) {
+                char ch = xml.charAt(index);
+                if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '=' || ch == '/' || ch == '>' || ch == '?') {
+                    break;
+                }
+                index++;
+            }
+            if (start == index) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            return xml.substring(start, index);
         }
-    }
 
-    private static void close(XMLStreamReader reader) {
-        if (reader == null) {
-            return;
+        private String readQuoted() {
+            if (index >= xml.length()) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            char quote = xml.charAt(index);
+            if (quote != '"' && quote != '\'') {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            index++;
+            return readCharacters(quote);
         }
-        try {
-            reader.close();
-        } catch (Exception ignored) {
-            // The sheet is already in memory.
+
+        private String readCharacters(char stop) {
+            StringBuilder out = new StringBuilder();
+            while (index < xml.length()) {
+                char ch = xml.charAt(index);
+                if (ch == stop) {
+                    if (stop != '<') {
+                        index++;
+                    }
+                    return out.toString();
+                }
+                if (ch == '&') {
+                    out.append(readEntity());
+                    continue;
+                }
+                out.append(ch);
+                index++;
+            }
+            if (stop != '<') {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            return out.toString();
+        }
+
+        private String readEntity() {
+            int start = index + 1;
+            int end = xml.indexOf(';', start);
+            if (end < 0 || end - start > 12) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            String body = xml.substring(start, end);
+            index = end + 1;
+            if ("amp".equals(body)) {
+                return "&";
+            }
+            if ("lt".equals(body)) {
+                return "<";
+            }
+            if ("gt".equals(body)) {
+                return ">";
+            }
+            if ("quot".equals(body)) {
+                return "\"";
+            }
+            if ("apos".equals(body)) {
+                return "'";
+            }
+            try {
+                int code;
+                if (body.startsWith("#x") || body.startsWith("#X")) {
+                    code = Integer.parseInt(body.substring(2), 16);
+                } else if (body.startsWith("#")) {
+                    code = Integer.parseInt(body.substring(1));
+                } else {
+                    throw new AssetException(400, "asset-tree.error.import.workbook");
+                }
+                if (code < 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) {
+                    throw new AssetException(400, "asset-tree.error.import.workbook");
+                }
+                return new String(Character.toChars(code));
+            } catch (NumberFormatException ex) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+        }
+
+        private void skipSpace() {
+            while (index < xml.length()) {
+                char ch = xml.charAt(index);
+                if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') {
+                    break;
+                }
+                index++;
+            }
+        }
+
+        private void expect(char ch) {
+            if (index >= xml.length() || xml.charAt(index) != ch) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            index++;
+        }
+
+        private boolean starts(String token) {
+            return xml.startsWith(token, index);
+        }
+
+        private static String local(String qualified) {
+            int colon = qualified.lastIndexOf(':');
+            return colon < 0 ? qualified : qualified.substring(colon + 1);
         }
     }
 }
