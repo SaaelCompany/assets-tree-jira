@@ -3828,57 +3828,33 @@ a.asset-tree-url {
     display: none !important;
 }
 
-#asset-tree-app button.asset-tree-type-remove {
-    display: inline-flex !important;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    width: 22px !important;
-    min-width: 22px !important;
-    height: 22px !important;
-    min-height: 22px !important;
-    margin: 0 0 0 4px;
-    padding: 0 !important;
-    border: 1px solid #dfe1e6 !important;
-    border-radius: 3px;
-    background: #fff !important;
-    color: #6b778c !important;
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-}
-
-#asset-tree-app button.asset-tree-type-remove:hover {
-    border-color: #de350b !important;
-    color: #de350b !important;
+#asset-tree-app .asset-tree-type-remove-row {
+    margin-top: 16px;
 }
 
 #asset-tree-app .asset-tree-offer-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     margin: 8px 0 12px;
+    max-height: 320px;
+    overflow: auto;
 }
 
-#asset-tree-app button.asset-tree-offer-type,
-.asset-tree-dialog button.asset-tree-offer-type {
+.asset-tree-dialog label.asset-tree-offer-type {
     display: flex !important;
     align-items: center;
     gap: 8px;
-    width: 100% !important;
-    height: auto !important;
-    min-height: 32px !important;
+    width: 100%;
+    min-height: 32px;
     margin: 0;
-    padding: 4px 8px !important;
-    border: 0 !important;
-    background: transparent !important;
-    color: #172b4d !important;
-    text-align: left;
-    cursor: pointer;
+    padding: 4px 8px;
+    box-sizing: border-box;
+    border-radius: 3px;
 }
 
-.asset-tree-dialog button.asset-tree-offer-type:hover {
-    background: #f4f5f7 !important;
+.asset-tree-dialog label.asset-tree-offer-type:hover {
+    background: #f4f5f7;
 }
 
 #asset-tree-app .asset-tree-details {

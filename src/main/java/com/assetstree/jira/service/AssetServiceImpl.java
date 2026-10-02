@@ -3776,8 +3776,8 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public AssetDto offerType(ApplicationUser user, final int assetId, final PlaceTypeDraft draft, final boolean present) {
-        final String typeKey = draft == null || draft.getTypeKey() == null ? "" : draft.getTypeKey().trim();
-        if (typeKey.isEmpty()) {
+        final List<String> requested = requestedTypes(draft);
+        if (requested.isEmpty()) {
             throw new AssetException(400, "asset-tree.error.type.notFound");
         }
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
@@ -3787,20 +3787,22 @@ public class AssetServiceImpl implements AssetService {
                 if (!isLocation(place)) {
                     throw new AssetException(400, "asset-tree.error.type.place");
                 }
-                AssetTypeEntity type = requireType(typeKey);
-                if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
-                    throw new AssetException(400, "asset-tree.error.type");
-                }
                 List<String> keys = offeredKeys(place.getOfferedTypes());
-                if (present) {
-                    if (!keys.contains(type.getTypeKey())) {
-                        keys.add(type.getTypeKey());
+                for (String typeKey : requested) {
+                    AssetTypeEntity type = requireType(typeKey);
+                    if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
+                        throw new AssetException(400, "asset-tree.error.type");
                     }
-                } else {
-                    if (placeHasEquipment(place, type.getTypeKey())) {
-                        throw new AssetException(409, "asset-tree.error.type.busy");
+                    if (present) {
+                        if (!keys.contains(type.getTypeKey())) {
+                            keys.add(type.getTypeKey());
+                        }
+                    } else {
+                        if (placeHasEquipment(place, type.getTypeKey())) {
+                            throw new AssetException(409, "asset-tree.error.type.busy");
+                        }
+                        keys.remove(type.getTypeKey());
                     }
-                    keys.remove(type.getTypeKey());
                 }
                 place.setOfferedTypes(joinOffered(keys));
                 place.setUpdated(new Date());
@@ -3810,6 +3812,28 @@ public class AssetServiceImpl implements AssetService {
                 return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
             }
         });
+    }
+
+    private List<String> requestedTypes(PlaceTypeDraft draft) {
+        List<String> keys = new ArrayList<String>();
+        if (draft != null && draft.getTypeKeys() != null) {
+            for (String key : draft.getTypeKeys()) {
+                String trimmed = key == null ? "" : key.trim();
+                if (!trimmed.isEmpty() && !keys.contains(trimmed)) {
+                    keys.add(trimmed);
+                }
+            }
+        }
+        if (draft != null && draft.getTypeKey() != null) {
+            String trimmed = draft.getTypeKey().trim();
+            if (!trimmed.isEmpty() && !keys.contains(trimmed)) {
+                keys.add(trimmed);
+            }
+        }
+        if (keys.size() > 40) {
+            throw new AssetException(400, "asset-tree.error.type");
+        }
+        return keys;
     }
 
     private List<String> offeredKeys(String raw) {

@@ -1705,9 +1705,6 @@
         row.appendChild(name);
         var count = equipmentIn(placeId, type.typeKey).length;
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (!count && state.canPlaces) {
-            row.appendChild(typeRemoveButton(placeId, type));
-        }
         if (state.canObjects) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
@@ -1726,24 +1723,17 @@
         return branch;
     }
 
-    function typeRemoveButton(placeId, type) {
-        var remove = el('button', 'asset-tree-type-remove', '\u00D7');
-        remove.type = 'button';
-        remove.title = t('removeTypeHere');
-        remove.setAttribute('aria-label', t('removeTypeHere'));
-        remove.addEventListener('click', function (event) {
-            event.stopPropagation();
-            if (!window.confirm(t('removeTypeHereConfirm', type.label))) return;
-            withdrawType(placeId, type.typeKey);
-        });
-        return remove;
-    }
-
-    function offerType(placeId, typeKey) {
-        ajax('POST', '/assets/' + placeId + '/types', { typeKey: typeKey }, function (status, payload) {
+    function offerTypes(placeId, typeKeys) {
+        ajax('POST', '/assets/' + placeId + '/types', { typeKeys: typeKeys }, function (status, payload) {
             if (status >= 200 && status < 300) {
                 reloadTree(function () {
-                    selectTypeGroup(placeId, typeKey);
+                    state.typeGroup = null;
+                    state.selectedId = placeId;
+                    state.pane = 'list';
+                    state.expanded[placeId] = true;
+                    rememberExpanded();
+                    renderNodes();
+                    replaceDetail();
                 });
             } else {
                 notify((payload && payload.message) || t('errorTitle'));
@@ -1776,22 +1766,39 @@
         openModal(function (dialog) {
             dialog.appendChild(el('h2', null, t('offerTypeTitle')));
             dialog.appendChild(el('p', 'asset-tree-hint', t('offerTypeHint')));
+            var picked = {};
+            var add = null;
             if (!available.length) {
                 dialog.appendChild(el('p', null, t('offerTypeEmpty')));
             } else {
                 var list = el('div', 'asset-tree-offer-list');
                 available.forEach(function (type) {
-                    var pick = button('', 'asset-tree-offer-type', function () {
-                        closeModal();
-                        offerType(placeId, type.typeKey);
+                    var row = el('label', 'asset-tree-check asset-tree-offer-type');
+                    var box = el('input');
+                    box.type = 'checkbox';
+                    box.addEventListener('change', function () {
+                        if (box.checked) picked[type.typeKey] = true;
+                        else delete picked[type.typeKey];
+                        if (add) add.disabled = !Object.keys(picked).length;
                     });
-                    pick.appendChild(typeTile(type, 'sm'));
-                    pick.appendChild(el('span', null, type.label));
-                    list.appendChild(pick);
+                    row.appendChild(box);
+                    row.appendChild(typeTile(type, 'sm'));
+                    row.appendChild(el('span', null, type.label));
+                    list.appendChild(row);
                 });
                 dialog.appendChild(list);
             }
             var actions = el('div', 'asset-tree-dialog-actions');
+            if (available.length) {
+                add = button(t('offerTypeAdd'), 'asset-tree-btn primary', function () {
+                    var keys = Object.keys(picked);
+                    if (!keys.length) return;
+                    closeModal();
+                    offerTypes(placeId, keys);
+                });
+                add.disabled = true;
+                actions.appendChild(add);
+            }
             if (state.canConfigure) {
                 actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn', function () {
                     closeModal();
@@ -2169,6 +2176,16 @@
         section.appendChild(filterBar());
         if (!kids.length) {
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
+            var direct = equipmentIn(group.placeId, group.typeKey).length;
+            var offered = place && (place.offeredTypes || []).indexOf(group.typeKey) >= 0;
+            if (!direct && offered && state.canPlaces) {
+                var away = el('div', 'asset-tree-type-remove-row');
+                away.appendChild(button(t('removeTypeHere'), 'asset-tree-btn', function () {
+                    if (!window.confirm(t('removeTypeHereConfirm', type.label || group.typeKey))) return;
+                    withdrawType(group.placeId, group.typeKey);
+                }));
+                section.appendChild(away);
+            }
             return section;
         }
         section.appendChild(selectableTable(kids.map(function (child) {
@@ -2520,15 +2537,9 @@
             types.forEach(function (type) {
                 var count = 0;
                 gear.forEach(function (item) { if (item.typeKey === type.typeKey) count++; });
-                var line = linkLine(type.label, t('childCount', count), function () {
+                typeBlock.appendChild(linkLine(type.label, t('childCount', count), function () {
                     selectTypeGroup(asset.id, type.typeKey, count ? 'under' : 'direct');
-                }, type.color, type);
-                var direct = equipmentIn(asset.id, type.typeKey).length;
-                var offered = (full.offeredTypes || asset.offeredTypes || []).indexOf(type.typeKey) >= 0;
-                if (!direct && offered && state.canPlaces) {
-                    line.appendChild(typeRemoveButton(asset.id, type));
-                }
-                typeBlock.appendChild(line);
+                }, type.color, type));
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));

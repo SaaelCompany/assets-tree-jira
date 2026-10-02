@@ -243,6 +243,7 @@ public final class UiCatalog {
             "offerTypeHint",
             "offerTypeEmpty",
             "offerTypeNew",
+            "offerTypeAdd",
             "removeTypeHere",
             "removeTypeHereConfirm",
             "placeListHint",

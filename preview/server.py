@@ -1952,7 +1952,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.76",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.77",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2332,22 +2332,35 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.notFound"]}
         if not is_location_id(asset_id):
             return 400, {"message": text.get("asset-tree.error.type.place", "Place")}
-        type_key = ((body or {}).get("typeKey") or "").strip()
-        row = STATE["types"].get(type_key)
-        if not row or row.get("location") or row.get("projectKey") != asset["projectKey"]:
+        raw_keys = (body or {}).get("typeKeys") or []
+        if isinstance(raw_keys, str):
+            raw_keys = [raw_keys]
+        type_keys = []
+        single = ((body or {}).get("typeKey") or "").strip()
+        for key in list(raw_keys) + ([single] if single else []):
+            key = str(key or "").strip()
+            if key and key not in type_keys:
+                type_keys.append(key)
+        if not type_keys or len(type_keys) > 40:
             return 400, {"message": text["asset-tree.error.type"]}
+        for type_key in type_keys:
+            row = STATE["types"].get(type_key)
+            if not row or row.get("location") or row.get("projectKey") != asset["projectKey"]:
+                return 400, {"message": text["asset-tree.error.type"]}
         offered = list(asset.get("offeredTypes") or [])
         if present:
-            if type_key not in offered:
-                offered.append(type_key)
+            for type_key in type_keys:
+                if type_key not in offered:
+                    offered.append(type_key)
         else:
-            direct = any(
-                item.get("parentId") == asset_id and item.get("typeKey") == type_key and not is_location_id(item["id"])
-                for item in STATE["assets"].values()
-            )
-            if direct:
-                return 409, {"message": text.get("asset-tree.error.type.busy", "Busy")}
-            offered = [key for key in offered if key != type_key]
+            for type_key in type_keys:
+                direct = any(
+                    item.get("parentId") == asset_id and item.get("typeKey") == type_key and not is_location_id(item["id"])
+                    for item in STATE["assets"].values()
+                )
+                if direct:
+                    return 409, {"message": text.get("asset-tree.error.type.busy", "Busy")}
+            offered = [key for key in offered if key not in type_keys]
         asset["offeredTypes"] = offered
         return (200, asset_dto(asset, text, False)) if present else (204, None)
 
