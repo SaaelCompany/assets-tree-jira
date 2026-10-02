@@ -722,6 +722,9 @@
     }
 
     function rulePasses(asset, rule) {
+        if (rule && rule.keys && rule.keys.length) {
+            return attrGroupPasses(asset, rule);
+        }
         var value = String(ruleStored(asset, rule) || '').trim();
         var expected = String(rule.value || '').trim();
         var op = rule.op || 'contains';
@@ -747,6 +750,31 @@
             return value.toLowerCase() === expected.toLowerCase();
         }
         return value.toLowerCase().indexOf(expected.toLowerCase()) >= 0;
+    }
+
+    function attrGroupPasses(asset, rule) {
+        var keys = rule.keys || [];
+        var found = false;
+        var raw = '';
+        (asset.attributes || []).forEach(function (attribute) {
+            if (keys.indexOf(attribute.fieldKey) < 0) return;
+            found = true;
+            var value = String(attribute.value || '').trim();
+            if (value && !raw) raw = value;
+        });
+        if (!found) return false;
+        var kind = rule.kind || 'text';
+        var op = rule.op || 'eq';
+        if (op === 'empty') return !raw;
+        if (op === 'in') {
+            var current = chartBucketKey(raw, kind);
+            var values = rule.values || [];
+            for (var i = 0; i < values.length; i++) {
+                if (chartBucketKey(values[i], kind) === current) return true;
+            }
+            return false;
+        }
+        return !!raw && chartBucketKey(raw, kind) === chartBucketKey(rule.value, kind);
     }
 
     function assetMatches(asset, skipText) {
@@ -5361,12 +5389,7 @@
         }, 'off'));
 
         var row = el('div', 'asset-tree-dash');
-        var statusData = (report.byStatus || []).filter(function (item) {
-            return item.count > 0;
-        }).map(function (item) {
-            return { key: item.key, label: item.label, count: item.count, color: item.color || statusColor(item.key) };
-        });
-        row.appendChild(dashCard(t('reportByStatus'), statusData.length ? statusChart(statusData) : el('p', 'asset-tree-hint', t('chartEmpty'))));
+        row.appendChild(summaryChartCard());
 
         var typeRows = (report.byType || []).filter(function (item) { return item.count > 0; });
         typeRows.sort(function (left, right) { return right.count - left.count; });
@@ -5394,13 +5417,252 @@
         return card;
     }
 
-    function statusChart(data) {
+    var CHART_LIMIT = 8;
+    var CHART_COLORS = ['#0052CC', '#00875A', '#6554C0', '#FF8B00', '#00B8D9', '#DE350B', '#36B37E', '#8777D9'];
+
+    function rememberChart(id) {
+        try {
+            sessionStorage.setItem('asset-tree-chart:' + (state.projectKey || ''), id);
+        } catch (error) { /* ignore */ }
+    }
+
+    function chartDimensionId() {
+        try {
+            return sessionStorage.getItem('asset-tree-chart:' + (state.projectKey || '')) || 'status';
+        } catch (error) {
+            return 'status';
+        }
+    }
+
+    function equipmentRows() {
+        return (state.assets || []).filter(function (asset) {
+            return !isFolder(asset);
+        });
+    }
+
+    function chartDimensions() {
+        var dims = [
+            { id: 'status', label: t('status') },
+            { id: 'type', label: t('type') }
+        ];
+        var groups = {};
+        var order = [];
+        (state.types || []).forEach(function (type) {
+            if (type.location) return;
+            (type.fields || []).forEach(function (field) {
+                var kind = field.kind || 'text';
+                if (kind === 'textarea' || kind === 'user' || !field.fieldKey) return;
+                var label = String(field.label || '').trim();
+                if (!label) return;
+                var id = 'field:' + label.toLowerCase();
+                if (!groups[id]) {
+                    groups[id] = { id: id, label: label, kind: kind, keys: [] };
+                    order.push(id);
+                }
+                if (groups[id].keys.indexOf(field.fieldKey) < 0) groups[id].keys.push(field.fieldKey);
+                if (groups[id].kind !== kind) groups[id].kind = 'text';
+            });
+        });
+        order.sort(function (left, right) {
+            return groups[left].label.localeCompare(groups[right].label, state.locale || 'ru');
+        });
+        order.forEach(function (id) { dims.push(groups[id]); });
+        return dims;
+    }
+
+    function chartBucketKey(raw, kind) {
+        var value = String(raw || '').trim();
+        if (!value) return '';
+        if (kind === 'number') {
+            var num = parseFloat(value.replace(',', '.'));
+            if (!isNaN(num)) return 'n:' + String(num);
+        }
+        if (kind === 'date') return 'd:' + value;
+        return 't:' + value.toLowerCase();
+    }
+
+    function fieldBucket(asset, dim) {
+        var keys = dim.keys || [];
+        var found = false;
+        var raw = '';
+        (asset.attributes || []).forEach(function (attribute) {
+            if (keys.indexOf(attribute.fieldKey) < 0) return;
+            found = true;
+            var value = String(attribute.value || '').trim();
+            if (value && !raw) raw = value;
+        });
+        if (!found) return null;
+        var key = chartBucketKey(raw, dim.kind);
+        return {
+            key: key,
+            label: key ? (dim.kind === 'date' ? formatFieldDate(raw) : raw) : t('chartUnset'),
+            raw: raw
+        };
+    }
+
+    function sliceRule(dim, row) {
+        if (dim.id === 'status') return { field: 'status', op: 'eq', value: row.raw || row.key };
+        if (dim.id === 'type') return { field: 'type', op: 'eq', value: row.raw || row.key };
+        var rule = {
+            field: 'attr:' + (dim.keys && dim.keys[0] ? dim.keys[0] : ''),
+            keys: (dim.keys || []).slice(),
+            kind: dim.kind || 'text',
+            label: dim.label
+        };
+        if (!row.key) {
+            rule.op = 'empty';
+            rule.caption = dim.label + ' ' + t('opEmpty');
+            return rule;
+        }
+        if (row.key === '__other__') {
+            rule.op = 'in';
+            rule.values = row.values || [];
+            rule.caption = dim.label + ' · ' + t('chartOther');
+            return rule;
+        }
+        rule.op = 'eq';
+        rule.value = row.raw || '';
+        rule.caption = dim.label + ' = ' + row.label;
+        return rule;
+    }
+
+    function chartSlices(dim) {
+        var counts = {};
+        var meta = {};
+        equipmentRows().forEach(function (asset) {
+            var bucket;
+            if (dim.id === 'status') {
+                var status = asset.status || '';
+                bucket = { key: status, label: statusLabel(status), raw: status, color: statusColor(status) };
+            } else if (dim.id === 'type') {
+                var typeKey = asset.typeKey || '';
+                var type = typeOf(typeKey);
+                bucket = {
+                    key: typeKey,
+                    label: asset.typeLabel || type.label || typeKey,
+                    raw: typeKey,
+                    color: asset.color || type.color || '#0052CC'
+                };
+            } else {
+                bucket = fieldBucket(asset, dim);
+            }
+            if (!bucket) return;
+            if (!counts[bucket.key]) {
+                counts[bucket.key] = 0;
+                meta[bucket.key] = { label: bucket.label, raw: bucket.raw, color: bucket.color || '', values: [] };
+            }
+            counts[bucket.key]++;
+            if (bucket.raw) meta[bucket.key].values.push(bucket.raw);
+        });
+        var rows = Object.keys(counts).map(function (key) {
+            return {
+                key: key,
+                label: meta[key].label,
+                count: counts[key],
+                raw: meta[key].raw,
+                color: meta[key].color,
+                values: meta[key].values
+            };
+        });
+        if (dim.id === 'status') {
+            var order = {};
+            statusChoices().forEach(function (choice, index) { order[choice.value] = index; });
+            rows.sort(function (left, right) {
+                var leftIndex = order[left.key] === undefined ? 99 : order[left.key];
+                var rightIndex = order[right.key] === undefined ? 99 : order[right.key];
+                return leftIndex - rightIndex;
+            });
+        } else {
+            rows.sort(function (left, right) {
+                if (!left.key) return 1;
+                if (!right.key) return -1;
+                return right.count - left.count || String(left.label).localeCompare(String(right.label), state.locale || 'ru');
+            });
+        }
+        var empty = null;
+        var filled = [];
+        rows.forEach(function (row) {
+            if (!row.key) empty = row;
+            else filled.push(row);
+        });
+        var visible = filled;
+        var overflow = [];
+        if (dim.id !== 'status' && filled.length > CHART_LIMIT) {
+            visible = filled.slice(0, CHART_LIMIT);
+            overflow = filled.slice(CHART_LIMIT);
+        }
+        var colorIndex = 0;
+        visible.forEach(function (row) {
+            if (!row.color) {
+                row.color = CHART_COLORS[colorIndex % CHART_COLORS.length];
+                colorIndex++;
+            }
+            row.activate = function () { focusMatches(sliceRule(dim, row)); };
+        });
+        if (overflow.length) {
+            var otherCount = 0;
+            var otherValues = [];
+            overflow.forEach(function (row) {
+                otherCount += row.count;
+                otherValues = otherValues.concat(row.values);
+            });
+            var other = {
+                key: '__other__',
+                label: t('chartOther'),
+                count: otherCount,
+                values: otherValues,
+                color: '#6B778C'
+            };
+            other.activate = function () { focusMatches(sliceRule(dim, other)); };
+            visible.push(other);
+        }
+        if (empty) {
+            empty.color = '#97A0AF';
+            empty.activate = function () { focusMatches(sliceRule(dim, empty)); };
+            visible.push(empty);
+        }
+        return visible;
+    }
+
+    function summaryChartCard() {
+        var card = el('div', 'asset-tree-chart-card');
+        var head = el('div', 'asset-tree-chart-head');
+        head.appendChild(el('div', 'asset-tree-section-title', t('chartTitle')));
+        var dims = chartDimensions();
+        var current = chartDimensionId();
+        var known = false;
+        dims.forEach(function (dim) {
+            if (dim.id === current) known = true;
+        });
+        if (!known) current = 'status';
+        var select = selectBox('asset-tree-chart', dims.map(function (dim) {
+            return { value: dim.id, label: dim.label };
+        }), current, false);
+        select.className = 'asset-tree-chart-select';
+        select.setAttribute('aria-label', t('chartTitle'));
+        select.addEventListener('change', function () {
+            rememberChart(select.value);
+            var dash = document.getElementById('asset-tree-dashboard');
+            if (dash) fillDashboard(dash);
+        });
+        head.appendChild(select);
+        card.appendChild(head);
+        var chosen = dims[0];
+        dims.forEach(function (dim) {
+            if (dim.id === current) chosen = dim;
+        });
+        var data = chartSlices(chosen);
+        card.appendChild(data.length ? sliceChart(data) : el('p', 'asset-tree-hint', t('chartEmpty')));
+        return card;
+    }
+
+    function sliceChart(data) {
         var body = el('div', 'asset-tree-chart-body');
         body.appendChild(donutChart(data));
         var legend = el('div', 'asset-tree-legend');
         data.forEach(function (item) {
             var line = button(item.label + ' ' + item.count, 'asset-tree-legend-btn', function () {
-                focusMatches({ field: 'status', op: 'eq', value: item.key });
+                if (item.activate) item.activate();
             });
             var dot = el('i');
             dot.style.background = item.color;
@@ -5578,12 +5840,17 @@
             var chips = el('div', 'asset-tree-chips');
             state.rules.forEach(function (rule, index) {
                 var chip = el('span', 'asset-tree-chip');
-                var spec = fieldSpec(rule.field);
-                var shown = rule.field === 'type'
-                    ? (typeOf(rule.value).label || rule.value)
-                    : (rule.field === 'status' ? statusLabel(rule.value) : (rule.value || ''));
-                var text = spec.label + ' ' + opLabel(rule.op);
-                if (rule.op !== 'empty' && rule.op !== 'notEmpty') text += ' ' + shown;
+                var text;
+                if (rule.caption) {
+                    text = rule.caption;
+                } else {
+                    var spec = fieldSpec(rule.field);
+                    var shown = rule.field === 'type'
+                        ? (typeOf(rule.value).label || rule.value)
+                        : (rule.field === 'status' ? statusLabel(rule.value) : (rule.value || ''));
+                    text = spec.label + ' ' + opLabel(rule.op);
+                    if (rule.op !== 'empty' && rule.op !== 'notEmpty') text += ' ' + shown;
+                }
                 chip.appendChild(document.createTextNode(text));
                 chip.appendChild(button('×', 'asset-tree-btn asset-tree-chip-x', function () {
                     state.rules.splice(index, 1);
@@ -6511,6 +6778,7 @@
             ring.setAttribute('fill', 'none');
             ring.setAttribute('stroke', rows[0].color || '#0052CC');
             ring.setAttribute('stroke-width', '14');
+            bindSlice(ring, rows[0]);
             svg.appendChild(ring);
             var only = svgEl('text');
             only.setAttribute('x', '60');
@@ -6527,6 +6795,7 @@
             var path = svgEl('path');
             path.setAttribute('d', donutSlice(60, 60, 42, 28, angle, angle + slice));
             path.setAttribute('fill', row.color || '#0052CC');
+            bindSlice(path, row);
             svg.appendChild(path);
             angle += slice;
         });
@@ -6538,6 +6807,15 @@
         caption.textContent = String(total);
         svg.appendChild(caption);
         return svg;
+    }
+
+    function bindSlice(node, row) {
+        if (!row || !row.activate) return;
+        node.style.cursor = 'pointer';
+        var title = svgEl('title');
+        title.textContent = row.label + ' ' + row.count;
+        node.appendChild(title);
+        node.addEventListener('click', function () { row.activate(); });
     }
 
     function donutSlice(cx, cy, outer, inner, start, end) {

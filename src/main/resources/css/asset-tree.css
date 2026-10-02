@@ -211,6 +211,33 @@
     margin-bottom: 6px;
 }
 
+.asset-tree-chart-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.asset-tree-chart-head .asset-tree-section-title {
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.asset-tree-chart-select {
+    flex: 1 1 120px;
+    min-width: 0;
+    max-width: 180px;
+    height: 28px;
+    margin: 0 0 0 auto;
+    padding: 0 6px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: #fff;
+    color: #172b4d;
+    font: inherit;
+    font-size: 12px;
+}
+
 .asset-tree-dashboard .asset-tree-donut {
     width: 88px;
     height: 88px;
@@ -1814,6 +1841,24 @@ html.asset-tree-dragging * {
     font-size: 14px;
 }
 
+#asset-tree-app select.asset-tree-chart-select {
+    width: auto !important;
+    max-width: 190px !important;
+    height: 28px !important;
+    margin: 0 0 0 auto !important;
+    padding: 0 6px !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 3px !important;
+    background: #fff !important;
+    color: #172b4d !important;
+    font: inherit !important;
+    font-size: 12px !important;
+    line-height: 26px !important;
+    float: none !important;
+    position: static !important;
+    flex: 1 1 120px !important;
+}
+
 .asset-tree-filter-label {
     color: #6b778c;
     font-size: 12px;
@@ -2128,6 +2173,7 @@ html.asset-tree-dragging * {
 #asset-tree-app .asset-tree-dash-stats,
 #asset-tree-app .asset-tree-dash-stack,
 #asset-tree-app .asset-tree-chart-card,
+#asset-tree-app .asset-tree-chart-head,
 #asset-tree-app .asset-tree-chart-body,
 #asset-tree-app .asset-tree-legend,
 #asset-tree-app .asset-tree-dash-list {
@@ -2168,6 +2214,13 @@ html.asset-tree-dragging * {
 #asset-tree-app .asset-tree-chart-card {
     overflow: hidden !important;
     height: auto !important;
+}
+
+#asset-tree-app .asset-tree-chart-head {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    margin: 0 0 6px !important;
 }
 
 #asset-tree-app .asset-tree-chart-body {
