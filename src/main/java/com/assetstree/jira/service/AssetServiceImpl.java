@@ -799,6 +799,7 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("BASE_KEY", ""),
                         new DBParam("LOCATION", Boolean.valueOf(draft.isLocation())),
                         new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))),
+                        new DBParam("SERVICE", Boolean.valueOf(!draft.isLocation() && Boolean.TRUE.equals(draft.getService()))),
                         new DBParam("PLACE_CAPTION", chosenCaption));
                 return toTypeDto(created, i18n(), 0);
             }
@@ -820,6 +821,9 @@ public class AssetServiceImpl implements AssetService {
                 requireConfigurableProject(user, type.getProjectKey());
                 if (draft.getShowInTree() != null) {
                     type.setShowInTree(type.isLocation() || draft.getShowInTree().booleanValue());
+                }
+                if (draft.getService() != null && !type.isLocation()) {
+                    type.setService(draft.getService().booleanValue());
                 }
                 if (draft.getIcon() != null) {
                     type.setIcon(resolveIcon(draft.getIcon(), type.isLocation()));
@@ -2956,6 +2960,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setSystemType(type.isSystemType());
         dto.setLocation(type.isLocation());
         dto.setShowInTree(type.isLocation() || type.isShowInTree());
+        dto.setService(!type.isLocation() && type.isService());
         dto.setPlaceCaption(type.getPlaceCaption() == null ? "" : type.getPlaceCaption());
         dto.setAssetCount(assetCount);
         if (type.isSystemType() && type.getBaseKey() != null && !type.getBaseKey().isEmpty()) {
@@ -3712,6 +3717,10 @@ public class AssetServiceImpl implements AssetService {
             @Override
             public ServicePlanDto doInTransaction() {
                 AssetEntity asset = equipmentForPlan(user, assetId);
+                AssetTypeEntity type = findType(asset.getTypeKey());
+                if (type == null || !type.isService()) {
+                    throw new AssetException(400, "asset-tree.error.service.type");
+                }
                 if (plansOf(assetId).size() >= MAX_PLANS) {
                     throw new AssetException(400, "asset-tree.error.service.limit");
                 }

@@ -407,7 +407,7 @@ def ensure_portal_demo():
             STATE["types"][key] = {
                 "typeKey": key, "projectKey": "TEST", "baseKey": key, "label": label,
                 "color": "#0052CC", "icon": icon, "systemType": False, "location": location,
-                "showInTree": location, "sortOrder": order, "fields": [],
+                "showInTree": location, "service": False, "sortOrder": order, "fields": [],
             }
 
     ensure_type("test-place", "Площадка", True, "building", 10)
@@ -455,6 +455,7 @@ def seed_types(project_key):
             STATE["types"][type_key] = {
                 "typeKey": type_key, "projectKey": project_key, "baseKey": base, "label": base,
                 "color": color, "icon": icon, "systemType": True, "location": location, "showInTree": location,
+                "service": False,
                 "sortOrder": order,
                 "fields": [{"fieldKey": item[0], "label": item[1], "kind": item[2], "required": item[3], "position": index} for index, item in enumerate(fields)],
             }
@@ -619,7 +620,8 @@ def type_dto(row, text, rows):
         "icon": row.get("icon") if row.get("icon") in ICONS else default_icon(row["location"]),
         "systemType": row["systemType"], "location": row["location"],
         "placeCaption": (row.get("placeCaption") or "") if row.get("location") else "",
-        "showInTree": bool(row.get("location") or row.get("showInTree")), "assetCount": count,
+        "showInTree": bool(row.get("location") or row.get("showInTree")),
+        "service": bool(row.get("service")) and not row.get("location"), "assetCount": count,
         "fields": [{
             "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
             "required": field["required"], "position": field["position"],
@@ -1949,7 +1951,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.74",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.75",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2323,6 +2325,8 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.notFound"]}
         if is_location_id(asset_id):
             return 400, {"message": text.get("asset-tree.error.service.place", "Equipment")}
+        if not (STATE["types"].get(asset["typeKey"]) or {}).get("service"):
+            return 400, {"message": text.get("asset-tree.error.service.type", "Type")}
         if len(plan_rows(asset_id)) >= 12:
             return 400, {"message": text.get("asset-tree.error.service.limit", "Limit")}
         plan_id = STATE["plan_seq"]
@@ -2552,6 +2556,7 @@ setTimeout(function () {
             "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color, "icon": icon,
             "systemType": False, "location": location, "placeCaption": caption,
             "showInTree": location or bool((body or {}).get("showInTree")),
+            "service": (not location) and bool((body or {}).get("service")),
             "sortOrder": order, "fields": [],
         }
         return 201, type_dto(STATE["types"][key], text, project_assets(project_key))
@@ -2563,6 +2568,8 @@ setTimeout(function () {
         body = body or {}
         if body.get("showInTree") is not None:
             row["showInTree"] = bool(row.get("location")) or bool(body.get("showInTree"))
+        if body.get("service") is not None and not row.get("location"):
+            row["service"] = bool(body.get("service"))
         if body.get("icon") is not None:
             icon = resolve_icon(body.get("icon"), bool(row.get("location")))
             if icon is None:

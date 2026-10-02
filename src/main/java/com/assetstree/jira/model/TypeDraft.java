@@ -11,6 +11,7 @@ public class TypeDraft {
     private String projectKey;
     private boolean location;
     private Boolean showInTree;
+    private Boolean service;
     private String placeCaption;
 
     public String getLabel() {
@@ -60,6 +61,15 @@ public class TypeDraft {
 
     public void setShowInTree(Boolean showInTree) {
         this.showInTree = showInTree;
+    }
+
+    /** Null when the request did not mention maintenance, so a partial update leaves it alone. */
+    public Boolean getService() {
+        return service;
+    }
+
+    public void setService(Boolean service) {
+        this.service = service;
     }
 
     /** Null when the request did not mention the caption, so a partial update leaves it alone. */

@@ -124,6 +124,8 @@ public final class UiCatalog {
             "placeCaptionHint",
             "showInTree",
             "showInTreeHint",
+            "serviceType",
+            "serviceTypeHint",
             "people",
             "details",
             "dates",

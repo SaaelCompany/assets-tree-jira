@@ -16,6 +16,7 @@ public class AssetTypeDto {
     private boolean systemType;
     private boolean location;
     private boolean showInTree;
+    private boolean service;
     private String placeCaption;
     private int assetCount;
     private List<FieldDto> fields = new ArrayList<FieldDto>();
@@ -90,6 +91,14 @@ public class AssetTypeDto {
 
     public void setShowInTree(boolean showInTree) {
         this.showInTree = showInTree;
+    }
+
+    public boolean isService() {
+        return service;
+    }
+
+    public void setService(boolean service) {
+        this.service = service;
     }
 
     public String getPlaceCaption() {

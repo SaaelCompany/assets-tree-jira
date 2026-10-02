@@ -1962,6 +1962,7 @@
         }
         if (state.selectedId !== id) {
             state.editing = false;
+            state.serviceOpen = null;
         }
         var next = byId()[id];
         if (next && isFolder(next)) state.typeGroup = null;
@@ -2637,11 +2638,16 @@
         });
     }
 
+    function typeOffersService(asset) {
+        var type = typeOf(asset && asset.typeKey);
+        return !!(type && type.service);
+    }
+
     function serviceBlock(asset) {
         if (!asset || isFolder(asset) || !asset.plans) return null;
-        if (!asset.plans.length && !mayEdit(asset)) return null;
+        var offered = typeOffersService(asset);
+        if (!offered && !asset.plans.length) return null;
         var body = el('div', 'asset-tree-service');
-        body.appendChild(el('p', 'asset-tree-hint', t('serviceHint')));
         var due = asset.plans.filter(function (plan) { return plan.due; });
         if (due.length) {
             body.appendChild(el('div', 'asset-tree-service-banner', t('serviceDue') + ': ' + due.map(function (plan) {
@@ -2652,14 +2658,27 @@
             body.appendChild(mayEdit(asset) ? serviceEditor(asset, plan) : serviceRead(plan));
         });
         if (!asset.plans.length) body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
-        if (mayEdit(asset)) body.appendChild(serviceEditor(asset, null));
+        if (offered && mayEdit(asset)) {
+            if (state.serviceOpen === asset.id) {
+                body.appendChild(serviceEditor(asset, null));
+            } else {
+                body.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
+                    state.serviceOpen = asset.id;
+                    showDetail(state.detail || asset, false);
+                }));
+            }
+        }
         return moduleBlock(t('serviceTitle'), body);
     }
 
     function serviceRead(plan) {
-        var row = el('div', 'asset-tree-plan' + (plan.due ? ' is-due' : ''));
+        var row = el('div', 'asset-tree-plan is-read' + (plan.due ? ' is-due' : ''));
+        var title = el('div', 'asset-tree-plan-title');
+        title.appendChild(el('strong', null, plan.name));
+        if (plan.due) title.appendChild(el('span', 'asset-tree-due-mark', t('serviceDueMark')));
+        row.appendChild(title);
         var unit = plan.everyUnit === 'day' ? t('serviceUnitDay') : t('serviceUnitMonth');
-        row.appendChild(el('span', 'asset-tree-plan-next', plan.name + ' · ' + t('serviceLast') + ' ' + formatFieldDate(plan.lastDone)
+        row.appendChild(el('p', 'asset-tree-plan-meta', t('serviceLast') + ' ' + formatFieldDate(plan.lastDone)
             + ' · ' + t('serviceEvery') + ' ' + plan.everyCount + ' ' + unit
             + ' · ' + t('serviceNext') + ' ' + formatFieldDate(plan.nextDue)));
         if (plan.statusKey) row.appendChild(lozenge(plan.statusKey));
@@ -2732,15 +2751,17 @@
         function send(done) {
             var path = creating ? '/assets/' + asset.id + '/plans' : '/assets/' + asset.id + '/plans/' + plan.id;
             ajax(creating ? 'POST' : 'PUT', path, payload(done), function (statusCode, response) {
-                if (statusCode >= 200 && statusCode < 300) reloadCard(asset.id);
-                else notify((response && response.message) || t('errorTitle'));
+                if (statusCode >= 200 && statusCode < 300) {
+                    if (creating) state.serviceOpen = null;
+                    reloadCard(asset.id);
+                } else notify((response && response.message) || t('errorTitle'));
             });
         }
         row.appendChild(planField(t('serviceName'), name));
         row.appendChild(planField(t('serviceLast'), last));
         row.appendChild(planField(t('serviceEvery'), everyWrap));
-        row.appendChild(planField(t('serviceNext'), next));
         row.appendChild(planField(t('status'), status));
+        if (!creating) row.appendChild(planField(t('serviceNext'), next));
         row.appendChild(notify);
         var actions = el('div', 'asset-tree-plan-actions');
         actions.appendChild(button(creating ? t('serviceAdd') : t('save'), 'asset-tree-btn' + (creating ? ' primary' : ''), function () {
@@ -5454,6 +5475,28 @@
             treeToggle.appendChild(treeBox);
             treeToggle.appendChild(el('span', null, t('showInTree')));
             wrap.appendChild(treeToggle);
+            var serviceToggle = el('label', 'asset-tree-check');
+            serviceToggle.title = t('serviceTypeHint');
+            var serviceBox = el('input');
+            serviceBox.type = 'checkbox';
+            serviceBox.checked = !!type.service;
+            serviceBox.disabled = !state.canConfigure;
+            if (!state.canConfigure) serviceBox.setAttribute('data-disabled', '1');
+            serviceBox.addEventListener('change', function () {
+                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey), { service: serviceBox.checked }, function (status, payload) {
+                    if (status >= 200 && status < 300) refreshSchema();
+                    else {
+                        serviceBox.checked = !serviceBox.checked;
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            });
+            serviceToggle.appendChild(serviceBox);
+            serviceToggle.appendChild(el('span', null, t('serviceType')));
+            var serviceRow = el('div', 'asset-tree-service-type');
+            serviceRow.appendChild(serviceToggle);
+            serviceRow.appendChild(el('p', 'asset-tree-hint', t('serviceTypeHint')));
+            wrap.appendChild(serviceRow);
         }
         var fieldTools = el('div', 'asset-tree-schema-tools');
         var fieldRows = [];
@@ -5523,9 +5566,23 @@
         treeToggle.appendChild(el('span', null, t('showInTree')));
         treeToggle.title = t('showInTreeHint');
         form.appendChild(treeToggle);
+        var serviceToggle = el('label', 'asset-tree-check');
+        var serviceInput = el('input');
+        serviceInput.type = 'checkbox';
+        serviceInput.id = 'type-service';
+        serviceToggle.appendChild(serviceInput);
+        serviceToggle.appendChild(el('span', null, t('serviceType')));
+        serviceToggle.title = t('serviceTypeHint');
+        form.appendChild(serviceToggle);
+        form.appendChild(el('p', 'asset-tree-hint asset-tree-service-type-hint', t('serviceTypeHint')));
         locationInput.addEventListener('change', function () {
             treeInput.disabled = locationInput.checked;
             if (locationInput.checked) treeInput.checked = false;
+            serviceInput.disabled = locationInput.checked;
+            if (locationInput.checked) serviceInput.checked = false;
+            serviceToggle.hidden = locationInput.checked;
+            var serviceHint = form.querySelector('.asset-tree-service-type-hint');
+            if (serviceHint) serviceHint.hidden = locationInput.checked;
             captionField.hidden = !locationInput.checked;
             captionHint.hidden = !locationInput.checked;
         });
@@ -5567,6 +5624,7 @@
                 projectKey: state.projectKey,
                 location: place,
                 showInTree: place || treeInput.checked,
+                service: !place && serviceInput.checked,
                 placeCaption: place ? captionInput.value.trim() : ''
             }, function (status, payload) {
                 if (status >= 200 && status < 300) {

@@ -61,6 +61,11 @@ public interface AssetTypeEntity extends Entity {
 
     void setShowInTree(boolean showInTree);
 
+    /** Schedules such as service and verification. Off until a type opts in. */
+    boolean isService();
+
+    void setService(boolean service);
+
     /** Label shown on a child card instead of the generic parent caption. Empty uses the type name. */
     @StringLength(80)
     String getPlaceCaption();
