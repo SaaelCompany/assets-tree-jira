@@ -1396,7 +1396,7 @@ def bulk_apply(project_key, body, text):
     target = (body.get("target") or "").strip()
     if target == "type":
         return bulk_types(project_key, action, body.get("keys") or [], text)
-    if target != "asset" or action not in ("delete", "move", "status", "custodian"):
+    if target != "asset" or action not in ("delete", "move", "status", "custodian", "copy"):
         return 400, {"message": text.get("asset-tree.error.bulk.action", "Action")}
     ids = []
     seen = set()
@@ -1447,6 +1447,14 @@ def bulk_apply(project_key, body, text):
         elif action == "status":
             asset["status"] = canonical(body.get("status") or "in_use")
             asset["updated"] = now_stamp()
+        elif action == "copy":
+            if kind.get("location"):
+                errors.append({"label": label, "message": text.get("asset-tree.error.copy", "Only equipment can be copied.")})
+                continue
+            status, payload = Handler.copy_asset(Handler, item, text)
+            if status >= 400:
+                errors.append({"label": label, "message": (payload or {}).get("message") or ""})
+                continue
         else:
             key = (body.get("custodianKey") or "").strip()
             asset["custodianKey"] = key or None
@@ -1764,7 +1772,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.70",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.71",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

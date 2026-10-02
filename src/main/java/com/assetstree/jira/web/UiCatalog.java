@@ -216,6 +216,7 @@ public final class UiCatalog {
             "bulkMoved",
             "bulkChanged",
             "bulkDeleted",
+            "bulkCopied",
             "bulkFailed",
             "bulkChoosePlace",
             "bulkChooseUser",

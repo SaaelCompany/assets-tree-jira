@@ -2100,7 +2100,8 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private BulkResultDto bulkAssets(ApplicationUser user, Project project, String action, BulkDraft draft) {
-        if (!"delete".equals(action) && !"move".equals(action) && !"status".equals(action) && !"custodian".equals(action)) {
+        if (!"delete".equals(action) && !"move".equals(action) && !"status".equals(action)
+                && !"custodian".equals(action) && !"copy".equals(action)) {
             throw new AssetException(400, "asset-tree.error.bulk.action");
         }
         if ("move".equals(action) && !draft.isToRoot() && TreeLogic.normalizeParent(draft.getParentId()) == null) {
@@ -2151,6 +2152,8 @@ public class AssetServiceImpl implements AssetService {
                     moveAsset(user, id.intValue(), move);
                 } else if ("status".equals(action)) {
                     patchStatus(user, id.intValue(), draft.getStatus());
+                } else if ("copy".equals(action)) {
+                    copyAsset(user, id.intValue());
                 } else {
                     patchCustodian(user, id.intValue(), draft.getCustodianKey());
                 }

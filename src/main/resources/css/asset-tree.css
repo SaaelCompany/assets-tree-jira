@@ -1660,6 +1660,7 @@ a.asset-tree-url {
 
 #asset-tree-app button.asset-tree-nest,
 #asset-tree-app button.asset-tree-chevron,
+#asset-tree-app button.asset-tree-row-copy,
 #asset-tree-app button.asset-tree-swatch,
 .asset-tree-backdrop button.asset-tree-swatch {
     display: inline-flex !important;
@@ -1686,11 +1687,30 @@ a.asset-tree-url {
     font-size: 16px;
 }
 
-#asset-tree-app button.asset-tree-chevron {
+#asset-tree-app button.asset-tree-chevron,
+#asset-tree-app button.asset-tree-row-copy {
     background: transparent !important;
     border: 0 !important;
     color: #6b778c !important;
     font-size: 12px;
+}
+
+#asset-tree-app button.asset-tree-row-copy:hover {
+    background: #f4f5f7 !important;
+    color: #0052cc !important;
+}
+
+#asset-tree-app button.asset-tree-row-copy svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+#asset-tree-app .asset-tree-name-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 100%;
 }
 
 #asset-tree-app button.asset-tree-chevron[disabled] {

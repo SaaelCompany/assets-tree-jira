@@ -2093,7 +2093,7 @@
         section.appendChild(selectableTable(kids.map(function (child) {
             var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             return [
-                openName(child.name, function () {
+                nameCell(child, function () {
                     state.pane = 'card';
                     selectAsset(child.id);
                 }),
@@ -2568,7 +2568,7 @@
             var nested = childrenOf(child.id).length;
             var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             var cells = [
-                openName(child.name, function () {
+                nameCell(child, function () {
                     if (child.projectKey && child.projectKey !== state.projectKey) {
                         goToAsset(child.projectKey, child.id);
                         return;
@@ -2600,6 +2600,22 @@
 
     function openName(label, onClick) {
         return button(label, 'asset-tree-linkish', onClick);
+    }
+
+    function nameCell(asset, onOpen) {
+        if (!asset || isFolder(asset) || !mayEdit(asset)) return openName(asset ? asset.name : '', onOpen);
+        var line = el('span', 'asset-tree-name-line');
+        line.appendChild(openName(asset.name, onOpen));
+        var copy = button('', 'asset-tree-row-copy', function (event) {
+            event.stopPropagation();
+            event.preventDefault();
+            copyAsset(asset, { stay: true });
+        });
+        copy.title = t('copy');
+        copy.setAttribute('aria-label', t('copy'));
+        copy.appendChild(toolIcon('copy'));
+        line.appendChild(copy);
+        return line;
     }
 
     function lozenge(status) {
@@ -2713,6 +2729,7 @@
                         return byId()[parseInt(item.key, 10)];
                     }));
                 }));
+                bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
             }
             if (assetsOnly) {
                 bar.appendChild(button(t('bulkMove'), 'asset-tree-btn', function () { openBulkMove(); }));
@@ -2756,7 +2773,7 @@
                 closeModal();
                 state.bulkErrors = combined.errors;
                 if (combined.done > 0) state.picked = {};
-                var note = action === 'delete' ? t('bulkDeleted', combined.done) : (action === 'move' ? t('bulkMoved', combined.done) : t('bulkChanged', combined.done));
+                var note = action === 'delete' ? t('bulkDeleted', combined.done) : (action === 'move' ? t('bulkMoved', combined.done) : (action === 'copy' ? t('bulkCopied', combined.done) : t('bulkChanged', combined.done)));
                 if (combined.errors.length) note += ' ' + t('bulkFailed', combined.errors.length);
                 notify(note);
                 assetsChanged();
@@ -3041,7 +3058,7 @@
         persistAsset(asset, { custodianKey: userKey || '' });
     }
 
-    function copyAsset(asset) {
+    function copyAsset(asset, options) {
         if (!asset || isFolder(asset) || !mayEdit(asset)) return;
         setBusy(true);
         ajax('POST', '/assets/' + asset.id + '/copy', {}, function (code, payload) {
@@ -3053,6 +3070,10 @@
             notify(t('copied'));
             assetsChanged();
             reloadTree(function () {
+                if (options && options.stay) {
+                    renderFrame();
+                    return;
+                }
                 if (payload && payload.id) selectAsset(payload.id, true);
             });
         });
@@ -6491,7 +6512,7 @@
         }
         panel.appendChild(selectableTable(state.mineAssets.map(function (asset) {
             return [
-                openName(asset.name, function () { goToAsset(asset.projectKey, asset.id); }),
+                nameCell(asset, function () { goToAsset(asset.projectKey, asset.id); }),
                 asset.objectKey || '',
                 asset.projectName || asset.projectKey || '',
                 lozenge(asset.status),
