@@ -24,7 +24,7 @@ export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
 mvn -B package
 ```
 
-Готовый файл: `target/asset-tree-1.2.60.jar`.
+Готовый файл: `target/asset-tree-1.2.61.jar`.
 
 ```bash
 mvn -B test

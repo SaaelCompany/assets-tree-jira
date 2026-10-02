@@ -2203,7 +2203,12 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-dashboard {
-    overflow: hidden !important;
+    overflow: visible !important;
+}
+
+#asset-tree-app .asset-tree-dashboard.is-menu-open {
+    position: relative !important;
+    z-index: 20 !important;
 }
 
 #asset-tree-app .asset-tree-dash-stats {
@@ -2229,13 +2234,15 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-chart-card {
-    overflow: hidden !important;
+    overflow: visible !important;
     height: auto !important;
 }
 
 #asset-tree-app .asset-tree-chart-head {
     display: flex !important;
     align-items: center !important;
+    position: relative !important;
+    overflow: visible !important;
     gap: 8px !important;
     margin: 0 0 6px !important;
 }
@@ -2395,9 +2402,12 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-chart-menu {
-    position: fixed;
-    z-index: 40;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 30;
     box-sizing: border-box;
+    width: 240px;
     padding: 8px;
     border: 1px solid #dfe1e6;
     border-radius: 3px;

@@ -5373,9 +5373,9 @@
 
     function summaryCollapsed() {
         try {
-            return sessionStorage.getItem('asset-tree-summary:' + (state.projectKey || '')) === '0';
+            return sessionStorage.getItem('asset-tree-summary:' + (state.projectKey || '')) !== '1';
         } catch (error) {
-            return false;
+            return true;
         }
     }
 
@@ -5388,6 +5388,8 @@
     function closeChartMenu() {
         var menu = document.getElementById('asset-tree-chart-menu');
         if (menu && menu.parentNode) menu.parentNode.removeChild(menu);
+        var dash = document.getElementById('asset-tree-dashboard');
+        if (dash) dash.classList.remove('is-menu-open');
     }
 
     function fillDashboard(node) {
@@ -5782,14 +5784,11 @@
         menu.appendChild(search);
         menu.appendChild(list);
         paint('');
-        document.body.appendChild(menu);
-        var rect = toggle.getBoundingClientRect();
-        var width = 240;
-        var left = rect.right - width;
-        if (left < 8) left = 8;
-        menu.style.top = (rect.bottom + 4) + 'px';
-        menu.style.left = left + 'px';
-        menu.style.width = width + 'px';
+        var anchor = toggle.parentNode;
+        if (!anchor) return;
+        anchor.appendChild(menu);
+        var dash = document.getElementById('asset-tree-dashboard');
+        if (dash) dash.classList.add('is-menu-open');
         search.focus();
     }
 

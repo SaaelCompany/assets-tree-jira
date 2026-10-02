@@ -35,7 +35,7 @@ public class JiraJsonVisibilityTest {
     public void metaSerializesPublicProperties() throws Exception {
         MetaDto meta = new MetaDto();
         meta.setCanEdit(true);
-        meta.setVersion("1.2.60");
+        meta.setVersion("1.2.61");
         meta.setBaseUrl("https://jira.example.com");
         meta.setLocale("ru-RU");
         meta.setDisplayName("Admin");
@@ -49,7 +49,7 @@ public class JiraJsonVisibilityTest {
 
         String json = mapper().writeValueAsString(meta);
 
-        assertTrue(json.contains("\"version\":\"1.2.60\""));
+        assertTrue(json.contains("\"version\":\"1.2.61\""));
         assertTrue(json.contains("\"baseUrl\":\"https://jira.example.com\""));
         assertTrue(json.contains("\"locale\":\"ru-RU\""));
         assertTrue(json.contains("\"displayName\":\"Admin\""));
