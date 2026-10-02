@@ -752,17 +752,26 @@
         return value.toLowerCase().indexOf(expected.toLowerCase()) >= 0;
     }
 
-    function attrGroupPasses(asset, rule) {
-        var keys = rule.keys || [];
+    function groupedAttribute(asset, label, keys) {
+        var wanted = String(label || '').trim().toLowerCase();
         var found = false;
         var raw = '';
         (asset.attributes || []).forEach(function (attribute) {
-            if (keys.indexOf(attribute.fieldKey) < 0) return;
+            var name = String(attribute.name || '').trim().toLowerCase();
+            var named = wanted && name === wanted;
+            var keyed = !name && keys && keys.indexOf(attribute.fieldKey) >= 0;
+            if (!named && !keyed) return;
             found = true;
             var value = String(attribute.value || '').trim();
             if (value && !raw) raw = value;
         });
-        if (!found) return false;
+        return { found: found, raw: raw };
+    }
+
+    function attrGroupPasses(asset, rule) {
+        var grouped = groupedAttribute(asset, rule.label, rule.keys);
+        if (!grouped.found) return false;
+        var raw = grouped.raw;
         var kind = rule.kind || 'text';
         var op = rule.op || 'eq';
         if (op === 'empty') return !raw;
@@ -5482,16 +5491,9 @@
     }
 
     function fieldBucket(asset, dim) {
-        var keys = dim.keys || [];
-        var found = false;
-        var raw = '';
-        (asset.attributes || []).forEach(function (attribute) {
-            if (keys.indexOf(attribute.fieldKey) < 0) return;
-            found = true;
-            var value = String(attribute.value || '').trim();
-            if (value && !raw) raw = value;
-        });
-        if (!found) return null;
+        var grouped = groupedAttribute(asset, dim.label, dim.keys);
+        if (!grouped.found) return null;
+        var raw = grouped.raw;
         var key = chartBucketKey(raw, dim.kind);
         return {
             key: key,
