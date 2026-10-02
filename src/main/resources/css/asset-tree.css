@@ -2346,11 +2346,12 @@ html.asset-tree-dragging * {
 }
 
 #asset-tree-app .asset-tree-dashboard .asset-tree-legend {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
     align-content: center;
-    gap: 4px 12px;
+    gap: 4px 14px;
     flex: 1 1 160px;
     max-width: 100%;
     min-width: 0;
@@ -2462,7 +2463,7 @@ html.asset-tree-dragging * {
 
 #asset-tree-app .asset-tree-legend-nested-rows {
     display: grid !important;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
     gap: 4px 12px;
     width: 100%;
     max-height: none;
