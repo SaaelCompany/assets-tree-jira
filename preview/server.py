@@ -777,6 +777,7 @@ def display_date(value, day_first):
 
 
 def equipment_table(project_key, text, day_first):
+    ensure_portal_demo()
     headers = equipment_headers(text)
     statuses = {row["statusKey"]: row["label"] for row in status_dtos(project_key, text)}
     types = {row["typeKey"]: row for row in STATE["types"].values() if row["projectKey"] == project_key}
