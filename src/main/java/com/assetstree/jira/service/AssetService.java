@@ -42,6 +42,8 @@ public interface AssetService {
 
     AssetDto createAsset(ApplicationUser user, AssetDraft draft);
 
+    AssetDto copyAsset(ApplicationUser user, int id);
+
     AssetDto updateAsset(ApplicationUser user, int id, AssetDraft draft);
 
     CommentDto addComment(ApplicationUser user, int id, String body);

@@ -68,6 +68,7 @@ import com.assetstree.jira.dto.ReportPlaceDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CopyNames;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
@@ -394,6 +395,45 @@ public class AssetServiceImpl implements AssetService {
                 return toDto(entity, attributesFor(entity.getID()), indexTypes(typeDtos(project.getKey(), rows)), indexAssets(rows), true);
             }
         });
+    }
+
+    @Override
+    public AssetDto copyAsset(final ApplicationUser user, final int id) {
+        AssetDraft draft = ao().executeInTransaction(new TransactionCallback<AssetDraft>() {
+            @Override
+            public AssetDraft doInTransaction() {
+                AssetEntity source = requireReadable(user, id);
+                AssetTypeEntity type = findType(source.getTypeKey());
+                if (type == null || type.isLocation()) {
+                    throw new AssetException(400, "asset-tree.error.copy");
+                }
+                requireProjectCap(user, source.getProjectKey(), GrantCaps.OBJECT);
+                Set<String> taken = new HashSet<String>();
+                for (AssetEntity row : assetsIn(source.getProjectKey())) {
+                    if (row.getName() != null) {
+                        taken.add(row.getName());
+                    }
+                }
+                AssetDraft copy = new AssetDraft();
+                copy.setName(CopyNames.next(source.getName(), i18n().getText("asset-tree.ui.copyWord"), taken));
+                copy.setDescription(source.getDescription() == null ? "" : source.getDescription());
+                copy.setTypeKey(source.getTypeKey());
+                copy.setStatus(source.getStatus());
+                copy.setParentId(source.getParentId());
+                copy.setProjectKey(source.getProjectKey());
+                copy.setCustodianKey(source.getCustodianKey());
+                List<AttributeDraft> attributes = new ArrayList<AttributeDraft>();
+                for (Map.Entry<String, String> entry : attributeValues(id).entrySet()) {
+                    AttributeDraft item = new AttributeDraft();
+                    item.setFieldKey(entry.getKey());
+                    item.setValue(entry.getValue());
+                    attributes.add(item);
+                }
+                copy.setAttributes(attributes);
+                return copy;
+            }
+        });
+        return createAsset(user, draft);
     }
 
     @Override

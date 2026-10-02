@@ -178,6 +178,17 @@ public class AssetResource {
     }
 
     @POST
+    @Path("assets/{id}/copy")
+    public Response copy(@PathParam("id") final int id) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.copyAsset(user(), id)).build();
+            }
+        });
+    }
+
+    @POST
     @Path("assets/{id}/move")
     public Response move(@PathParam("id") final int id, final MoveDraft move) {
         return invoke(new Callable<Response>() {

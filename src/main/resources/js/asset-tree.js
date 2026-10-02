@@ -1094,6 +1094,126 @@
         return el('span', null, attributeText(attribute));
     }
 
+    function inlineKind(kind) {
+        return kind === 'select' || kind === 'selects' || kind === 'checks' || kind === 'radio'
+            || kind === 'labels' || kind === 'url' || kind === 'version';
+    }
+
+    function fieldSchema(asset, attribute) {
+        var type = typeOf(asset && asset.typeKey);
+        var fields = type.fields || [];
+        for (var i = 0; i < fields.length; i++) {
+            if (fields[i].fieldKey === attribute.fieldKey) return fields[i];
+        }
+        return { fieldKey: attribute.fieldKey, kind: attribute.kind, options: [] };
+    }
+
+    function readControl(node) {
+        if (!node) return '';
+        if (node.classList && node.classList.contains('asset-tree-field-value')) return node.value || '';
+        var box = node.querySelector ? node.querySelector('.asset-tree-field-value') : null;
+        return box ? (box.value || '') : '';
+    }
+
+    function inlineAttribute(asset, attribute) {
+        if (!mayEdit(asset) || !inlineKind(attribute.kind)) return attributeView(attribute);
+        var host = el('div', 'asset-tree-inline');
+        var editing = false;
+        var saving = false;
+        function paint() {
+            editing = false;
+            host.className = 'asset-tree-inline';
+            host.innerHTML = '';
+            var shown = attributeView(attribute);
+            if (shown.tagName === 'A') {
+                shown.addEventListener('click', function (event) { event.stopPropagation(); });
+            }
+            host.appendChild(shown);
+            host.appendChild(el('span', 'asset-tree-inline-mark', '\u270E'));
+            host.tabIndex = 0;
+            host.setAttribute('role', 'button');
+        }
+        function commit() {
+            if (!editing || saving) return;
+            var value = readControl(host.firstChild);
+            if ((value || '') === (attribute.value || '')) {
+                paint();
+                return;
+            }
+            saving = true;
+            persistAsset(asset, {
+                attributes: [{ fieldKey: attribute.fieldKey, value: value }],
+                onError: function () { saving = false; }
+            });
+        }
+        host.addEventListener('focusout', function (event) {
+            if (!editing) return;
+            var next = event.relatedTarget;
+            if (next && host.contains(next)) return;
+            setTimeout(function () {
+                if (!editing) return;
+                if (host.contains(document.activeElement)) return;
+                commit();
+            }, 0);
+        });
+        function openEditor(event) {
+            if (editing) return;
+            if (event && event.target && event.target.closest && event.target.closest('a')) return;
+            editing = true;
+            host.className = 'asset-tree-inline is-editing';
+            host.innerHTML = '';
+            host.removeAttribute('role');
+            host.tabIndex = -1;
+            var control = fieldControl(fieldSchema(asset, attribute), attribute.value || '', false);
+            host.appendChild(control);
+            var typed = attribute.kind === 'labels' || attribute.kind === 'url' || attribute.kind === 'version';
+            if (!typed) {
+                control.addEventListener('change', commit);
+            }
+            var field = control.classList && control.classList.contains('asset-tree-field-value')
+                ? control
+                : control.querySelector('input, select');
+            if (field) {
+                field.addEventListener('keydown', function (keyEvent) {
+                    if (keyEvent.key === 'Escape') {
+                        keyEvent.preventDefault();
+                        paint();
+                        return;
+                    }
+                    if (keyEvent.key !== 'Enter') return;
+                    if (attribute.kind === 'url') {
+                        keyEvent.preventDefault();
+                        commit();
+                    } else if (attribute.kind === 'labels' || attribute.kind === 'version') {
+                        setTimeout(function () {
+                            if (field.value && field.value.trim()) return;
+                            commit();
+                        }, 0);
+                    }
+                });
+            }
+            if (field && field.focus) field.focus();
+            if (attribute.kind === 'select' && control.showPicker) {
+                try { control.showPicker(); } catch (error) { /* keep the closed list until the next click */ }
+            }
+        }
+        host.addEventListener('click', openEditor);
+        host.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && editing) {
+                event.preventDefault();
+                paint();
+                return;
+            }
+            if (editing) return;
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openEditor(event);
+            }
+        });
+        paint();
+        return host;
+    }
+
     function formatDate(iso) {
         if (!iso) {
             return '';
@@ -2022,6 +2142,7 @@
             assign: 'M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-3.31 0-8 1.67-8 4v2h16v-2c0-2.33-4.69-4-8-4z',
             more: 'M6 10a2 2 0 1 0 .01 4A2 2 0 0 0 6 10zm6 0a2 2 0 1 0 .01 4A2 2 0 0 0 12 10zm6 0a2 2 0 1 0 .01 4A2 2 0 0 0 18 10z',
             print: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
+            copy: 'M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z',
             plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z',
             trash: 'M9 3h6l1 2h4v2H4V5h4l1-2zm-2 6h2v9H7V9zm4 0h2v9h-2V9zm4 0h2v9h-2V9zM6 7h12l-1 14H7L6 7z',
             cloud: 'M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 8.6 3.5 3.5 0 0 0 7 18z',
@@ -2914,11 +3035,45 @@
         persistAsset(asset, { custodianKey: userKey || '' });
     }
 
+    function copyAsset(asset) {
+        if (!asset || isFolder(asset) || !mayEdit(asset)) return;
+        setBusy(true);
+        ajax('POST', '/assets/' + asset.id + '/copy', {}, function (code, payload) {
+            setBusy(false);
+            if (code < 200 || code >= 300) {
+                setFormError((payload && payload.message) || t('errorTitle'));
+                return;
+            }
+            notify(t('copied'));
+            assetsChanged();
+            reloadTree(function () {
+                if (payload && payload.id) selectAsset(payload.id, true);
+            });
+        });
+    }
+
     function persistAsset(asset, changes) {
-        if (!state.canEdit || !asset) return;
+        if (!state.canEdit || !asset) {
+            if (changes && typeof changes.onError === 'function') changes.onError();
+            return;
+        }
         var attributes = (asset.attributes || []).map(function (attribute) {
             return { fieldKey: attribute.fieldKey, value: attribute.value || '' };
         });
+        if (changes && changes.attributes) {
+            var patch = {};
+            changes.attributes.forEach(function (item) {
+                if (item && item.fieldKey) patch[item.fieldKey] = item.value || '';
+            });
+            var seen = {};
+            attributes.forEach(function (item) {
+                seen[item.fieldKey] = true;
+                if (Object.prototype.hasOwnProperty.call(patch, item.fieldKey)) item.value = patch[item.fieldKey];
+            });
+            Object.keys(patch).forEach(function (key) {
+                if (!seen[key]) attributes.push({ fieldKey: key, value: patch[key] });
+            });
+        }
         var custodianKey = asset.custodian && asset.custodian.userKey ? asset.custodian.userKey : '';
         if (changes && Object.prototype.hasOwnProperty.call(changes, 'custodianKey')) {
             custodianKey = changes.custodianKey || '';
@@ -2936,6 +3091,7 @@
             setBusy(false);
             if (code < 200 || code >= 300) {
                 setFormError((payload && payload.message) || t('errorTitle'));
+                if (changes && typeof changes.onError === 'function') changes.onError();
                 return;
             }
             notify(t('saved'));
@@ -3495,6 +3651,9 @@
                 showDetail(state.detail || asset, false);
             }));
             ops.appendChild(toolButton(t('addComment'), 'comment', openComment));
+            if (!isFolder(asset)) {
+                ops.appendChild(toolButton(t('copy'), 'copy', function () { copyAsset(asset); }));
+            }
         }
         if (!isFolder(asset)) {
             ops.appendChild(toolButton(t('printCard'), 'print', function () {
@@ -3526,7 +3685,7 @@
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
         items.push(detailItem(parentCaption(asset), el('span', null, place)));
         (asset.attributes || []).forEach(function (attribute) {
-            items.push(detailItem(attribute.name || attribute.fieldKey, attributeView(attribute)));
+            items.push(detailItem(attribute.name || attribute.fieldKey, inlineAttribute(asset, attribute)));
         });
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
         main.appendChild(descriptionModule(asset, true));

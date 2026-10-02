@@ -442,6 +442,23 @@ def seed_types(project_key):
             }
 
 
+def copy_name(base, word, taken):
+    stem = (base or "").strip()
+    label = (word or "").strip() or "copy"
+    for number in range(1, 1000):
+        suffix = " (%s)" % label if number == 1 else " (%s %s)" % (label, number)
+        room = 255 - len(suffix)
+        if room < 1:
+            room = 1
+        head = stem[:room].rstrip() if len(stem) > room else stem
+        candidate = head + suffix
+        if len(candidate) > 255:
+            candidate = candidate[:255]
+        if candidate not in taken:
+            return candidate
+    return stem[:255]
+
+
 def add_asset(project, type_key, name, parent, status, custodian, values):
     asset_id = STATE["seq"]
     STATE["seq"] += 1
@@ -1747,7 +1764,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.69",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.70",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -1865,6 +1882,9 @@ setTimeout(function () {
             } for row in rows]
         if path == "/types" and method == "POST":
             return self.create_type(self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/copy", path)
+        if match and method == "POST":
+            return self.copy_asset(int(match.group(1)), text)
         match = re.fullmatch(r"/assets/(\d+)", path)
         if match and method == "GET":
             asset = STATE["assets"].get(int(match.group(1)))
@@ -2119,6 +2139,26 @@ setTimeout(function () {
         log_activity(asset_id, "created", "", "", body["name"].strip())
         log_place(place_container(parent_id), "place_add", STATE["assets"][asset_id])
         return 201, asset_dto(STATE["assets"][asset_id], text, True)
+
+    def copy_asset(self, asset_id, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        row = type_row(asset["typeKey"])
+        if not row or row.get("location"):
+            return 400, {"message": text.get("asset-tree.error.copy", "Only equipment can be copied.")}
+        taken = {item["name"] for item in STATE["assets"].values() if item["projectKey"] == asset["projectKey"]}
+        name = copy_name(asset["name"], text.get("asset-tree.ui.copyWord", "copy"), taken)
+        parent_id = normalize_parent(asset.get("parentId"))
+        new_id = add_asset(
+            asset["projectKey"], asset["typeKey"], name, parent_id,
+            canonical(asset.get("status") or "in_use"), asset.get("custodianKey"),
+            dict(asset.get("values") or {}),
+        )
+        STATE["assets"][new_id]["description"] = asset.get("description") or ""
+        log_activity(new_id, "created", "", "", name)
+        log_place(place_container(parent_id), "place_add", STATE["assets"][new_id])
+        return 201, asset_dto(STATE["assets"][new_id], text, True)
 
     def update_asset(self, asset_id, body, text):
         asset = STATE["assets"].get(asset_id)
