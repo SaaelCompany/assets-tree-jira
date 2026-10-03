@@ -23,21 +23,24 @@
     color: #6b778c;
 }
 
+/* Do not paint a border or background here: that hides the portal chevron.
+   Width stays full so the control lines up when the portal rule does not reach a nested select. */
 .asset-tree-picker select {
-    width: 100%;
     box-sizing: border-box;
-    min-height: 32px;
-    border: 1px solid #dfe1e6;
-    border-radius: 3px;
-    padding: 6px 8px;
-    background: white;
-    font: inherit;
+    width: 100%;
+    max-width: 100%;
+    font-weight: 400;
 }
 
 .asset-tree-picker-current,
 .asset-tree-picker-root {
     margin: 0;
     color: #172b4d;
+}
+
+.asset-tree-picker-current:empty,
+.asset-tree-picker-root:empty {
+    display: none;
 }
 
 .asset-tree-picker-root {

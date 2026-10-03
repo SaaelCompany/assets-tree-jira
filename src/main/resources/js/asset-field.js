@@ -397,12 +397,56 @@
             return pathTo(byId, node.id).map(function (item) { return item.name; }).join(' / ');
         }
 
+        function neighbourSelect() {
+            var form = formOf(picker);
+            var nodes = form.querySelectorAll('select');
+            for (var i = 0; i < nodes.length; i++) {
+                if (!insidePicker(nodes[i]) && nodes[i].getAttribute('data-asset-tree') !== '1') return nodes[i];
+            }
+            return null;
+        }
+
+        function dressSelect(select) {
+            var sample = neighbourSelect();
+            if (sample && sample.className) select.className = sample.className;
+            else select.className = (select.className ? select.className + ' ' : '') + 'select';
+            // Portal lists sit inside an extra wrapper, so Jira's select rules may miss them.
+            if (!flat || !sample || !window.getComputedStyle) return;
+            var style = window.getComputedStyle(sample);
+            var props = [
+                'box-sizing', 'height', 'min-height',
+                'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+                'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+                'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style',
+                'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color',
+                'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
+                'background-color', 'background-image', 'background-repeat', 'background-position', 'background-size',
+                'color', 'font-style', 'font-weight', 'font-size', 'line-height', 'font-family',
+                'box-shadow', 'appearance', '-webkit-appearance', '-moz-appearance', 'outline', 'cursor'
+            ];
+            for (var p = 0; p < props.length; p++) {
+                var value = style.getPropertyValue(props[p]);
+                if (value) select.style.setProperty(props[p], value);
+            }
+        }
+
+        function blankLabel(fallback) {
+            var sample = neighbourSelect();
+            if (sample && sample.options && sample.options.length) {
+                var first = sample.options[0];
+                var value = first.value || '';
+                if (!value || value === '-1') return first.text || fallback;
+            }
+            return fallback;
+        }
+
         function drawList(rootId, waiting) {
             levels.innerHTML = '';
             if (waiting) {
                 var waitingSelect = el('select');
+                dressSelect(waitingSelect);
                 waitingSelect.disabled = true;
-                var placeholder = el('option', null, '—');
+                var placeholder = el('option', null, blankLabel('—'));
                 placeholder.value = '';
                 waitingSelect.appendChild(placeholder);
                 levels.appendChild(waitingSelect);
@@ -415,7 +459,8 @@
             }
             var options = listed(rootId);
             var select = el('select');
-            var empty = el('option', null, chooseText);
+            dressSelect(select);
+            var empty = el('option', null, blankLabel(chooseText));
             empty.value = '';
             select.appendChild(empty);
             options.forEach(function (node) {
@@ -465,6 +510,7 @@
             var wrap = el('label', 'asset-tree-picker-level');
             wrap.appendChild(el('span', null, caption(options, parent)));
             var select = el('select');
+            dressSelect(select);
             var empty = el('option', null, '—');
             empty.value = '';
             select.appendChild(empty);

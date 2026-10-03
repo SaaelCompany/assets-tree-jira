@@ -1886,8 +1886,41 @@ p { color: #5d6b82; }
 body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
 main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
 form { display: flex; flex-direction: column; gap: 16px; }
-label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
-select, input[type="text"] { font: inherit; font-weight: 400; padding: 6px 8px; }
+label { display: block; margin: 0 0 4px; font-weight: 600; font-size: 12px; color: #6b778c; }
+label span { font-weight: 400; }
+form.vp-request-form select {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    box-sizing: border-box;
+    width: 100%%;
+    height: 40px;
+    margin: 0;
+    padding: 0 32px 0 8px;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    background-color: #ebecf0;
+    background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%23172B4D' d='M8.292 10.293a1.009 1.009 0 0 0 0 1.419l2.939 2.965c.218.215.5.322.779.322s.556-.107.769-.322l2.93-2.955a1.01 1.01 0 0 0 0-1.419.987.987 0 0 0-1.406 0l-2.298 2.317-2.307-2.327a.99.99 0 0 0-1.406 0z'/%%3E%%3C/svg%%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 16px 16px;
+    color: #172b4d;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 20px;
+    cursor: pointer;
+}
+form.vp-request-form input[type="text"] {
+    box-sizing: border-box;
+    width: 100%%;
+    height: 40px;
+    border: 2px solid #dfe1e6;
+    border-radius: 3px;
+    padding: 0 8px;
+    background: #fafbfc;
+    font-size: 14px;
+    font-weight: 400;
+}
 </style>
 %s
 <script src="/download/resources/asset-tree/asset-field.js"></script>
@@ -1971,7 +2004,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.80",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.81",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
