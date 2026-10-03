@@ -440,12 +440,34 @@
             for (var p = 0; p < props.length; p++) {
                 var value = style.getPropertyValue(props[p]);
                 if (!value || value === 'none' || value === 'auto') continue;
-                if ((props[p] === 'height' || props[p] === 'min-height') && parseFloat(value) < 8) continue;
+                if (props[p] === 'width' || props[p] === 'height' || props[p] === 'min-height' || props[p] === 'max-width') continue;
                 select.style.setProperty(props[p], value);
                 if ((props[p] === 'appearance' || props[p] === '-webkit-appearance' || props[p] === '-moz-appearance') && value !== 'none') {
                     select.style.setProperty('background-image', 'none');
                 }
             }
+            var box = sample.getBoundingClientRect();
+            select.style.setProperty('box-sizing', 'border-box');
+            if (box.width >= 8) select.style.setProperty('width', Math.round(box.width) + 'px');
+            if (box.height >= 8) {
+                var size = Math.round(box.height) + 'px';
+                select.style.setProperty('height', size);
+                select.style.setProperty('min-height', size);
+                select.style.setProperty('max-height', size);
+            }
+        }
+
+        function attachSelect(select) {
+            select.setAttribute('data-asset-tree', '1');
+            if (!flat || !picker.parentNode) {
+                levels.appendChild(select);
+                return;
+            }
+            if (picker.portalSelect && picker.portalSelect.parentNode) {
+                picker.portalSelect.parentNode.removeChild(picker.portalSelect);
+            }
+            picker.portalSelect = select;
+            picker.parentNode.insertBefore(select, picker);
         }
 
         function blankLabel(fallback) {
@@ -467,7 +489,7 @@
                 var placeholder = el('option', null, blankLabel('—'));
                 placeholder.value = '';
                 waitingSelect.appendChild(placeholder);
-                levels.appendChild(waitingSelect);
+                attachSelect(waitingSelect);
                 levels.appendChild(el('p', 'asset-tree-picker-wait', waitText));
                 if (current) current.textContent = '';
                 return;
@@ -488,7 +510,7 @@
                 hidden.value = select.value;
                 show(hidden.value ? parseInt(hidden.value, 10) : null);
             });
-            levels.appendChild(select);
+            attachSelect(select);
             if (!options.length) levels.appendChild(el('p', 'asset-tree-picker-wait', emptyText));
             show(hidden.value ? parseInt(hidden.value, 10) : null);
         }

@@ -1888,13 +1888,15 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
 form { display: flex; flex-direction: column; gap: 16px; }
 label { display: block; margin: 0 0 4px; font-weight: 600; font-size: 12px; color: #6b778c; }
 label span { font-weight: 400; }
-form.vp-request-form select {
+.field-group { display: flex; flex-direction: column; align-items: flex-start; max-width: 100%%; }
+.field-group > select {
     -webkit-appearance: none;
     -moz-appearance: none;
     appearance: none;
     box-sizing: border-box;
-    width: 100%%;
-    height: 40px;
+    width: 500px;
+    max-width: 100%%;
+    height: 30px;
     margin: 0;
     padding: 0 32px 0 8px;
     border: 2px solid transparent;
@@ -1947,7 +1949,7 @@ form.vp-request-form input[type="text"] {
 </select>
 </div>
 </div>
-<div id="asset-slot"></div>
+<div id="asset-slot" class="field-group"></div>
 </form>
 </main>
 <script>
@@ -2005,7 +2007,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.82",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.83",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

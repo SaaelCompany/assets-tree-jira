@@ -30,11 +30,9 @@
     font-weight: 400;
 }
 
-/* Customer portal selects are a grey bar with a chevron. A hidden select earlier
-   in the form must not be copied: its height is 0 and the field disappears. */
+/* Fallback chrome when the portal's own select rules do not reach this control.
+   Width and height are copied from a visible neighbour, so they are not set here. */
 .asset-tree-picker-portal select {
-    min-height: 40px;
-    height: 40px;
     margin: 0;
     padding: 0 32px 0 8px;
     border: 2px solid transparent;
