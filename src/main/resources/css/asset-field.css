@@ -57,6 +57,33 @@
     color: #172b4d;
 }
 
+/* The open list is moved onto the page body. Select2 then writes a plain
+   element width, which replaces an inline priority. The custom property
+   stays, so the list keeps the closed field's width. */
+div.select2-drop.asset-tree-portal-drop {
+    width: var(--asset-tree-drop-width) !important;
+    min-width: var(--asset-tree-drop-width) !important;
+    max-width: var(--asset-tree-drop-width) !important;
+    box-sizing: border-box !important;
+}
+
+div.select2-drop.asset-tree-portal-drop .select2-search,
+div.select2-drop.asset-tree-portal-drop .select2-search input,
+div.select2-drop.asset-tree-portal-drop .select2-results,
+div.select2-drop.asset-tree-portal-drop .select2-results ul,
+div.select2-drop.asset-tree-portal-drop .select2-result-label {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+div.select2-drop.asset-tree-portal-drop .select2-results li,
+div.select2-drop.asset-tree-portal-drop .select2-result-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .asset-tree-picker-current,
 .asset-tree-picker-root {
     margin: 0;

@@ -417,6 +417,7 @@ def ensure_portal_demo():
     place_b = add_asset("TEST", "test-place", "Площадка Б", None, "in_use", None, {})
     department = add_asset("TEST", "test-dept", "Отделение А", place_a, "in_use", None, {})
     add_asset("TEST", "test-device", "Аппарат", department, "in_use", None, {})
+    add_asset("TEST", "test-device", "Управляющая компания", department, "in_use", None, {})
     add_asset("TEST", "test-device", "Принтер Б", place_b, "in_use", None, {})
     STATE["portal_rules"] = [
         {"id": 1, "assetId": place_a, "position": 1, "conditions": [{"field": "Площадка", "option": "Пункт А"}]},
@@ -2030,6 +2031,10 @@ form.vp-request-form input[type="text"] {
             drop.hidden = true;
             box.className = box.className.replace(/\bselect2-dropdown-open\b/g, '').replace(/\s+/g, ' ');
         }
+        function shrink() {
+            drop.style.width = '190px';
+            input.style.width = '160px';
+        }
         function open() {
             if (el.disabled) return;
             drop.hidden = false;
@@ -2039,6 +2044,10 @@ form.vp-request-form input[type="text"] {
             var opened = document.createEvent('Event');
             opened.initEvent('select2-open', true, false);
             el.dispatchEvent(opened);
+            shrink();
+            var api = el.__auiData && el.__auiData.select2;
+            if (api && typeof api.positionDropdown === 'function') api.positionDropdown();
+            window.setTimeout(shrink, 0);
             input.focus();
         }
         choice.addEventListener('click', function (event) {
@@ -2074,7 +2083,12 @@ form.vp-request-form input[type="text"] {
             width: function (value) { if (value) box.style.width = typeof value === 'number' ? value + 'px' : value; return box.getBoundingClientRect().width; }
         };
         var dropdownApi = { 0: drop, length: 1 };
-        el.__auiData.select2 = { opts: options, container: containerApi, dropdown: dropdownApi };
+        el.__auiData.select2 = {
+            opts: options,
+            container: containerApi,
+            dropdown: dropdownApi,
+            positionDropdown: shrink
+        };
     }
     window.AJS = window.AJS || {};
     window.AJS.$ = query;
@@ -2166,7 +2180,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.85",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.86",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

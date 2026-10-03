@@ -484,30 +484,62 @@
                 if (value[0] && value[0].nodeType === 1) return value[0];
                 return null;
             }
+            function markDrop(dropdown, width) {
+                if (!dropdown || dropdown.nodeType !== 1) return;
+                if ((' ' + dropdown.className + ' ').indexOf(' asset-tree-portal-drop ') === -1) {
+                    dropdown.className += ' asset-tree-portal-drop';
+                }
+                dropdown.setAttribute('data-asset-tree-drop', '1');
+                dropdown.style.setProperty('--asset-tree-drop-width', width + 'px');
+            }
             function alignDropdown() {
                 var api = $select.data('select2');
                 if (!api) return;
                 var container = nodeOf(api.container);
-                var dropdown = nodeOf(api.dropdown || api.dropdownContainer);
-                if (!container || !dropdown) return;
-                var width = Math.round(container.getBoundingClientRect().width);
+                var choice = container ? container.querySelector('.select2-choice') : null;
+                var measure = choice && shown(choice) ? choice : container;
+                if (!measure) return;
+                var width = Math.round(measure.getBoundingClientRect().width);
                 if (width < 8) return;
-                dropdown.style.setProperty('width', width + 'px', 'important');
-                dropdown.style.setProperty('min-width', width + 'px', 'important');
-                dropdown.style.setProperty('max-width', width + 'px', 'important');
-                dropdown.style.setProperty('box-sizing', 'border-box', 'important');
-                var fields = dropdown.querySelectorAll('.select2-search, .select2-search input, .select2-results');
-                for (var i = 0; i < fields.length; i++) {
-                    fields[i].style.setProperty('width', '100%', 'important');
-                    fields[i].style.setProperty('box-sizing', 'border-box', 'important');
+                var seen = [];
+                function add(node) {
+                    node = nodeOf(node);
+                    if (!node || seen.indexOf(node) !== -1) return;
+                    seen.push(node);
+                    markDrop(node, width);
                 }
+                add(api.dropdown);
+                add(api.dropdownContainer);
+                if (container) {
+                    var nested = container.querySelectorAll('.select2-drop');
+                    for (var i = 0; i < nested.length; i++) add(nested[i]);
+                }
+                var oursOpen = container && (' ' + container.className + ' ').indexOf(' select2-dropdown-open ') !== -1;
+                if (oursOpen) {
+                    var active = document.querySelectorAll('.select2-drop-active');
+                    for (var j = 0; j < active.length; j++) add(active[j]);
+                }
+            }
+            function hookPosition(api) {
+                if (!api || typeof api.positionDropdown !== 'function' || api.positionDropdown._assetTree) return;
+                var original = api.positionDropdown;
+                var wrapped = function () {
+                    var result = original.apply(this, arguments);
+                    alignDropdown();
+                    return result;
+                };
+                wrapped._assetTree = true;
+                api.positionDropdown = wrapped;
             }
             if ($select.on) {
                 $select.on('select2-open', function () {
+                    hookPosition($select.data('select2'));
                     alignDropdown();
                     window.setTimeout(alignDropdown, 0);
+                    window.setTimeout(alignDropdown, 50);
                 });
             }
+            hookPosition($select.data('select2'));
             alignDropdown();
             return true;
         }
