@@ -12,6 +12,7 @@ public final class AssetValidator {
     public static final int MAX_DESCRIPTION = 10000;
     public static final int MAX_ATTR_NAME = 80;
     public static final int MAX_ATTR_VALUE = 2000;
+    public static final int MAX_CAPTION = 80;
 
     private static final Pattern COLOR = Pattern.compile("^#[0-9A-Fa-f]{6}$");
     private static final Pattern TYPE_KEY = Pattern.compile("^[a-z][a-z0-9-]{0,39}$");
@@ -88,6 +89,17 @@ public final class AssetValidator {
         }
         if (label.trim().length() > MAX_NAME) {
             return "asset-tree.error.type.label.length";
+        }
+        return null;
+    }
+
+    /** Empty is allowed and means the card uses the type name. */
+    public static String validateCaption(String caption) {
+        if (caption == null || caption.trim().isEmpty()) {
+            return null;
+        }
+        if (caption.trim().length() > MAX_CAPTION) {
+            return "asset-tree.error.caption.length";
         }
         return null;
     }

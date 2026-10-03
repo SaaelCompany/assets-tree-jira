@@ -47,6 +47,11 @@
     text-decoration: none;
 }
 
+.asset-tree-panel-open {
+    display: inline-block;
+    margin-top: 8px;
+}
+
 .asset-tree-panel button {
     border: 0;
     background: transparent;

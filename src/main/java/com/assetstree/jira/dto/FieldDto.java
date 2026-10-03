@@ -1,5 +1,8 @@
 package com.assetstree.jira.dto;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 
@@ -10,6 +13,7 @@ public class FieldDto {
     private String kind;
     private boolean required;
     private int position;
+    private List<String> options = new ArrayList<String>();
 
     public String getFieldKey() {
         return fieldKey;
@@ -49,5 +53,13 @@ public class FieldDto {
 
     public void setPosition(int position) {
         this.position = position;
+    }
+
+    public List<String> getOptions() {
+        return options;
+    }
+
+    public void setOptions(List<String> options) {
+        this.options = options == null ? new ArrayList<String>() : options;
     }
 }

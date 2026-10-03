@@ -3,12 +3,14 @@ package com.assetstree.jira.service;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
+import com.assetstree.jira.dto.ImportResultDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.InventoryDto;
 import com.assetstree.jira.dto.InventoryRowDto;
@@ -19,9 +21,16 @@ import com.assetstree.jira.dto.PickerNodeDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
+import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.dto.ServicePlanDto;
+import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.TypeDraft;
 
@@ -35,6 +44,8 @@ public interface AssetService {
     AssetDto getAsset(ApplicationUser user, int id);
 
     AssetDto createAsset(ApplicationUser user, AssetDraft draft);
+
+    AssetDto copyAsset(ApplicationUser user, int id);
 
     AssetDto updateAsset(ApplicationUser user, int id, AssetDraft draft);
 
@@ -92,11 +103,23 @@ public interface AssetService {
 
     ReportDto report(ApplicationUser user, String projectKey);
 
+    byte[] exportEquipment(ApplicationUser user, String projectKey);
+
+    ImportResultDto importEquipment(ApplicationUser user, String projectKey, ImportDraft draft);
+
+    BulkResultDto applyBulk(ApplicationUser user, String projectKey, BulkDraft draft);
+
     InventoryDto inventory(ApplicationUser user, String projectKey);
 
     InventoryRowDto markInventory(ApplicationUser user, int id, boolean checked);
 
     List<PickerNodeDto> picker(ApplicationUser user, String projectKey);
+
+    List<PortalRuleDto> listPortalRules(ApplicationUser user, String projectKey);
+
+    PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
+
+    void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 
@@ -105,4 +128,16 @@ public interface AssetService {
     void syncRequestAsset(ApplicationUser user, Issue issue, String previousAssetId, String nextAssetId);
 
     String describeAsset(String assetId);
+
+    ServicePlanDto createPlan(ApplicationUser user, int assetId, ServicePlanDraft draft);
+
+    /** Pins an equipment type to one place, or removes that pin when the place has no such equipment. */
+    AssetDto offerType(ApplicationUser user, int assetId, PlaceTypeDraft draft, boolean present);
+
+    ServicePlanDto updatePlan(ApplicationUser user, int assetId, int planId, ServicePlanDraft draft);
+
+    void deletePlan(ApplicationUser user, int assetId, int planId);
+
+    /** Moves equipment whose service date has arrived and queues the letters. */
+    void applyDuePlans();
 }

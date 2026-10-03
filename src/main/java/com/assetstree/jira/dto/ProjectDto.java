@@ -15,6 +15,11 @@ public class ProjectDto {
     private boolean canComment;
     private boolean canConfigure;
     private boolean canGrant;
+    private boolean canPlaces;
+    private boolean canObjects;
+    private boolean canTypes;
+    private boolean canAssets;
+    private boolean canAdmin;
 
     public String getKey() {
         return key;
@@ -94,5 +99,45 @@ public class ProjectDto {
 
     public void setCanGrant(boolean canGrant) {
         this.canGrant = canGrant;
+    }
+
+    public boolean isCanPlaces() {
+        return canPlaces;
+    }
+
+    public void setCanPlaces(boolean canPlaces) {
+        this.canPlaces = canPlaces;
+    }
+
+    public boolean isCanObjects() {
+        return canObjects;
+    }
+
+    public void setCanObjects(boolean canObjects) {
+        this.canObjects = canObjects;
+    }
+
+    public boolean isCanTypes() {
+        return canTypes;
+    }
+
+    public void setCanTypes(boolean canTypes) {
+        this.canTypes = canTypes;
+    }
+
+    public boolean isCanAssets() {
+        return canAssets;
+    }
+
+    public void setCanAssets(boolean canAssets) {
+        this.canAssets = canAssets;
+    }
+
+    public boolean isCanAdmin() {
+        return canAdmin;
+    }
+
+    public void setCanAdmin(boolean canAdmin) {
+        this.canAdmin = canAdmin;
     }
 }

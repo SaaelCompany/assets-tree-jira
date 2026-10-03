@@ -8,25 +8,36 @@ import static org.junit.Assert.assertTrue;
 
 public class GrantCapsTest {
     @Test
-    public void oldLevelsExpandToTheSameBundle() {
-        assertEquals("view", GrantCaps.fromLevel("view"));
-        assertEquals("view,create,edit,move,remove,comment", GrantCaps.fromLevel("edit"));
-        assertTrue(GrantCaps.fromLevel("manage").contains("schema"));
-        assertTrue(GrantCaps.fromLevel("manage").contains("access"));
-        assertEquals("", GrantCaps.fromLevel("other"));
+    public void rolesStaySeparateUntilABroaderOneIsChosen() {
+        assertEquals("view", GrantCaps.normalize("view"));
+        assertEquals("view,places", GrantCaps.normalize("places"));
+        assertEquals("view,types", GrantCaps.normalize("types"));
+        assertEquals("view,object", GrantCaps.normalize("object"));
+        assertEquals("view,places,types,object,assets", GrantCaps.normalize("assets"));
+        assertEquals("view,places,types,object,assets,admin", GrantCaps.normalize("admin"));
+        assertFalse(GrantCaps.has("places", GrantCaps.OBJECT));
+        assertFalse(GrantCaps.has("object", GrantCaps.PLACES));
+        assertFalse(GrantCaps.has("types", GrantCaps.OBJECT));
+        assertTrue(GrantCaps.has("assets", GrantCaps.PLACES));
+        assertTrue(GrantCaps.has("assets", GrantCaps.TYPES));
+        assertTrue(GrantCaps.has("assets", GrantCaps.OBJECT));
+        assertFalse(GrantCaps.has("assets", GrantCaps.ADMIN));
+        assertTrue(GrantCaps.has("admin", GrantCaps.ASSETS));
     }
 
     @Test
-    public void normalizeKeepsViewAndDropsUnknownTokens() {
-        assertEquals("view,edit,comment", GrantCaps.normalize("comment, edit, nope"));
-        assertEquals("view,create,remove,comment", GrantCaps.normalize("create"));
-        assertEquals("view", GrantCaps.normalize("view"));
+    public void olderLevelsStillOpenTheSameWork() {
+        assertEquals("view", GrantCaps.fromLevel("view"));
+        assertTrue(GrantCaps.has(GrantCaps.fromLevel("edit"), GrantCaps.PLACES));
+        assertTrue(GrantCaps.has(GrantCaps.fromLevel("edit"), GrantCaps.OBJECT));
+        assertFalse(GrantCaps.has(GrantCaps.fromLevel("edit"), GrantCaps.TYPES));
+        assertTrue(GrantCaps.has(GrantCaps.fromLevel("manage"), GrantCaps.ASSETS));
+        assertFalse(GrantCaps.has(GrantCaps.fromLevel("manage"), GrantCaps.ADMIN));
+        assertEquals("view,places,types,object,assets", GrantCaps.normalize("schema,access"));
+        assertEquals("view,places,object", GrantCaps.normalize("create,edit"));
         assertEquals("", GrantCaps.normalize(""));
-        assertEquals("manage", GrantCaps.levelOf("view,schema"));
-        assertEquals("edit", GrantCaps.levelOf("view,move"));
-        assertFalse(GrantCaps.has("view,edit", GrantCaps.REMOVE));
-        assertTrue(GrantCaps.has("view,remove", GrantCaps.REMOVE));
-        assertTrue(GrantCaps.has("view,create", GrantCaps.REMOVE));
-        assertTrue(GrantCaps.has("view,create", GrantCaps.COMMENT));
+        assertEquals("admin", GrantCaps.levelOf("admin"));
+        assertEquals("assets", GrantCaps.levelOf("assets"));
+        assertEquals("view", GrantCaps.levelOf("view"));
     }
 }
