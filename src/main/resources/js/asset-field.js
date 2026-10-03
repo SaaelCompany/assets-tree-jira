@@ -472,11 +472,43 @@
                 var width = neighbour.box.getBoundingClientRect().width;
                 if (width >= 8) opts.width = Math.round(width) + 'px';
             }
+            var $select = AJS.$(select);
             try {
-                AJS.$(select).auiSelect2(opts);
+                $select.auiSelect2(opts);
             } catch (error) {
                 return false;
             }
+            function nodeOf(value) {
+                if (!value) return null;
+                if (value.nodeType === 1) return value;
+                if (value[0] && value[0].nodeType === 1) return value[0];
+                return null;
+            }
+            function alignDropdown() {
+                var api = $select.data('select2');
+                if (!api) return;
+                var container = nodeOf(api.container);
+                var dropdown = nodeOf(api.dropdown || api.dropdownContainer);
+                if (!container || !dropdown) return;
+                var width = Math.round(container.getBoundingClientRect().width);
+                if (width < 8) return;
+                dropdown.style.setProperty('width', width + 'px', 'important');
+                dropdown.style.setProperty('min-width', width + 'px', 'important');
+                dropdown.style.setProperty('max-width', width + 'px', 'important');
+                dropdown.style.setProperty('box-sizing', 'border-box', 'important');
+                var fields = dropdown.querySelectorAll('.select2-search, .select2-search input, .select2-results');
+                for (var i = 0; i < fields.length; i++) {
+                    fields[i].style.setProperty('width', '100%', 'important');
+                    fields[i].style.setProperty('box-sizing', 'border-box', 'important');
+                }
+            }
+            if ($select.on) {
+                $select.on('select2-open', function () {
+                    alignDropdown();
+                    window.setTimeout(alignDropdown, 0);
+                });
+            }
+            alignDropdown();
             return true;
         }
 

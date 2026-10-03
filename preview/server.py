@@ -1928,9 +1928,9 @@ form.vp-request-form input[type="text"] {
 .select2-container.select2-dropdown-open .select2-choice { background-color: #344563; background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%23ffffff' d='M8.292 10.293a1 1 0 0 0 0 1.4l2.94 2.97a1 1 0 0 0 1.4 0l2.93-2.96a1 1 0 0 0-1.4-1.41L12 12.59l-2.3-2.33a1 1 0 0 0-1.41 0z'/%%3E%%3C/svg%%3E"); color: #fff; }
 .select2-chosen { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .select2-offscreen { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; border: 0 !important; }
-.select2-drop { position: absolute; left: 0; right: 0; z-index: 20; background: #fff; border: 1px solid #dfe1e6; border-radius: 0 0 3px 3px; box-shadow: 0 4px 8px rgba(9, 30, 66, 0.25); }
+.select2-drop { position: absolute; left: 0; width: 190px; z-index: 20; background: #fff; border: 1px solid #dfe1e6; border-radius: 0 0 3px 3px; box-shadow: 0 4px 8px rgba(9, 30, 66, 0.25); }
 .select2-search { padding: 4px; }
-.select2-search input { box-sizing: border-box; width: 100%%; height: 28px; margin: 0; padding: 0 28px 0 8px; border: 1px solid #dfe1e6; border-radius: 3px; background: #fff url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%236B778C' d='M16.4 15l3.8 3.8-1.4 1.4-3.8-3.8a7 7 0 1 1 1.4-1.4zM10 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10z'/%%3E%%3C/svg%%3E") no-repeat right 6px center; background-size: 16px 16px; font-size: 14px; }
+.select2-search input { box-sizing: border-box; width: 160px; height: 28px; margin: 0; padding: 0 28px 0 8px; border: 1px solid #dfe1e6; border-radius: 3px; background: #fff url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%236B778C' d='M16.4 15l3.8 3.8-1.4 1.4-3.8-3.8a7 7 0 1 1 1.4-1.4zM10 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10z'/%%3E%%3C/svg%%3E") no-repeat right 6px center; background-size: 16px 16px; font-size: 14px; }
 .select2-results { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; }
 .select2-result { padding: 6px 8px; color: #172b4d; font-size: 14px; cursor: pointer; }
 .select2-result.is-highlighted { background: #ebecf0; }
@@ -1945,6 +1945,12 @@ form.vp-request-form input[type="text"] {
         el.__auiData = el.__auiData || {};
         if (arguments.length < 2) return el.__auiData[key];
         el.__auiData[key] = value;
+        return this;
+    };
+    Wrapper.prototype.on = function (name, fn) {
+        var el = this.nodes[0];
+        if (!el) return this;
+        el.addEventListener(name, function (event) { fn.call(el, event); });
         return this;
     };
     Wrapper.prototype.auiSelect2 = function (options) {
@@ -2030,6 +2036,9 @@ form.vp-request-form input[type="text"] {
             if ((' ' + box.className + ' ').indexOf(' select2-dropdown-open ') === -1) box.className += ' select2-dropdown-open';
             input.value = '';
             paint();
+            var opened = document.createEvent('Event');
+            opened.initEvent('select2-open', true, false);
+            el.dispatchEvent(opened);
             input.focus();
         }
         choice.addEventListener('click', function (event) {
@@ -2059,10 +2068,13 @@ form.vp-request-form input[type="text"] {
             if (!box.contains(event.target)) close();
         });
         el.__auiData = el.__auiData || {};
-        el.__auiData.select2 = {
-            opts: options,
-            container: { width: function (value) { if (value) box.style.width = typeof value === 'number' ? value + 'px' : value; return box.getBoundingClientRect().width; } }
+        var containerApi = {
+            0: box,
+            length: 1,
+            width: function (value) { if (value) box.style.width = typeof value === 'number' ? value + 'px' : value; return box.getBoundingClientRect().width; }
         };
+        var dropdownApi = { 0: drop, length: 1 };
+        el.__auiData.select2 = { opts: options, container: containerApi, dropdown: dropdownApi };
     }
     window.AJS = window.AJS || {};
     window.AJS.$ = query;
@@ -2154,7 +2166,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.84",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.85",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
