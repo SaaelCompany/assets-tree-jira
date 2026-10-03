@@ -1923,8 +1923,155 @@ form.vp-request-form input[type="text"] {
     font-size: 14px;
     font-weight: 400;
 }
+.select2-container { position: relative; display: inline-block; box-sizing: border-box; vertical-align: middle; }
+.select2-container .select2-choice { display: flex; align-items: center; box-sizing: border-box; height: 30px; padding: 0 28px 0 8px; border: 2px solid transparent; border-radius: 3px; background: #ebecf0 url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%23172B4D' d='M8.292 10.293a1 1 0 0 0 0 1.4l2.94 2.97a1 1 0 0 0 1.4 0l2.93-2.96a1 1 0 0 0-1.4-1.41L12 12.59l-2.3-2.33a1 1 0 0 0-1.41 0z'/%%3E%%3C/svg%%3E") no-repeat right 8px center; background-size: 16px 16px; color: #172b4d; font-size: 14px; line-height: 26px; text-decoration: none; cursor: pointer; }
+.select2-container.select2-dropdown-open .select2-choice { background-color: #344563; background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%23ffffff' d='M8.292 10.293a1 1 0 0 0 0 1.4l2.94 2.97a1 1 0 0 0 1.4 0l2.93-2.96a1 1 0 0 0-1.4-1.41L12 12.59l-2.3-2.33a1 1 0 0 0-1.41 0z'/%%3E%%3C/svg%%3E"); color: #fff; }
+.select2-chosen { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select2-offscreen { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; border: 0 !important; }
+.select2-drop { position: absolute; left: 0; right: 0; z-index: 20; background: #fff; border: 1px solid #dfe1e6; border-radius: 0 0 3px 3px; box-shadow: 0 4px 8px rgba(9, 30, 66, 0.25); }
+.select2-search { padding: 4px; }
+.select2-search input { box-sizing: border-box; width: 100%%; height: 28px; margin: 0; padding: 0 28px 0 8px; border: 1px solid #dfe1e6; border-radius: 3px; background: #fff url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%236B778C' d='M16.4 15l3.8 3.8-1.4 1.4-3.8-3.8a7 7 0 1 1 1.4-1.4zM10 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10z'/%%3E%%3C/svg%%3E") no-repeat right 6px center; background-size: 16px 16px; font-size: 14px; }
+.select2-results { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow: auto; }
+.select2-result { padding: 6px 8px; color: #172b4d; font-size: 14px; cursor: pointer; }
+.select2-result.is-highlighted { background: #ebecf0; }
 </style>
 %s
+<script>
+(function () {
+    function Wrapper(nodes) { this.nodes = nodes; }
+    Wrapper.prototype.data = function (key, value) {
+        var el = this.nodes[0];
+        if (!el) return undefined;
+        el.__auiData = el.__auiData || {};
+        if (arguments.length < 2) return el.__auiData[key];
+        el.__auiData[key] = value;
+        return this;
+    };
+    Wrapper.prototype.auiSelect2 = function (options) {
+        var el = this.nodes[0];
+        if (!el) return this;
+        if (options === 'destroy') { destroySelect2(el); return this; }
+        buildSelect2(el, options || {});
+        return this;
+    };
+    function query(arg) {
+        var nodes = [];
+        if (typeof arg === 'string') nodes = Array.prototype.slice.call(document.querySelectorAll(arg));
+        else if (arg && arg.nodeType === 1) nodes = [arg];
+        return new Wrapper(nodes);
+    }
+    query.fn = { auiSelect2: function () {} };
+    function destroySelect2(el) {
+        if (el.__auiDrop && el.__auiDrop.parentNode) el.__auiDrop.parentNode.removeChild(el.__auiDrop);
+        if (el.__auiBox && el.__auiBox.parentNode) el.__auiBox.parentNode.removeChild(el.__auiBox);
+        el.__auiDrop = null;
+        el.__auiBox = null;
+        el.className = (el.className || '').replace(/\bselect2-offscreen\b/g, '').replace(/\s+/g, ' ');
+        el.__auiData = {};
+    }
+    function chosenText(el) {
+        var option = el.options[el.selectedIndex];
+        return option ? option.text : '';
+    }
+    function buildSelect2(el, options) {
+        destroySelect2(el);
+        if ((' ' + el.className + ' ').indexOf(' select2-offscreen ') === -1) el.className += ' select2-offscreen';
+        var box = document.createElement('div');
+        box.className = 'select2-container' + (options.containerCssClass ? ' ' + options.containerCssClass : '');
+        if (el.id) box.id = 's2id_' + el.id;
+        if (options.width) box.style.width = options.width;
+        var choice = document.createElement('a');
+        choice.href = '#';
+        choice.className = 'select2-choice';
+        var chosen = document.createElement('span');
+        chosen.className = 'select2-chosen';
+        chosen.textContent = chosenText(el);
+        choice.appendChild(chosen);
+        box.appendChild(choice);
+        var drop = document.createElement('div');
+        drop.className = 'select2-drop' + (options.dropdownCssClass ? ' ' + options.dropdownCssClass : '');
+        drop.hidden = true;
+        var search = document.createElement('div');
+        search.className = 'select2-search';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.setAttribute('autocomplete', 'off');
+        search.appendChild(input);
+        var list = document.createElement('ul');
+        list.className = 'select2-results';
+        drop.appendChild(search);
+        drop.appendChild(list);
+        box.appendChild(drop);
+        el.parentNode.insertBefore(box, el.nextSibling);
+        el.__auiBox = box;
+        el.__auiDrop = drop;
+        function paint() {
+            list.innerHTML = '';
+            var needle = (input.value || '').toLowerCase();
+            var showSearch = options.minimumResultsForSearch === undefined || options.minimumResultsForSearch >= 0;
+            search.hidden = !showSearch;
+            for (var i = 0; i < el.options.length; i++) {
+                var text = el.options[i].text || '';
+                if (needle && text.toLowerCase().indexOf(needle) === -1) continue;
+                var item = document.createElement('li');
+                item.className = 'select2-result';
+                item.textContent = text;
+                item.setAttribute('data-value', el.options[i].value);
+                list.appendChild(item);
+            }
+        }
+        function close() {
+            drop.hidden = true;
+            box.className = box.className.replace(/\bselect2-dropdown-open\b/g, '').replace(/\s+/g, ' ');
+        }
+        function open() {
+            if (el.disabled) return;
+            drop.hidden = false;
+            if ((' ' + box.className + ' ').indexOf(' select2-dropdown-open ') === -1) box.className += ' select2-dropdown-open';
+            input.value = '';
+            paint();
+            input.focus();
+        }
+        choice.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (drop.hidden) open(); else close();
+        });
+        input.addEventListener('input', paint);
+        list.addEventListener('click', function (event) {
+            var item = event.target;
+            if (!item || !item.getAttribute) return;
+            var value = item.getAttribute('data-value');
+            if (value === null) return;
+            el.value = value;
+            chosen.textContent = item.textContent;
+            close();
+            var change = document.createEvent('HTMLEvents');
+            change.initEvent('change', true, false);
+            el.dispatchEvent(change);
+        });
+        list.addEventListener('mouseover', function (event) {
+            var rows = list.querySelectorAll('.select2-result');
+            for (var i = 0; i < rows.length; i++) rows[i].className = 'select2-result';
+            if (event.target && event.target.className === 'select2-result') event.target.className = 'select2-result is-highlighted';
+        });
+        document.addEventListener('click', function (event) {
+            if (!box.contains(event.target)) close();
+        });
+        el.__auiData = el.__auiData || {};
+        el.__auiData.select2 = {
+            opts: options,
+            container: { width: function (value) { if (value) box.style.width = typeof value === 'number' ? value + 'px' : value; return box.getBoundingClientRect().width; } }
+        };
+    }
+    window.AJS = window.AJS || {};
+    window.AJS.$ = query;
+    document.addEventListener('DOMContentLoaded', function () {
+        var nodes = document.querySelectorAll('.field-group > select, .field-group .field-value > select');
+        for (var i = 0; i < nodes.length; i++) query(nodes[i]).auiSelect2({ minimumResultsForSearch: 0, width: '500px' });
+    });
+})();
+</script>
 <script src="/download/resources/asset-tree/asset-field.js"></script>
 </head>
 <body><main>
@@ -2007,7 +2154,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.83",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.84",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

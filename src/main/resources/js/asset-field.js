@@ -183,6 +183,15 @@
         return false;
     }
 
+    function insideSelect2(node) {
+        while (node) {
+            var cls = node.className && typeof node.className === 'string' ? ' ' + node.className + ' ' : '';
+            if (cls.indexOf(' select2-container ') !== -1 || cls.indexOf(' select2-drop ') !== -1 || cls.indexOf(' select2-search ') !== -1) return true;
+            node = node.parentNode;
+        }
+        return false;
+    }
+
     function readAnswers(picker) {
         var form = formOf(picker);
         var answers = [];
@@ -190,7 +199,7 @@
         var i;
         for (i = 0; i < controls.length; i++) {
             var control = controls[i];
-            if (insidePicker(control) || control.getAttribute('data-asset-tree') === '1') continue;
+            if (insidePicker(control) || insideSelect2(control) || control.getAttribute('data-asset-tree') === '1') continue;
             var tag = control.tagName ? control.tagName.toLowerCase() : '';
             if (tag === 'select') {
                 if (!control.options || control.selectedIndex < 0) continue;
@@ -419,12 +428,64 @@
             return eachSelect(shown);
         }
 
+        function canSelect2() {
+            return !!(flat && window.AJS && AJS.$ && AJS.$.fn && typeof AJS.$.fn.auiSelect2 === 'function');
+        }
+
+        function neighbourSelect2() {
+            var form = formOf(picker);
+            var boxes = form.querySelectorAll('.select2-container');
+            for (var i = 0; i < boxes.length; i++) {
+                var box = boxes[i];
+                if (!shown(box) || insidePicker(box)) continue;
+                var source = null;
+                if (box.id && box.id.indexOf('s2id_') === 0) source = document.getElementById(box.id.substring(5));
+                if (!source) {
+                    var prev = box.previousSibling;
+                    while (prev && prev.nodeType !== 1) prev = prev.previousSibling;
+                    if (prev && prev.tagName && prev.tagName.toLowerCase() === 'select') source = prev;
+                }
+                if (!source || source.getAttribute('data-asset-tree') === '1') continue;
+                return { box: box, select: source };
+            }
+            return null;
+        }
+
+        function destroyEnhancement(select) {
+            if (!select || !window.AJS || !AJS.$ || !AJS.$.fn || typeof AJS.$.fn.auiSelect2 !== 'function') return;
+            var $select = AJS.$(select);
+            if (!$select || !$select.data || !$select.data('select2')) return;
+            try { $select.auiSelect2('destroy'); } catch (error) { /* already removed */ }
+        }
+
+        function enhanceSelect(select) {
+            if (!canSelect2()) return false;
+            var neighbour = neighbourSelect2();
+            var opts = { minimumResultsForSearch: 0 };
+            if (neighbour && AJS.$(neighbour.select).data) {
+                var api = AJS.$(neighbour.select).data('select2');
+                if (api && api.opts) {
+                    if (typeof api.opts.minimumResultsForSearch !== 'undefined') opts.minimumResultsForSearch = api.opts.minimumResultsForSearch;
+                    if (api.opts.dropdownCssClass) opts.dropdownCssClass = api.opts.dropdownCssClass;
+                    if (api.opts.containerCssClass) opts.containerCssClass = api.opts.containerCssClass;
+                }
+                var width = neighbour.box.getBoundingClientRect().width;
+                if (width >= 8) opts.width = Math.round(width) + 'px';
+            }
+            try {
+                AJS.$(select).auiSelect2(opts);
+            } catch (error) {
+                return false;
+            }
+            return true;
+        }
+
         function dressSelect(select) {
             var sample = visibleSelect();
             var className = sample && sample.className ? sample.className : '';
             if (className && !/hidden|offscreen|assistive/i.test(className)) select.className = className;
             else select.className = (select.className ? select.className + ' ' : '') + 'select';
-            if (!flat || !sample) return;
+            if (canSelect2() || !flat || !sample) return;
             var style = window.getComputedStyle(sample);
             var props = [
                 'box-sizing', 'height', 'min-height',
@@ -463,11 +524,13 @@
                 levels.appendChild(select);
                 return;
             }
+            destroyEnhancement(picker.portalSelect);
             if (picker.portalSelect && picker.portalSelect.parentNode) {
                 picker.portalSelect.parentNode.removeChild(picker.portalSelect);
             }
             picker.portalSelect = select;
             picker.parentNode.insertBefore(select, picker);
+            enhanceSelect(select);
         }
 
         function blankLabel(fallback) {
