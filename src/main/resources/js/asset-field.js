@@ -321,6 +321,9 @@
         var chooseText = picker.getAttribute('data-choose') || phrase('choose');
         var emptyText = picker.getAttribute('data-empty') || phrase('empty');
         var flat = !!picker.valueInput;
+        if (flat && (' ' + picker.className + ' ').indexOf(' asset-tree-picker-portal ') === -1) {
+            picker.className += ' asset-tree-picker-portal';
+        }
         if (!projectKey || !hidden || !levels) return;
         var nodes = null;
         var byId = {};
@@ -393,25 +396,35 @@
             return items;
         }
 
-        function labelOf(node) {
-            return pathTo(byId, node.id).map(function (item) { return item.name; }).join(' / ');
-        }
-
-        function neighbourSelect() {
+        function eachSelect(accept) {
             var form = formOf(picker);
             var nodes = form.querySelectorAll('select');
             for (var i = 0; i < nodes.length; i++) {
-                if (!insidePicker(nodes[i]) && nodes[i].getAttribute('data-asset-tree') !== '1') return nodes[i];
+                if (insidePicker(nodes[i]) || nodes[i].getAttribute('data-asset-tree') === '1') continue;
+                if (accept(nodes[i])) return nodes[i];
             }
             return null;
         }
 
+        function shown(node) {
+            if (!node || !window.getComputedStyle) return false;
+            var style = window.getComputedStyle(node);
+            if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+            if (node.getAttribute('aria-hidden') === 'true') return false;
+            var box = node.getBoundingClientRect();
+            return box.width >= 8 && box.height >= 8;
+        }
+
+        function visibleSelect() {
+            return eachSelect(shown);
+        }
+
         function dressSelect(select) {
-            var sample = neighbourSelect();
-            if (sample && sample.className) select.className = sample.className;
+            var sample = visibleSelect();
+            var className = sample && sample.className ? sample.className : '';
+            if (className && !/hidden|offscreen|assistive/i.test(className)) select.className = className;
             else select.className = (select.className ? select.className + ' ' : '') + 'select';
-            // Portal lists sit inside an extra wrapper, so Jira's select rules may miss them.
-            if (!flat || !sample || !window.getComputedStyle) return;
+            if (!flat || !sample) return;
             var style = window.getComputedStyle(sample);
             var props = [
                 'box-sizing', 'height', 'min-height',
@@ -422,16 +435,21 @@
                 'border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius',
                 'background-color', 'background-image', 'background-repeat', 'background-position', 'background-size',
                 'color', 'font-style', 'font-weight', 'font-size', 'line-height', 'font-family',
-                'box-shadow', 'appearance', '-webkit-appearance', '-moz-appearance', 'outline', 'cursor'
+                'box-shadow', 'appearance', '-webkit-appearance', '-moz-appearance', 'cursor'
             ];
             for (var p = 0; p < props.length; p++) {
                 var value = style.getPropertyValue(props[p]);
-                if (value) select.style.setProperty(props[p], value);
+                if (!value || value === 'none' || value === 'auto') continue;
+                if ((props[p] === 'height' || props[p] === 'min-height') && parseFloat(value) < 8) continue;
+                select.style.setProperty(props[p], value);
+                if ((props[p] === 'appearance' || props[p] === '-webkit-appearance' || props[p] === '-moz-appearance') && value !== 'none') {
+                    select.style.setProperty('background-image', 'none');
+                }
             }
         }
 
         function blankLabel(fallback) {
-            var sample = neighbourSelect();
+            var sample = visibleSelect() || eachSelect(function () { return true; });
             if (sample && sample.options && sample.options.length) {
                 var first = sample.options[0];
                 var value = first.value || '';
@@ -453,9 +471,6 @@
                 levels.appendChild(el('p', 'asset-tree-picker-wait', waitText));
                 if (current) current.textContent = '';
                 return;
-            }
-            if (rootId && byId[rootId]) {
-                levels.appendChild(el('p', 'asset-tree-picker-root', labelOf(byId[rootId])));
             }
             var options = listed(rootId);
             var select = el('select');

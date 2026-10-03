@@ -23,13 +23,40 @@
     color: #6b778c;
 }
 
-/* Do not paint a border or background here: that hides the portal chevron.
-   Width stays full so the control lines up when the portal rule does not reach a nested select. */
 .asset-tree-picker select {
     box-sizing: border-box;
     width: 100%;
     max-width: 100%;
     font-weight: 400;
+}
+
+/* Customer portal selects are a grey bar with a chevron. A hidden select earlier
+   in the form must not be copied: its height is 0 and the field disappears. */
+.asset-tree-picker-portal select {
+    min-height: 40px;
+    height: 40px;
+    margin: 0;
+    padding: 0 32px 0 8px;
+    border: 2px solid transparent;
+    border-radius: 3px;
+    background-color: #eceef0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%3E%3Cpath fill='%23172B4D' d='M8.292 10.293a1.009 1.009 0 0 0 0 1.419l2.939 2.965c.218.215.5.322.779.322s.556-.107.769-.322l2.93-2.955a1.01 1.01 0 0 0 0-1.419.987.987 0 0 0-1.406 0l-2.298 2.317-2.307-2.327a.99.99 0 0 0-1.406 0z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    background-size: 16px 16px;
+    color: #172b4d;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 20px;
+    cursor: pointer;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+}
+
+.asset-tree-picker-portal select:disabled {
+    opacity: 1;
+    color: #172b4d;
 }
 
 .asset-tree-picker-current,

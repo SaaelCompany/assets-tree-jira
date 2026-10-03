@@ -1929,6 +1929,7 @@ form.vp-request-form input[type="text"] {
 <h1>%s</h1>
 <p>%s</p>
 <form id="request-form" class="vp-request-form">
+<select id="customfield_10099" class="hidden" style="display:none" aria-hidden="true"><option value="-1">Не выбрано</option></select>
 <div class="field-group">
 <label>Площадка <span class="vp-optional">(необязательно)</span></label>
 <select id="customfield_10100" name="customfield_10100">
@@ -2004,7 +2005,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.81",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.82",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
