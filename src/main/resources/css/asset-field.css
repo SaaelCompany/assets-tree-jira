@@ -57,6 +57,49 @@
     color: #172b4d;
 }
 
+/* Jira sizes a plain text input to about 250px. That input, and select2's
+   own focus field, were painting over the left of the full-width closed list. */
+.select2-container.asset-tree-portal-select.select2-container {
+    max-width: none !important;
+    background: transparent !important;
+    box-sizing: border-box !important;
+}
+
+.select2-container.asset-tree-portal-select.select2-container .select2-choice {
+    display: block !important;
+    position: relative !important;
+    width: 100% !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+}
+
+.select2-container.asset-tree-portal-select.select2-container:not(.select2-dropdown-open) .select2-choice {
+    background-color: var(--asset-tree-choice-bg, #ebecf0) !important;
+}
+
+.select2-container.asset-tree-portal-select.select2-container .select2-chosen {
+    width: auto !important;
+    max-width: none !important;
+    background: transparent !important;
+}
+
+.select2-container.asset-tree-portal-select.select2-container > input.select2-focusser,
+.select2-container.asset-tree-portal-select.select2-container input.select2-offscreen {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    max-width: 1px !important;
+    margin: -1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    border: 0 !important;
+    background: transparent !important;
+    z-index: 0 !important;
+}
+
 /* The open list is moved onto the page body. Select2 then writes a plain
    element width, which replaces an inline priority. The custom property
    stays, so the list keeps the closed field's width. */

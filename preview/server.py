@@ -1929,6 +1929,8 @@ form.vp-request-form input[type="text"] {
 .select2-container.select2-dropdown-open .select2-choice { background-color: #344563; background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%23ffffff' d='M8.292 10.293a1 1 0 0 0 0 1.4l2.94 2.97a1 1 0 0 0 1.4 0l2.93-2.96a1 1 0 0 0-1.4-1.41L12 12.59l-2.3-2.33a1 1 0 0 0-1.41 0z'/%%3E%%3C/svg%%3E"); color: #fff; }
 .select2-chosen { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .select2-offscreen { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; border: 0 !important; }
+form.vp-request-form .select2-container .select2-focusser { position: absolute !important; left: 0 !important; top: 0 !important; width: 250px !important; height: 100%% !important; max-width: 250px !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; clip: auto !important; border: 0 !important; background: #dadbe2 !important; z-index: 2 !important; }
+form.vp-request-form .select2-container .select2-chosen { position: relative; z-index: 3; display: block !important; max-width: 250px !important; background: #dadbe2 !important; }
 .select2-drop { position: absolute; left: 0; width: 190px; z-index: 20; background: #fff; border: 1px solid #dfe1e6; border-radius: 0 0 3px 3px; box-shadow: 0 4px 8px rgba(9, 30, 66, 0.25); }
 .select2-search { padding: 4px; }
 .select2-search input { box-sizing: border-box; width: 160px; height: 28px; margin: 0; padding: 0 28px 0 8px; border: 1px solid #dfe1e6; border-radius: 3px; background: #fff url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%%3E%%3Cpath fill='%%236B778C' d='M16.4 15l3.8 3.8-1.4 1.4-3.8-3.8a7 7 0 1 1 1.4-1.4zM10 15a5 5 0 1 0 0-10 5 5 0 0 0 0 10z'/%%3E%%3C/svg%%3E") no-repeat right 6px center; background-size: 16px 16px; font-size: 14px; }
@@ -1995,6 +1997,10 @@ form.vp-request-form input[type="text"] {
         chosen.textContent = chosenText(el);
         choice.appendChild(chosen);
         box.appendChild(choice);
+        var focusser = document.createElement('input');
+        focusser.type = 'text';
+        focusser.className = 'select2-focusser select2-offscreen';
+        box.appendChild(focusser);
         var drop = document.createElement('div');
         drop.className = 'select2-drop' + (options.dropdownCssClass ? ' ' + options.dropdownCssClass : '');
         drop.hidden = true;
@@ -2180,7 +2186,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.86",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.87",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

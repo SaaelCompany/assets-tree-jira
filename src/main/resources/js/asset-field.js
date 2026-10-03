@@ -514,6 +514,41 @@
                     var nested = container.querySelectorAll('.select2-drop');
                     for (var i = 0; i < nested.length; i++) add(nested[i]);
                 }
+                if (container && (' ' + container.className + ' ').indexOf(' asset-tree-portal-select ') === -1) {
+                    container.className += ' asset-tree-portal-select';
+                }
+                if (container) {
+                    var chosen = container.querySelector('.select2-chosen');
+                    if (chosen && chosen.style && chosen.style.setProperty) {
+                        chosen.style.setProperty('max-width', 'none', 'important');
+                        chosen.style.setProperty('width', 'auto', 'important');
+                        chosen.style.setProperty('background', 'transparent', 'important');
+                    }
+                    var cover = container.querySelectorAll('input.select2-focusser, input.select2-offscreen');
+                    for (var c = 0; c < cover.length; c++) {
+                        var field = cover[c];
+                        if (!field.style || !field.style.setProperty) continue;
+                        field.style.setProperty('position', 'absolute', 'important');
+                        field.style.setProperty('width', '1px', 'important');
+                        field.style.setProperty('height', '1px', 'important');
+                        field.style.setProperty('max-width', '1px', 'important');
+                        field.style.setProperty('margin', '-1px', 'important');
+                        field.style.setProperty('padding', '0', 'important');
+                        field.style.setProperty('border', '0', 'important');
+                        field.style.setProperty('overflow', 'hidden', 'important');
+                        field.style.setProperty('clip', 'rect(0 0 0 0)', 'important');
+                        field.style.setProperty('background', 'transparent', 'important');
+                    }
+                }
+                var sampleChoice = null;
+                var neighbour = neighbourSelect2();
+                if (neighbour && neighbour.box) sampleChoice = neighbour.box.querySelector('.select2-choice');
+                if (container && sampleChoice && window.getComputedStyle) {
+                    var choiceBg = window.getComputedStyle(sampleChoice).backgroundColor;
+                    if (choiceBg && choiceBg !== 'transparent' && choiceBg !== 'rgba(0, 0, 0, 0)') {
+                        container.style.setProperty('--asset-tree-choice-bg', choiceBg);
+                    }
+                }
                 var oursOpen = container && (' ' + container.className + ' ').indexOf(' select2-dropdown-open ') !== -1;
                 if (oursOpen) {
                     var active = document.querySelectorAll('.select2-drop-active');
@@ -852,8 +887,21 @@
     function hideNative(input) {
         input.setAttribute('data-asset-tree', '1');
         input.className = (input.className ? input.className + ' ' : '') + 'asset-tree-picker-native';
-        if (input.style && input.style.setProperty) input.style.setProperty('display', 'none', 'important');
-        else input.style.display = 'none';
+        if (!input.style || !input.style.setProperty) {
+            input.style.display = 'none';
+            return;
+        }
+        input.style.setProperty('display', 'none', 'important');
+        input.style.setProperty('position', 'absolute', 'important');
+        input.style.setProperty('width', '1px', 'important');
+        input.style.setProperty('max-width', '1px', 'important');
+        input.style.setProperty('height', '1px', 'important');
+        input.style.setProperty('margin', '-1px', 'important');
+        input.style.setProperty('padding', '0', 'important');
+        input.style.setProperty('border', '0', 'important');
+        input.style.setProperty('overflow', 'hidden', 'important');
+        input.style.setProperty('clip', 'rect(0 0 0 0)', 'important');
+        input.style.setProperty('background', 'transparent', 'important');
     }
 
     function adoptTextFields(ctx) {
@@ -865,7 +913,11 @@
             );
             for (var i = 0; i < inputs.length; i++) {
                 var input = inputs[i];
-                if (input.getAttribute('data-asset-tree') === '1' || insidePicker(input) || input.type === 'hidden') continue;
+                if (input.type === 'hidden' || insidePicker(input)) continue;
+                if (input.getAttribute('data-asset-tree') === '1') {
+                    hideNative(input);
+                    continue;
+                }
                 hideNative(input);
                 var picker = el('div', 'asset-tree-picker');
                 picker.setAttribute('data-project', ctx.projectKey);
