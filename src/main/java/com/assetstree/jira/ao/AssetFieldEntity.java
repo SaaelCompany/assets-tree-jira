@@ -48,4 +48,9 @@ public interface AssetFieldEntity extends Entity {
     int getPosition();
 
     void setPosition(int position);
+
+    @StringLength(StringLength.UNLIMITED)
+    String getOptions();
+
+    void setOptions(String options);
 }

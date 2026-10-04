@@ -17,6 +17,7 @@ public class MetaDto {
     private String locale;
     private String displayName;
     private String userKey;
+    private String baseUrl;
     private Map<String, String> i18n = new LinkedHashMap<String, String>();
     private List<ProjectDto> projects = new ArrayList<ProjectDto>();
 
@@ -74,6 +75,14 @@ public class MetaDto {
 
     public void setUserKey(String userKey) {
         this.userKey = userKey;
+    }
+
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
     }
 
     public Map<String, String> getI18n() {

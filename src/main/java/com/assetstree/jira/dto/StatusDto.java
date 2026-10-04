@@ -10,6 +10,7 @@ public class StatusDto {
     private String category;
     private int sortOrder;
     private int assetCount;
+    private boolean inSummary;
 
     public String getStatusKey() {
         return statusKey;
@@ -49,5 +50,13 @@ public class StatusDto {
 
     public void setAssetCount(int assetCount) {
         this.assetCount = assetCount;
+    }
+
+    public boolean isInSummary() {
+        return inSummary;
+    }
+
+    public void setInSummary(boolean inSummary) {
+        this.inSummary = inSummary;
     }
 }

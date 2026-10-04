@@ -6,14 +6,22 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.CommentDraft;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
+import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.model.InventoryDraft;
 import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.dto.PortalFieldsDto;
+import com.assetstree.jira.dto.PortalProjectDto;
+import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
+import com.assetstree.jira.web.PortalLookup;
 import com.assetstree.jira.model.TypeDraft;
 import com.assetstree.jira.service.AssetBridge;
 import com.assetstree.jira.service.AssetService;
@@ -101,6 +109,65 @@ public class AssetResource {
     }
 
     @POST
+    @Path("assets/{id}/types")
+    public Response offerType(@PathParam("id") final int id, final PlaceTypeDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.offerType(user(), id, draft, true)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/types/{typeKey}")
+    public Response withdrawType(@PathParam("id") final int id, @PathParam("typeKey") final String typeKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                PlaceTypeDraft draft = new PlaceTypeDraft();
+                draft.setTypeKey(typeKey);
+                assetService.offerType(user(), id, draft, false);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/plans")
+    public Response createPlan(@PathParam("id") final int id, final ServicePlanDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.createPlan(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("assets/{id}/plans/{planId}")
+    public Response updatePlan(@PathParam("id") final int id, @PathParam("planId") final int planId, final ServicePlanDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updatePlan(user(), id, planId, draft)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/plans/{planId}")
+    public Response deletePlan(@PathParam("id") final int id, @PathParam("planId") final int planId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deletePlan(user(), id, planId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @POST
     @Path("assets/{id}/comments")
     public Response addComment(@PathParam("id") final int id, final CommentDraft draft) {
         return invoke(new Callable<Response>() {
@@ -167,6 +234,17 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.inventory(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/copy")
+    public Response copy(@PathParam("id") final int id) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.copyAsset(user(), id)).build();
             }
         });
     }
@@ -280,6 +358,44 @@ public class AssetResource {
     }
 
     @GET
+    @Path("projects/{projectKey}/equipment.xlsx")
+    @Produces("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    public Response exportEquipment(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                byte[] book = assetService.exportEquipment(user(), projectKey);
+                String file = "equipment-" + projectKey + ".xlsx";
+                return Response.ok(book, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        .header("Content-Disposition", "attachment; filename=\"" + file + "\"")
+                        .build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/bulk")
+    public Response bulk(@PathParam("projectKey") final String projectKey, final BulkDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.applyBulk(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/equipment")
+    public Response importEquipment(@PathParam("projectKey") final String projectKey, final ImportDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.importEquipment(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
     @Path("projects/{projectKey}/statuses")
     public Response statuses(@PathParam("projectKey") final String projectKey) {
         return invoke(new Callable<Response>() {
@@ -377,12 +493,84 @@ public class AssetResource {
     }
 
     @GET
+    @Path("asset-fields")
+    public Response assetFields() {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                if (user() == null) {
+                    throw new AssetException(401, "asset-tree.error.auth");
+                }
+                PortalFieldsDto dto = new PortalFieldsDto();
+                dto.setFields(PortalLookup.assetFieldIds());
+                return Response.ok(dto).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("portals/{portalId}")
+    public Response portalProject(@PathParam("portalId") final int portalId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                if (user() == null) {
+                    throw new AssetException(401, "asset-tree.error.auth");
+                }
+                String projectKey = PortalLookup.projectKeyForPortal(user(), portalId);
+                if (projectKey == null || projectKey.isEmpty()) {
+                    throw new AssetException(404, "asset-tree.error.project.notFound");
+                }
+                PortalProjectDto dto = new PortalProjectDto();
+                dto.setProjectKey(projectKey);
+                return Response.ok(dto).build();
+            }
+        });
+    }
+
+    @GET
     @Path("projects/{projectKey}/picker")
     public Response picker(@PathParam("projectKey") final String projectKey) {
         return invoke(new Callable<Response>() {
             @Override
             public Response call() {
                 return Response.ok(assetService.picker(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/portal-rules")
+    public Response portalRules(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listPortalRules(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/portal-rules")
+    public Response addPortalRule(@PathParam("projectKey") final String projectKey, final PortalRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED)
+                        .entity(assetService.addPortalRule(user(), projectKey, draft))
+                        .build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/portal-rules/{ruleId}")
+    public Response deletePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deletePortalRule(user(), projectKey, ruleId);
+                return Response.noContent().build();
             }
         });
     }

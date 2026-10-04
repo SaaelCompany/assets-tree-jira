@@ -35,6 +35,18 @@ public class AssetValidatorTest {
     }
 
     @Test
+    public void captionMayBeEmptyAndStaysShort() {
+        assertNull(AssetValidator.validateCaption(null));
+        assertNull(AssetValidator.validateCaption("  "));
+        assertNull(AssetValidator.validateCaption("Кабинет"));
+        StringBuilder longCaption = new StringBuilder();
+        for (int i = 0; i < 81; i++) {
+            longCaption.append('a');
+        }
+        assertEquals("asset-tree.error.caption.length", AssetValidator.validateCaption(longCaption.toString()));
+    }
+
+    @Test
     public void attributesRejectDuplicatesAndEmptyNames() {
         AttributeDraft empty = new AttributeDraft();
         empty.setName(" ");

@@ -15,6 +15,7 @@ public class AssetDto {
     private String typeKey;
     private String typeLabel;
     private String color;
+    private String icon;
     private String status;
     private Integer parentId;
     private int sortOrder;
@@ -33,6 +34,9 @@ public class AssetDto {
     private List<CommentDto> comments;
     private List<FileDto> files;
     private List<ActivityDto> activities;
+    private List<ServicePlanDto> plans;
+    private String serviceDue;
+    private List<String> offeredTypes = new ArrayList<String>();
 
     public int getId() {
         return id;
@@ -88,6 +92,14 @@ public class AssetDto {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public String getStatus() {
@@ -232,5 +244,29 @@ public class AssetDto {
 
     public void setActivities(List<ActivityDto> activities) {
         this.activities = activities;
+    }
+
+    public List<ServicePlanDto> getPlans() {
+        return plans;
+    }
+
+    public void setPlans(List<ServicePlanDto> plans) {
+        this.plans = plans;
+    }
+
+    public String getServiceDue() {
+        return serviceDue;
+    }
+
+    public void setServiceDue(String serviceDue) {
+        this.serviceDue = serviceDue;
+    }
+
+    public List<String> getOfferedTypes() {
+        return offeredTypes;
+    }
+
+    public void setOfferedTypes(List<String> offeredTypes) {
+        this.offeredTypes = offeredTypes == null ? new ArrayList<String>() : offeredTypes;
     }
 }

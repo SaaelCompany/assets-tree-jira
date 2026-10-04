@@ -45,7 +45,7 @@ final class GrantSignals {
                 if (caps == null || caps.trim().isEmpty()) {
                     caps = GrantCaps.fromLevel(row.getLevel());
                 }
-                if (manageOnly && !GrantCaps.has(caps, GrantCaps.SCHEMA) && !GrantCaps.has(caps, GrantCaps.ACCESS)) {
+                if (manageOnly && !GrantCaps.has(caps, GrantCaps.TYPES) && !GrantCaps.has(caps, GrantCaps.ASSETS)) {
                     continue;
                 }
                 if (caps.isEmpty()) {

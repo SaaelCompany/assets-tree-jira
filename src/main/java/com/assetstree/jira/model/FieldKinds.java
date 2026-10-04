@@ -10,9 +10,17 @@ public final class FieldKinds {
     public static final String NUMBER = "number";
     public static final String USER = "user";
     public static final String TEXTAREA = "textarea";
+    public static final String DATE = "date";
+    public static final String SELECT = "select";
+    public static final String SELECTS = "selects";
+    public static final String CHECKS = "checks";
+    public static final String RADIO = "radio";
+    public static final String LABELS = "labels";
+    public static final String URL = "url";
+    public static final String VERSION = "version";
 
     public static final Set<String> ALL = Collections.unmodifiableSet(new HashSet<String>(Arrays.asList(
-            TEXT, NUMBER, USER, TEXTAREA
+            TEXT, NUMBER, USER, TEXTAREA, DATE, SELECT, SELECTS, CHECKS, RADIO, LABELS, URL, VERSION
     )));
 
     private FieldKinds() {

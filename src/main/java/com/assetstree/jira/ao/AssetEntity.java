@@ -81,4 +81,10 @@ public interface AssetEntity extends Entity {
     String getCustodianKey();
 
     void setCustodianKey(String custodianKey);
+
+    /** Equipment types pinned to this place. Newline-separated type keys. Empty until someone adds a type here. */
+    @StringLength(StringLength.UNLIMITED)
+    String getOfferedTypes();
+
+    void setOfferedTypes(String offeredTypes);
 }

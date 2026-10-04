@@ -8,6 +8,7 @@ public class FieldDraft {
     private String label;
     private String kind;
     private boolean required;
+    private String options;
 
     public String getLabel() {
         return label;
@@ -31,5 +32,13 @@ public class FieldDraft {
 
     public void setRequired(boolean required) {
         this.required = required;
+    }
+
+    public String getOptions() {
+        return options;
+    }
+
+    public void setOptions(String options) {
+        this.options = options;
     }
 }

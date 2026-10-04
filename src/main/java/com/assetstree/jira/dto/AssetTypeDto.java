@@ -12,9 +12,12 @@ public class AssetTypeDto {
     private String projectKey;
     private String label;
     private String color;
+    private String icon;
     private boolean systemType;
     private boolean location;
     private boolean showInTree;
+    private boolean service;
+    private String placeCaption;
     private int assetCount;
     private List<FieldDto> fields = new ArrayList<FieldDto>();
 
@@ -40,6 +43,14 @@ public class AssetTypeDto {
 
     public void setColor(String color) {
         this.color = color;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
     }
 
     public boolean isSystemType() {
@@ -80,6 +91,22 @@ public class AssetTypeDto {
 
     public void setShowInTree(boolean showInTree) {
         this.showInTree = showInTree;
+    }
+
+    public boolean isService() {
+        return service;
+    }
+
+    public void setService(boolean service) {
+        this.service = service;
+    }
+
+    public String getPlaceCaption() {
+        return placeCaption;
+    }
+
+    public void setPlaceCaption(String placeCaption) {
+        this.placeCaption = placeCaption;
     }
 
     public List<FieldDto> getFields() {

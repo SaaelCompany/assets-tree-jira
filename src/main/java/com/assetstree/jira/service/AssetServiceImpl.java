@@ -8,6 +8,7 @@ import com.atlassian.crowd.embedded.api.UserWithAttributes;
 import com.atlassian.jira.bc.user.search.UserSearchParams;
 import com.atlassian.jira.bc.user.search.UserSearchService;
 import com.atlassian.jira.component.ComponentAccessor;
+import com.atlassian.jira.config.properties.APKeys;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
@@ -23,6 +24,9 @@ import com.atlassian.jira.security.plugin.ProjectPermissionKey;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.user.util.UserManager;
 import com.atlassian.jira.util.I18nHelper;
+import com.atlassian.mail.Email;
+import com.atlassian.mail.queue.MailQueue;
+import com.atlassian.mail.queue.SingleMailQueueItem;
 import com.atlassian.sal.api.transaction.TransactionCallback;
 import com.assetstree.jira.PluginInfo;
 import com.assetstree.jira.ao.AssetActivityEntity;
@@ -34,56 +38,85 @@ import com.assetstree.jira.ao.AssetFieldEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
 import com.assetstree.jira.ao.InventoryMarkEntity;
+import com.assetstree.jira.ao.PortalRuleConditionEntity;
+import com.assetstree.jira.ao.PortalRuleEntity;
 import com.assetstree.jira.ao.ProjectGrantEntity;
 import com.assetstree.jira.ao.ProjectStatusEntity;
+import com.assetstree.jira.ao.ServicePlanEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
 import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.AttributeDto;
+import com.assetstree.jira.dto.BulkIssueDto;
+import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
+import com.assetstree.jira.dto.ImportIssueDto;
+import com.assetstree.jira.dto.ImportResultDto;
 import com.assetstree.jira.dto.InventoryDto;
 import com.assetstree.jira.dto.InventoryRowDto;
 import com.assetstree.jira.dto.IssueContextDto;
 import com.assetstree.jira.dto.IssueRefDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.PickerNodeDto;
+import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.dto.ReportBucketDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.ReportHolderDto;
 import com.assetstree.jira.dto.ReportPlaceDto;
+import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CopyNames;
+import com.assetstree.jira.model.BulkDraft;
+import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.AssetValidator;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.DefaultTypes;
+import com.assetstree.jira.model.EquipmentExchange;
+import com.assetstree.jira.model.EquipmentSheet;
+import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.model.WorkbookSheet;
+import com.assetstree.jira.model.FieldChoices;
+import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.ObjectKeys;
+import com.assetstree.jira.model.PlaceHistory;
+import com.assetstree.jira.model.PortalConditionDraft;
+import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
+import com.assetstree.jira.model.ServiceDue;
+import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.Statuses;
+import com.assetstree.jira.model.StatusSummary;
 import com.assetstree.jira.model.TreeLogic;
 import com.assetstree.jira.model.TypeDraft;
+import com.assetstree.jira.model.TypeIcons;
 import com.assetstree.jira.web.UiCatalog;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.LocalDate;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -91,6 +124,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -207,6 +241,17 @@ public class AssetServiceImpl implements AssetService {
         return current;
     }
 
+    private String jiraBaseUrl() {
+        String base = ComponentAccessor.getApplicationProperties().getString(APKeys.JIRA_BASEURL);
+        if (base == null) {
+            return "";
+        }
+        while (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        return base;
+    }
+
     private GroupManager groupManager() {
         GroupManager current = groupManagerRef;
         if (current == null) {
@@ -222,6 +267,7 @@ public class AssetServiceImpl implements AssetService {
         I18nHelper i18n = authenticationContext().getI18nHelper();
         MetaDto meta = new MetaDto();
         meta.setVersion(PluginInfo.VERSION);
+        meta.setBaseUrl(jiraBaseUrl());
         meta.setLocale(i18n.getLocale() == null ? "en" : i18n.getLocale().toLanguageTag());
         meta.setDisplayName(user.getDisplayName());
         meta.setUserKey(user.getKey());
@@ -258,9 +304,11 @@ public class AssetServiceImpl implements AssetService {
         Project project = requireReadableProject(user, projectKey);
         final String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         final String key = project.getKey();
-        return ao().executeInTransaction(new TransactionCallback<AssetListDto>() {
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        AssetListDto list = ao().executeInTransaction(new TransactionCallback<AssetListDto>() {
             @Override
             public AssetListDto doInTransaction() {
+                applyDueQuietly(key, notices);
                 AssetEntity[] rows = assetsIn(key);
                 Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset();
                 List<AssetEntity> matched = new ArrayList<AssetEntity>();
@@ -288,19 +336,26 @@ public class AssetServiceImpl implements AssetService {
                 return list;
             }
         });
+        dispatchNotices(notices);
+        return list;
     }
 
     @Override
     public AssetDto getAsset(ApplicationUser user, int id) {
         requireUser(user);
-        return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        AssetDto dto = ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
                 AssetEntity entity = requireReadable(user, id);
+                applyDueQuietly(entity.getProjectKey(), notices);
+                entity = requireReadable(user, id);
                 AssetEntity[] rows = assetsIn(entity.getProjectKey());
                 return toDto(entity, attributesFor(id), indexTypes(typeDtos(entity.getProjectKey(), rows)), indexAssets(rows), true);
             }
         });
+        dispatchNotices(notices);
+        return dto;
     }
 
     @Override
@@ -309,7 +364,9 @@ public class AssetServiceImpl implements AssetService {
         if (error != null) {
             throw new AssetException(400, error);
         }
-        Project project = requireProjectCap(user, draft.getProjectKey(), GrantCaps.CREATE);
+        AssetTypeEntity previewType = findType(draft.getTypeKey());
+        String createCap = previewType != null && previewType.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
+        Project project = requireProjectCap(user, draft.getProjectKey(), createCap);
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
@@ -336,7 +393,7 @@ public class AssetServiceImpl implements AssetService {
                 Date now = new Date();
                 AssetEntity entity = ao().create(AssetEntity.class,
                         new DBParam("NAME", draft.getName().trim()),
-                        new DBParam("OBJECT_KEY", nextKey()),
+                        new DBParam("OBJECT_KEY", nextKey(project.getKey())),
                         new DBParam("DESCRIPTION", draft.getDescription() == null ? "" : draft.getDescription()),
                         new DBParam("TYPE_KEY", type.getTypeKey()),
                         new DBParam("STATUS", resolveStatus(project.getKey(), draft.getStatus())),
@@ -352,11 +409,51 @@ public class AssetServiceImpl implements AssetService {
                 entity.setCustodianKey(custodian);
                 entity.save();
                 replaceAttributes(entity, draft.getAttributes());
-                logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
                 AssetEntity[] rows = assetsIn(project.getKey());
+                logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
+                logPlaceChange(user, placeContainer(parentId, rows, null), "place_add", entity);
                 return toDto(entity, attributesFor(entity.getID()), indexTypes(typeDtos(project.getKey(), rows)), indexAssets(rows), true);
             }
         });
+    }
+
+    @Override
+    public AssetDto copyAsset(final ApplicationUser user, final int id) {
+        AssetDraft draft = ao().executeInTransaction(new TransactionCallback<AssetDraft>() {
+            @Override
+            public AssetDraft doInTransaction() {
+                AssetEntity source = requireReadable(user, id);
+                AssetTypeEntity type = findType(source.getTypeKey());
+                if (type == null || type.isLocation()) {
+                    throw new AssetException(400, "asset-tree.error.copy");
+                }
+                requireProjectCap(user, source.getProjectKey(), GrantCaps.OBJECT);
+                Set<String> taken = new HashSet<String>();
+                for (AssetEntity row : assetsIn(source.getProjectKey())) {
+                    if (row.getName() != null) {
+                        taken.add(row.getName());
+                    }
+                }
+                AssetDraft copy = new AssetDraft();
+                copy.setName(CopyNames.next(source.getName(), i18n().getText("asset-tree.ui.copyWord"), taken));
+                copy.setDescription(source.getDescription() == null ? "" : source.getDescription());
+                copy.setTypeKey(source.getTypeKey());
+                copy.setStatus(source.getStatus());
+                copy.setParentId(source.getParentId());
+                copy.setProjectKey(source.getProjectKey());
+                copy.setCustodianKey(source.getCustodianKey());
+                List<AttributeDraft> attributes = new ArrayList<AttributeDraft>();
+                for (Map.Entry<String, String> entry : attributeValues(id).entrySet()) {
+                    AttributeDraft item = new AttributeDraft();
+                    item.setFieldKey(entry.getKey());
+                    item.setValue(entry.getValue());
+                    attributes.add(item);
+                }
+                copy.setAttributes(attributes);
+                return copy;
+            }
+        });
+        return createAsset(user, draft);
     }
 
     @Override
@@ -413,7 +510,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public CommentDto addComment(ApplicationUser user, int id, String body) {
-        requireAssetCap(user, id, GrantCaps.COMMENT);
+        requireAssetCap(user, id, kindCap(requireAsset(id)));
         String text = body == null ? "" : body.trim();
         if (text.isEmpty()) {
             throw new AssetException(400, "asset-tree.error.comment.required");
@@ -438,7 +535,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public void deleteComment(ApplicationUser user, int assetId, int commentId) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         AssetCommentEntity comment = ao().get(AssetCommentEntity.class, commentId);
         if (comment == null || comment.getAssetId() != assetId) {
             throw new AssetException(404, "asset-tree.error.notFound");
@@ -449,7 +546,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public FileDto storeFile(ApplicationUser user, int assetId, String fileName, String contentType, byte[] data) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         if (data == null || data.length == 0) {
             throw new AssetException(400, "asset-tree.error.file.required");
         }
@@ -515,7 +612,7 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public void deleteFile(ApplicationUser user, int assetId, int fileId) {
-        requireAssetCap(user, assetId, GrantCaps.COMMENT);
+        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
         AssetFileEntity file = ao().get(AssetFileEntity.class, fileId);
         if (file == null || file.getAssetId() != assetId) {
             throw new AssetException(404, "asset-tree.error.notFound");
@@ -530,7 +627,7 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                AssetEntity entity = requireAssetCap(user, id, GrantCaps.REMOVE);
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
                 AssetEntity[] all = assetsIn(entity.getProjectKey());
                 List<Integer> descendants = TreeLogic.descendants(childrenMap(all), id);
                 if (!descendants.isEmpty() && !cascade) {
@@ -538,6 +635,15 @@ public class AssetServiceImpl implements AssetService {
                 }
                 List<Integer> toDelete = new ArrayList<Integer>(descendants);
                 toDelete.add(Integer.valueOf(id));
+                Map<Integer, AssetEntity> index = indexAssets(all);
+                Set<Integer> doomed = new HashSet<Integer>(toDelete);
+                for (Integer assetId : toDelete) {
+                    AssetEntity gone = index.get(assetId);
+                    if (gone == null) {
+                        continue;
+                    }
+                    logPlaceChange(user, placeContainer(TreeLogic.normalizeParent(gone.getParentId()), all, doomed), "place_remove", gone);
+                }
                 List<Integer> fileIds = new ArrayList<Integer>();
                 for (Integer assetId : toDelete) {
                     for (AssetFileEntity file : ao().find(AssetFileEntity.class, Query.select().where("ASSET_ID = ?", assetId))) {
@@ -549,6 +655,8 @@ public class AssetServiceImpl implements AssetService {
                     ao().deleteWithSQL(AssetCommentEntity.class, "ASSET_ID = ?", assetId);
                     ao().deleteWithSQL(AssetFileEntity.class, "ASSET_ID = ?", assetId);
                     ao().deleteWithSQL(AssetActivityEntity.class, "ASSET_ID = ?", assetId);
+                    ao().deleteWithSQL(ServicePlanEntity.class, "ASSET_ID = ?", assetId);
+                    deletePortalRulesFor(assetId.intValue());
                 }
                 for (Integer fileId : fileIds) {
                     AssetFileStore.delete(fileId.intValue());
@@ -573,7 +681,7 @@ public class AssetServiceImpl implements AssetService {
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
-                AssetEntity moving = requireAssetCap(user, id, GrantCaps.MOVE);
+                AssetEntity moving = requireAssetCap(user, id, kindCap(requireAsset(id)));
                 Integer parentId = TreeLogic.normalizeParent(move.getParentId());
                 if (parentId != null) {
                     AssetEntity parent = requireReadable(user, parentId.intValue());
@@ -605,6 +713,8 @@ public class AssetServiceImpl implements AssetService {
                 }
                 Collections.sort(siblings, SIBLING_ORDER);
                 Integer previousParent = TreeLogic.normalizeParent(moving.getParentId());
+                Integer fromPlace = placeContainer(previousParent, all, null);
+                Integer toPlace = placeContainer(parentId, all, null);
                 int index = move.getIndex() == null ? siblings.size() : move.getIndex().intValue();
                 if (index < 0) {
                     index = 0;
@@ -617,6 +727,12 @@ public class AssetServiceImpl implements AssetService {
                 moving.setUpdatedBy(user.getKey());
                 if (!TreeLogic.sameParent(previousParent, parentId)) {
                     logActivity(id, user.getKey(), "move", "", parentName(previousParent), parentName(parentId));
+                }
+                if (fromPlace != null && !fromPlace.equals(toPlace)) {
+                    logPlaceChange(user, fromPlace, "place_out", moving);
+                }
+                if (toPlace != null && !toPlace.equals(fromPlace)) {
+                    logPlaceChange(user, toPlace, "place_in", moving);
                 }
                 siblings.add(index, moving);
                 for (int i = 0; i < siblings.size(); i++) {
@@ -648,6 +764,16 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(400, colorError);
         }
         final String chosenColor = color;
+        final String chosenIcon = resolveIcon(draft.getIcon(), draft.isLocation());
+        String caption = "";
+        if (draft.isLocation() && draft.getPlaceCaption() != null) {
+            String captionError = AssetValidator.validateCaption(draft.getPlaceCaption());
+            if (captionError != null) {
+                throw new AssetException(400, captionError);
+            }
+            caption = draft.getPlaceCaption().trim();
+        }
+        final String chosenCaption = caption;
         return ao().executeInTransaction(new TransactionCallback<AssetTypeDto>() {
             @Override
             public AssetTypeDto doInTransaction() {
@@ -668,12 +794,15 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("TYPE_KEY", key),
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("COLOR", chosenColor),
+                        new DBParam("ICON", chosenIcon),
                         new DBParam("SYSTEM_TYPE", Boolean.FALSE),
                         new DBParam("SORT_ORDER", maxOrder + 1),
                         new DBParam("PROJECT_KEY", project.getKey()),
                         new DBParam("BASE_KEY", ""),
                         new DBParam("LOCATION", Boolean.valueOf(draft.isLocation())),
-                        new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || draft.isShowInTree())));
+                        new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))),
+                        new DBParam("SERVICE", Boolean.valueOf(!draft.isLocation() && Boolean.TRUE.equals(draft.getService()))),
+                        new DBParam("PLACE_CAPTION", chosenCaption));
                 return toTypeDto(created, i18n(), 0);
             }
         });
@@ -692,7 +821,29 @@ public class AssetServiceImpl implements AssetService {
                     throw new AssetException(404, "asset-tree.error.type.notFound");
                 }
                 requireConfigurableProject(user, type.getProjectKey());
-                type.setShowInTree(type.isLocation() || draft.isShowInTree());
+                if (draft.getShowInTree() != null) {
+                    type.setShowInTree(type.isLocation() || draft.getShowInTree().booleanValue());
+                }
+                if (draft.getService() != null && !type.isLocation()) {
+                    type.setService(draft.getService().booleanValue());
+                }
+                if (draft.getIcon() != null) {
+                    type.setIcon(resolveIcon(draft.getIcon(), type.isLocation()));
+                }
+                if (draft.getColor() != null) {
+                    String colorError = AssetValidator.validateColor(draft.getColor().trim());
+                    if (colorError != null) {
+                        throw new AssetException(400, colorError);
+                    }
+                    type.setColor(draft.getColor().trim());
+                }
+                if (draft.getPlaceCaption() != null && type.isLocation()) {
+                    String captionError = AssetValidator.validateCaption(draft.getPlaceCaption());
+                    if (captionError != null) {
+                        throw new AssetException(400, captionError);
+                    }
+                    type.setPlaceCaption(draft.getPlaceCaption().trim());
+                }
                 type.save();
                 int count = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 return toTypeDto(type, i18n(), count);
@@ -736,6 +887,15 @@ public class AssetServiceImpl implements AssetService {
         if (!FieldKinds.isKind(draft.getKind())) {
             throw new AssetException(400, "asset-tree.error.field.kind");
         }
+        final String storedOptions;
+        if (FieldChoices.needsOptions(draft.getKind())) {
+            storedOptions = FieldChoices.canonicalOptions(draft.getOptions());
+            if (storedOptions == null) {
+                throw new AssetException(400, "asset-tree.error.field.options");
+            }
+        } else {
+            storedOptions = "";
+        }
         return ao().executeInTransaction(new TransactionCallback<FieldDto>() {
             @Override
             public FieldDto doInTransaction() {
@@ -764,7 +924,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("KIND", draft.getKind()),
                         new DBParam("REQUIRED", Boolean.valueOf(draft.isRequired())),
-                        new DBParam("POSITION", max + 1));
+                        new DBParam("POSITION", max + 1),
+                        new DBParam("OPTIONS", storedOptions));
                 return toFieldDto(created, i18n());
             }
         });
@@ -834,7 +995,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("STATUS_KEY", key),
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("CATEGORY", category),
-                        new DBParam("SORT_ORDER", maxOrder + 1));
+                        new DBParam("SORT_ORDER", maxOrder + 1),
+                        new DBParam("SUMMARY_MODE", StatusSummary.createMode(draft.getInSummary())));
                 return toStatusDto(created, Integer.valueOf(0));
             }
         });
@@ -862,6 +1024,10 @@ public class AssetServiceImpl implements AssetService {
                 }
                 if (draft.getCategory() != null && !draft.getCategory().trim().isEmpty()) {
                     row.setCategory(normalizeCategory(draft.getCategory()));
+                }
+                int summaryMode = StatusSummary.updateMode(draft.getInSummary(), row.getSummaryMode());
+                if (summaryMode != row.getSummaryMode()) {
+                    row.setSummaryMode(summaryMode);
                 }
                 row.save();
                 return toStatusDto(row, Integer.valueOf(countStatus(project.getKey(), row.getStatusKey())));
@@ -916,13 +1082,31 @@ public class AssetServiceImpl implements AssetService {
         if (!groupExists(groupName)) {
             throw new AssetException(400, "asset-tree.error.group");
         }
+        final boolean administrator = GrantCaps.has(caps, GrantCaps.ADMIN);
+        if (administrator && !hasCap(user, project, GrantCaps.ADMIN)) {
+            throw new AssetException(403, "asset-tree.error.forbidden");
+        }
         return ao().executeInTransaction(new TransactionCallback<GrantDto>() {
             @Override
             public GrantDto doInTransaction() {
-                ProjectGrantEntity row = findGrant(project.getKey(), groupName);
+                ProjectGrantEntity global = findGrant(GrantCaps.ALL_PROJECTS, groupName);
+                if (global != null && GrantCaps.has(global.getCaps(), GrantCaps.ADMIN) && !hasCap(user, project, GrantCaps.ADMIN)) {
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                String storedKey = administrator ? GrantCaps.ALL_PROJECTS : project.getKey();
+                if (administrator) {
+                    ProjectGrantEntity local = findGrant(project.getKey(), groupName);
+                    if (local != null) {
+                        ao().delete(local);
+                    }
+                } else if (global != null) {
+                    ao().delete(global);
+                    global = null;
+                }
+                ProjectGrantEntity row = findGrant(storedKey, groupName);
                 if (row == null) {
                     row = ao().create(ProjectGrantEntity.class,
-                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("PROJECT_KEY", storedKey),
                             new DBParam("GROUP_NAME", groupName),
                             new DBParam("LEVEL", level),
                             new DBParam("CAPS", caps));
@@ -945,11 +1129,21 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                ProjectGrantEntity row = findGrant(project.getKey(), groupName.trim());
-                if (row == null) {
+                String name = groupName.trim();
+                ProjectGrantEntity row = findGrant(project.getKey(), name);
+                ProjectGrantEntity global = findGrant(GrantCaps.ALL_PROJECTS, name);
+                if (global != null && !hasCap(user, project, GrantCaps.ADMIN)) {
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                if (row == null && global == null) {
                     throw new AssetException(404, "asset-tree.error.group");
                 }
-                ao().delete(row);
+                if (row != null) {
+                    ao().delete(row);
+                }
+                if (global != null) {
+                    ao().delete(global);
+                }
                 return null;
             }
         });
@@ -1118,7 +1312,9 @@ public class AssetServiceImpl implements AssetService {
                     if (count == null || count.intValue() == 0) {
                         continue;
                     }
-                    byType.add(new ReportBucketDto(type.getTypeKey(), type.getLabel(), type.getColor(), count.intValue()));
+                    ReportBucketDto bucket = new ReportBucketDto(type.getTypeKey(), type.getLabel(), type.getColor(), count.intValue());
+                    bucket.setIcon(type.getIcon());
+                    byType.add(bucket);
                 }
                 report.setByType(byType);
                 Map<Integer, List<Integer>> children = childrenMap(rows);
@@ -1168,6 +1364,46 @@ public class AssetServiceImpl implements AssetService {
                 return report;
             }
         });
+    }
+
+    @Override
+    public byte[] exportEquipment(ApplicationUser user, String projectKey) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        return ao().executeInTransaction(new TransactionCallback<byte[]>() {
+            @Override
+            public byte[] doInTransaction() {
+                return buildEquipmentBook(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final ImportDraft draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        final EquipmentSheet.Sheet sheet = equipmentSheet(draft);
+        return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
+            @Override
+            public ImportResultDto doInTransaction() {
+                return applyEquipmentSheet(user, project.getKey(), sheet);
+            }
+        });
+    }
+
+    @Override
+    public BulkResultDto applyBulk(ApplicationUser user, String projectKey, BulkDraft draft) {
+        Project project = requireReadableProject(user, projectKey);
+        if (draft == null || draft.getAction() == null) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        String action = draft.getAction().trim();
+        String target = draft.getTarget() == null ? "" : draft.getTarget().trim();
+        if ("type".equals(target)) {
+            return bulkTypes(user, project, action, draft.getKeys());
+        }
+        if (!"asset".equals(target)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        return bulkAssets(user, project, action, draft);
     }
 
     @Override
@@ -1311,6 +1547,186 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public List<PortalRuleDto> listPortalRules(ApplicationUser user, String projectKey) {
+        final Project project = requireVisibleProject(user, projectKey);
+        return ao().executeInTransaction(new TransactionCallback<List<PortalRuleDto>>() {
+            @Override
+            public List<PortalRuleDto> doInTransaction() {
+                return portalRules(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getAssetId() <= 0) {
+            throw new AssetException(400, "asset-tree.error.portal.target");
+        }
+        final List<PortalConditionDraft> conditions = cleanConditions(draft.getConditions());
+        return ao().executeInTransaction(new TransactionCallback<PortalRuleDto>() {
+            @Override
+            public PortalRuleDto doInTransaction() {
+                AssetEntity asset = ao().get(AssetEntity.class, draft.getAssetId());
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.portal.target");
+                }
+                int position = 1;
+                for (PortalRuleEntity existing : ao().find(PortalRuleEntity.class, Query.select().where("PROJECT_KEY = ?", project.getKey()))) {
+                    if (existing.getPosition() >= position) {
+                        position = existing.getPosition() + 1;
+                    }
+                }
+                PortalRuleEntity rule = ao().create(PortalRuleEntity.class,
+                        new DBParam("PROJECT_KEY", project.getKey()),
+                        new DBParam("ASSET_ID", draft.getAssetId()),
+                        new DBParam("POSITION", position));
+                for (int i = 0; i < conditions.size(); i++) {
+                    PortalConditionDraft condition = conditions.get(i);
+                    ao().create(PortalRuleConditionEntity.class,
+                            new DBParam("RULE_ID", rule.getID()),
+                            new DBParam("POSITION", i),
+                            new DBParam("FIELD_NAME", condition.getField()),
+                            new DBParam("OPTION_NAME", condition.getOption()));
+                }
+                return toPortalRule(rule);
+            }
+        });
+    }
+
+    @Override
+    public void deletePortalRule(ApplicationUser user, String projectKey, int ruleId) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                PortalRuleEntity rule = ao().get(PortalRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.portal.missing");
+                }
+                ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", ruleId);
+                ao().delete(rule);
+                return null;
+            }
+        });
+    }
+
+    private void deletePortalRulesFor(int assetId) {
+        PortalRuleEntity[] rules = ao().find(PortalRuleEntity.class, Query.select().where("ASSET_ID = ?", assetId));
+        for (PortalRuleEntity rule : rules) {
+            ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", rule.getID());
+            ao().delete(rule);
+        }
+    }
+
+    private List<PortalConditionDraft> cleanConditions(List<PortalConditionDraft> raw) {
+        List<PortalConditionDraft> conditions = new ArrayList<PortalConditionDraft>();
+        if (raw != null) {
+            for (PortalConditionDraft item : raw) {
+                if (item == null) {
+                    continue;
+                }
+                String field = item.getField() == null ? "" : item.getField().trim().replaceAll("\\s+", " ");
+                String option = item.getOption() == null ? "" : item.getOption().trim().replaceAll("\\s+", " ");
+                if (field.isEmpty() || option.isEmpty()) {
+                    continue;
+                }
+                if (field.length() > 255 || option.length() > 255) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+                boolean duplicate = false;
+                for (PortalConditionDraft kept : conditions) {
+                    if (kept.getField().equalsIgnoreCase(field)) {
+                        duplicate = true;
+                    }
+                }
+                if (duplicate) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+                PortalConditionDraft clean = new PortalConditionDraft();
+                clean.setField(field);
+                clean.setOption(option);
+                conditions.add(clean);
+                if (conditions.size() > 6) {
+                    throw new AssetException(400, "asset-tree.error.portal.field");
+                }
+            }
+        }
+        if (conditions.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.portal.conditions");
+        }
+        return conditions;
+    }
+
+    private List<PortalRuleDto> portalRules(String projectKey) {
+        PortalRuleEntity[] rows = ao().find(PortalRuleEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        Arrays.sort(rows, new Comparator<PortalRuleEntity>() {
+            @Override
+            public int compare(PortalRuleEntity left, PortalRuleEntity right) {
+                int byPosition = left.getPosition() - right.getPosition();
+                if (byPosition != 0) {
+                    return byPosition;
+                }
+                return left.getID() - right.getID();
+            }
+        });
+        List<PortalRuleDto> result = new ArrayList<PortalRuleDto>();
+        for (PortalRuleEntity row : rows) {
+            result.add(toPortalRule(row));
+        }
+        return result;
+    }
+
+    private PortalRuleDto toPortalRule(PortalRuleEntity rule) {
+        PortalRuleDto dto = new PortalRuleDto();
+        dto.setId(rule.getID());
+        dto.setAssetId(rule.getAssetId());
+        dto.setPosition(rule.getPosition());
+        AssetEntity asset = ao().get(AssetEntity.class, rule.getAssetId());
+        if (asset != null) {
+            dto.setAssetName(asset.getName());
+            dto.setAssetPath(portalPath(asset));
+        }
+        PortalRuleConditionEntity[] conditions = ao().find(PortalRuleConditionEntity.class,
+                Query.select().where("RULE_ID = ?", rule.getID()));
+        Arrays.sort(conditions, new Comparator<PortalRuleConditionEntity>() {
+            @Override
+            public int compare(PortalRuleConditionEntity left, PortalRuleConditionEntity right) {
+                return left.getPosition() - right.getPosition();
+            }
+        });
+        List<PortalConditionDraft> items = new ArrayList<PortalConditionDraft>();
+        for (PortalRuleConditionEntity condition : conditions) {
+            PortalConditionDraft item = new PortalConditionDraft();
+            item.setField(condition.getFieldName());
+            item.setOption(condition.getOptionName());
+            items.add(item);
+        }
+        dto.setConditions(items);
+        return dto;
+    }
+
+    private String portalPath(AssetEntity entity) {
+        List<String> names = new ArrayList<String>();
+        AssetEntity cursor = entity;
+        int guard = 0;
+        while (cursor != null && guard < 40) {
+            names.add(0, cursor.getName());
+            Integer parentId = TreeLogic.normalizeParent(cursor.getParentId());
+            cursor = parentId == null ? null : ao().get(AssetEntity.class, parentId.intValue());
+            guard++;
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < names.size(); i++) {
+            if (i > 0) {
+                builder.append(" / ");
+            }
+            builder.append(names.get(i));
+        }
+        return builder.toString();
+    }
+
+    @Override
     public List<UserProfileDto> searchUsers(ApplicationUser user, String query) {
         requireUser(user);
         String needle = query == null ? "" : query.trim();
@@ -1338,11 +1754,13 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(404, "asset-tree.error.user");
         }
         final String holder = userKey.trim();
-        return ao().executeInTransaction(new TransactionCallback<List<AssetDto>>() {
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        List<AssetDto> result = ao().executeInTransaction(new TransactionCallback<List<AssetDto>>() {
             @Override
             public List<AssetDto> doInTransaction() {
-                List<AssetDto> result = new ArrayList<AssetDto>();
+                List<AssetDto> found = new ArrayList<AssetDto>();
                 for (ProjectDto project : visibleProjects(user)) {
+                    applyDueQuietly(project.getKey(), notices);
                     AssetEntity[] rows = assetsIn(project.getKey());
                     Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), rows));
                     Map<Integer, AssetEntity> index = indexAssets(rows);
@@ -1358,10 +1776,10 @@ public class AssetServiceImpl implements AssetService {
                         AssetDto dto = toDto(row, attributes.get(row.getID()), types, index, false);
                         dto.setHolderRole(role);
                         dto.setProjectName(project.getName());
-                        result.add(dto);
+                        found.add(dto);
                     }
                 }
-                Collections.sort(result, new Comparator<AssetDto>() {
+                Collections.sort(found, new Comparator<AssetDto>() {
                     @Override
                     public int compare(AssetDto left, AssetDto right) {
                         String leftProject = left.getProjectName() == null ? "" : left.getProjectName();
@@ -1373,9 +1791,11 @@ public class AssetServiceImpl implements AssetService {
                         return left.getName().compareToIgnoreCase(right.getName());
                     }
                 });
-                return result;
+                return found;
             }
         });
+        dispatchNotices(notices);
+        return result;
     }
 
     @Override
@@ -1478,21 +1898,588 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private String nextKey() {
-        for (int attempt = 0; attempt < 5; attempt++) {
-            AssetCounterEntity[] rows = ao().find(AssetCounterEntity.class);
-            AssetCounterEntity counter = rows.length == 0
-                    ? ao().create(AssetCounterEntity.class, new DBParam("NEXT_VALUE", 1))
-                    : rows[0];
+    private EquipmentSheet.Sheet equipmentSheet(ImportDraft draft) {
+        String content = draft == null ? null : draft.getContent();
+        if (content != null && !content.trim().isEmpty()) {
+            if (content.length() > 4_000_000) {
+                throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+            }
+            byte[] bytes;
+            try {
+                bytes = java.util.Base64.getMimeDecoder().decode(content.trim());
+            } catch (IllegalArgumentException ex) {
+                throw new AssetException(400, "asset-tree.error.import.workbook");
+            }
+            if (bytes.length > 2_000_000) {
+                throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+            }
+            return WorkbookSheet.read(bytes);
+        }
+        String csv = draft == null || draft.getCsv() == null ? "" : draft.getCsv();
+        if (csv.length() > 1_500_000) {
+            throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
+        }
+        return EquipmentSheet.read(csv);
+    }
+
+    private byte[] buildEquipmentBook(String projectKey) {
+        ensureStatuses(projectKey);
+        AssetEntity[] rows = assetsIn(projectKey);
+        List<AssetTypeDto> types = typeDtos(projectKey, rows);
+        Map<String, AssetTypeDto> typeIndex = indexTypes(types);
+        Map<Integer, AssetEntity> index = indexAssets(rows);
+        List<StatusDto> statuses = statusDtos(projectKey, rows);
+        Map<String, String> statusLabels = new HashMap<String, String>();
+        for (StatusDto status : statuses) {
+            statusLabels.put(status.getStatusKey(), status.getLabel());
+        }
+        I18nHelper labels = i18n();
+        boolean dayFirst = labels.getLocale() != null && "ru".equalsIgnoreCase(labels.getLocale().getLanguage());
+        List<String> headers = new ArrayList<String>();
+        headers.add(labels.getText("asset-tree.ui.keyLabel"));
+        headers.add(labels.getText("asset-tree.ui.name"));
+        headers.add(labels.getText("asset-tree.ui.type"));
+        headers.add(labels.getText("asset-tree.ui.status"));
+        headers.add(labels.getText("asset-tree.ui.exchangePlace"));
+        headers.add(labels.getText("asset-tree.ui.custodian"));
+        headers.add(labels.getText("asset-tree.ui.description"));
+        List<FieldDto> columns = new ArrayList<FieldDto>();
+        Set<String> taken = new HashSet<String>();
+        for (String header : headers) {
+            taken.add(EquipmentExchange.norm(header));
+        }
+        for (AssetTypeDto type : types) {
+            if (type.isLocation() || type.getFields() == null) {
+                continue;
+            }
+            for (FieldDto field : type.getFields()) {
+                String marker = EquipmentExchange.norm(field.getLabel());
+                if (marker.isEmpty() || !taken.add(marker)) {
+                    continue;
+                }
+                columns.add(field);
+                headers.add(field.getLabel());
+            }
+        }
+        List<AssetEntity> equipment = new ArrayList<AssetEntity>();
+        for (AssetEntity row : rows) {
+            AssetTypeDto type = typeIndex.get(row.getTypeKey());
+            if (type != null && !type.isLocation()) {
+                equipment.add(row);
+            }
+        }
+        Collections.sort(equipment, new Comparator<AssetEntity>() {
+            @Override
+            public int compare(AssetEntity left, AssetEntity right) {
+                String leftKey = left.getObjectKey() == null ? "" : left.getObjectKey();
+                String rightKey = right.getObjectKey() == null ? "" : right.getObjectKey();
+                return leftKey.compareToIgnoreCase(rightKey);
+            }
+        });
+        List<List<String>> lines = new ArrayList<List<String>>();
+        for (AssetEntity row : equipment) {
+            AssetTypeDto type = typeIndex.get(row.getTypeKey());
+            Map<String, String> values = attributeValues(row.getID());
+            List<String> line = new ArrayList<String>();
+            line.add(row.getObjectKey());
+            line.add(row.getName());
+            line.add(type == null ? row.getTypeKey() : type.getLabel());
+            String status = Statuses.canonical(row.getStatus());
+            line.add(statusLabels.containsKey(status) ? statusLabels.get(status) : status);
+            line.add(location(row, index));
+            line.add(displayName(row.getCustodianKey()));
+            line.add(row.getDescription() == null ? "" : row.getDescription());
+            for (FieldDto field : columns) {
+                String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
+                if (FieldKinds.USER.equals(field.getKind()) && value != null && !value.isEmpty()) {
+                    value = displayName(value);
+                }
+                if (FieldKinds.DATE.equals(field.getKind())) {
+                    value = FieldDates.display(value, dayFirst);
+                }
+                if (FieldChoices.handles(field.getKind())) {
+                    value = FieldChoices.display(value);
+                }
+                line.add(value == null ? "" : value);
+            }
+            lines.add(line);
+        }
+        return WorkbookSheet.write(headers, lines);
+    }
+
+    private ImportResultDto applyEquipmentSheet(ApplicationUser user, String projectKey, EquipmentSheet.Sheet sheet) {
+        ensureStatuses(projectKey);
+        AssetEntity[] rows = assetsIn(projectKey);
+        List<AssetTypeDto> typeDtos = typeDtos(projectKey, rows);
+        List<EquipmentExchange.TypeRef> types = new ArrayList<EquipmentExchange.TypeRef>();
+        for (AssetTypeDto type : typeDtos) {
+            List<EquipmentExchange.FieldRef> fields = new ArrayList<EquipmentExchange.FieldRef>();
+            if (type.getFields() != null) {
+                for (FieldDto field : type.getFields()) {
+                    String options = field.getOptions() == null ? "" : String.join("\n", field.getOptions());
+                    fields.add(new EquipmentExchange.FieldRef(field.getFieldKey(), field.getLabel(), field.getKind(), field.isRequired(), options));
+                }
+            }
+            types.add(new EquipmentExchange.TypeRef(type.getTypeKey(), type.getLabel(), type.isLocation(), fields));
+        }
+        List<StatusDto> statusDtos = statusDtos(projectKey, rows);
+        List<EquipmentExchange.Named> statuses = new ArrayList<EquipmentExchange.Named>();
+        for (StatusDto status : statusDtos) {
+            statuses.add(new EquipmentExchange.Named(status.getStatusKey(), status.getLabel()));
+        }
+        Map<String, Boolean> locationByType = new HashMap<String, Boolean>();
+        for (AssetTypeDto type : typeDtos) {
+            locationByType.put(type.getTypeKey(), Boolean.valueOf(type.isLocation()));
+        }
+        List<EquipmentExchange.Node> nodes = new ArrayList<EquipmentExchange.Node>();
+        Map<Integer, AssetEntity> index = indexAssets(rows);
+        for (AssetEntity row : rows) {
+            Boolean location = locationByType.get(row.getTypeKey());
+            nodes.add(new EquipmentExchange.Node(row.getID(), TreeLogic.normalizeParent(row.getParentId()), row.getName(),
+                    row.getObjectKey(), location != null && location.booleanValue()));
+        }
+        I18nHelper labels = i18n();
+        Map<String, String> headerLabels = new LinkedHashMap<String, String>();
+        headerLabels.put("key", labels.getText("asset-tree.ui.keyLabel"));
+        headerLabels.put("name", labels.getText("asset-tree.ui.name"));
+        headerLabels.put("type", labels.getText("asset-tree.ui.type"));
+        headerLabels.put("status", labels.getText("asset-tree.ui.status"));
+        headerLabels.put("place", labels.getText("asset-tree.ui.exchangePlace"));
+        headerLabels.put("custodian", labels.getText("asset-tree.ui.custodian"));
+        headerLabels.put("description", labels.getText("asset-tree.ui.description"));
+        EquipmentExchange.Plan plan = EquipmentExchange.plan(sheet, types, statuses, nodes,
+                Statuses.IN_USE, headerLabels, new EquipmentExchange.Directory() {
+                    @Override
+                    public EquipmentExchange.Person find(String raw) {
+                        return lookupPerson(raw);
+                    }
+                });
+        ImportResultDto result = new ImportResultDto();
+        List<ImportIssueDto> errors = new ArrayList<ImportIssueDto>();
+        for (EquipmentExchange.Issue issue : plan.getIssues()) {
+            errors.add(translateIssue(labels, issue));
+        }
+        int created = 0;
+        int updated = 0;
+        boolean headerOnly = false;
+        for (EquipmentExchange.Issue issue : plan.getIssues()) {
+            if (issue.getRow() <= 1 && plan.getChanges().isEmpty()) {
+                headerOnly = true;
+            }
+        }
+        if (!headerOnly) {
+            for (EquipmentExchange.Change change : plan.getChanges()) {
+                try {
+                    if (change.getExistingId() == null) {
+                        createImported(user, projectKey, change);
+                        created++;
+                    } else {
+                        updateImported(user, change, index);
+                        updated++;
+                    }
+                } catch (AssetException ex) {
+                    String text = ex.getArgs() == null || ex.getArgs().length == 0
+                            ? labels.getText(ex.getMessageKey())
+                            : labels.getText(ex.getMessageKey(), ex.getArgs());
+                    errors.add(new ImportIssueDto(change.getRow(), text));
+                }
+            }
+        }
+        result.setCreated(created);
+        result.setUpdated(updated);
+        result.setErrors(errors);
+        return result;
+    }
+
+    private BulkResultDto bulkTypes(ApplicationUser user, Project project, String action, List<String> keys) {
+        if (!"delete".equals(action)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        List<String> unique = new ArrayList<String>();
+        Set<String> seen = new HashSet<String>();
+        if (keys != null) {
+            for (String key : keys) {
+                if (key == null || key.trim().isEmpty() || !seen.add(key.trim())) {
+                    continue;
+                }
+                unique.add(key.trim());
+            }
+        }
+        if (unique.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.bulk.empty");
+        }
+        if (unique.size() > BulkSelection.MAX_ITEMS) {
+            throw new AssetException(400, "asset-tree.error.bulk.limit", Integer.valueOf(BulkSelection.MAX_ITEMS));
+        }
+        BulkResultDto result = new BulkResultDto();
+        List<BulkIssueDto> errors = new ArrayList<BulkIssueDto>();
+        int done = 0;
+        I18nHelper labels = i18n();
+        for (String key : unique) {
+            AssetTypeEntity type = findType(key);
+            String label = type == null ? key : type.getLabel();
+            try {
+                if (type != null && !ProjectKeys.same(type.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.project.mismatch");
+                }
+                deleteType(user, key);
+                done++;
+            } catch (AssetException ex) {
+                errors.add(new BulkIssueDto(label, exceptionText(labels, ex)));
+            }
+        }
+        result.setDone(done);
+        result.setErrors(errors);
+        return result;
+    }
+
+    private BulkResultDto bulkAssets(ApplicationUser user, Project project, String action, BulkDraft draft) {
+        if (!"delete".equals(action) && !"move".equals(action) && !"status".equals(action)
+                && !"custodian".equals(action) && !"copy".equals(action)) {
+            throw new AssetException(400, "asset-tree.error.bulk.action");
+        }
+        if ("move".equals(action) && !draft.isToRoot() && TreeLogic.normalizeParent(draft.getParentId()) == null) {
+            throw new AssetException(400, "asset-tree.error.import.place.required");
+        }
+        LinkedHashSet<Integer> unique = new LinkedHashSet<Integer>();
+        if (draft.getIds() != null) {
+            for (Integer id : draft.getIds()) {
+                if (id != null && id.intValue() > 0) {
+                    unique.add(id);
+                }
+            }
+        }
+        if (unique.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.bulk.empty");
+        }
+        if (unique.size() > BulkSelection.MAX_ITEMS) {
+            throw new AssetException(400, "asset-tree.error.bulk.limit", Integer.valueOf(BulkSelection.MAX_ITEMS));
+        }
+        List<Integer> ids = new ArrayList<Integer>(unique);
+        AssetEntity[] rows = assetsIn(project.getKey());
+        Map<Integer, Integer> parents = parentMap(rows);
+        boolean outermost = "move".equals(action) || ("delete".equals(action) && draft.isCascade());
+        List<Integer> order = outermost ? BulkSelection.keepRoots(ids, parents) : BulkSelection.deepestFirst(ids, parents);
+        Set<Integer> selected = new HashSet<Integer>(ids);
+        Set<Integer> covered = new HashSet<Integer>();
+        BulkResultDto result = new BulkResultDto();
+        List<BulkIssueDto> errors = new ArrayList<BulkIssueDto>();
+        I18nHelper labels = i18n();
+        for (Integer id : order) {
+            String label = assetLabel(id);
+            try {
+                AssetEntity entity = ao().get(AssetEntity.class, id.intValue());
+                if (entity == null) {
+                    if (outermost) {
+                        covered.add(id);
+                    }
+                    continue;
+                }
+                if (!ProjectKeys.same(entity.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.project.mismatch");
+                }
+                if ("delete".equals(action)) {
+                    deleteAsset(user, id.intValue(), draft.isCascade());
+                } else if ("move".equals(action)) {
+                    MoveDraft move = new MoveDraft();
+                    move.setParentId(draft.isToRoot() ? null : draft.getParentId());
+                    moveAsset(user, id.intValue(), move);
+                } else if ("status".equals(action)) {
+                    patchStatus(user, id.intValue(), draft.getStatus());
+                } else if ("copy".equals(action)) {
+                    copyAsset(user, id.intValue());
+                } else {
+                    patchCustodian(user, id.intValue(), draft.getCustodianKey());
+                }
+                covered.add(id);
+                if (outermost) {
+                    for (Integer other : selected) {
+                        if (BulkSelection.isUnder(other.intValue(), id.intValue(), parents)) {
+                            covered.add(other);
+                        }
+                    }
+                }
+            } catch (AssetException ex) {
+                errors.add(new BulkIssueDto(label, exceptionText(labels, ex)));
+            }
+        }
+        result.setDone(covered.size());
+        result.setErrors(errors);
+        return result;
+    }
+
+    private void patchStatus(ApplicationUser user, final int id, final String status) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.bulk.place", entity.getName());
+                }
+                String oldStatus = Statuses.canonical(entity.getStatus());
+                String next = resolveStatus(entity.getProjectKey(), status);
+                entity.setStatus(next);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                logActivity(id, user.getKey(), "status", "", oldStatus, next);
+                return null;
+            }
+        });
+    }
+
+    private void patchCustodian(ApplicationUser user, final int id, final String custodianKey) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, id, kindCap(requireAsset(id)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.bulk.place", entity.getName());
+                }
+                String oldCustodian = entity.getCustodianKey() == null ? "" : entity.getCustodianKey();
+                String next = normalizeCustodian(custodianKey);
+                entity.setCustodianKey(next);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                logActivity(id, user.getKey(), "custodian", "", displayName(oldCustodian), displayName(next == null ? "" : next));
+                return null;
+            }
+        });
+    }
+
+    private Integer placeContainer(Integer startId, AssetEntity[] rows, Set<Integer> skip) {
+        Map<Integer, Boolean> locations = new HashMap<Integer, Boolean>();
+        if (rows != null) {
+            for (AssetEntity row : rows) {
+                locations.put(Integer.valueOf(row.getID()), Boolean.valueOf(isLocation(row)));
+            }
+        }
+        return PlaceHistory.container(startId, locations, parentMap(rows == null ? new AssetEntity[0] : rows), skip);
+    }
+
+    private void logPlaceChange(ApplicationUser user, Integer placeId, String kind, AssetEntity child) {
+        if (user == null || placeId == null || child == null) {
+            return;
+        }
+        String key = child.getObjectKey() == null ? "" : child.getObjectKey();
+        String name = child.getName() == null ? "" : child.getName();
+        boolean arrival = "place_add".equals(kind) || "place_in".equals(kind);
+        recordActivity(placeId.intValue(), user.getKey(), kind, key, arrival ? "" : name, arrival ? name : "");
+    }
+
+    private boolean isLocation(AssetEntity entity) {
+        AssetTypeEntity type = entity == null ? null : findType(entity.getTypeKey());
+        return type != null && type.isLocation();
+    }
+
+    private String assetLabel(int id) {
+        AssetEntity entity = ao().get(AssetEntity.class, id);
+        if (entity == null || entity.getName() == null || entity.getName().trim().isEmpty()) {
+            return String.valueOf(id);
+        }
+        return entity.getName();
+    }
+
+    private String exceptionText(I18nHelper labels, AssetException ex) {
+        String text = ex.getArgs() == null || ex.getArgs().length == 0
+                ? labels.getText(ex.getMessageKey())
+                : labels.getText(ex.getMessageKey(), ex.getArgs());
+        if (text == null || text.equals(ex.getMessageKey())) {
+            return ex.getMessageKey();
+        }
+        return text;
+    }
+
+    private void createImported(ApplicationUser user, String projectKey, EquipmentExchange.Change change) {
+        Date now = new Date();
+        Integer parentId = Integer.valueOf(change.getParentId());
+        AssetEntity entity = ao().create(AssetEntity.class,
+                new DBParam("NAME", change.getName()),
+                new DBParam("OBJECT_KEY", nextKey(projectKey)),
+                new DBParam("DESCRIPTION", change.getDescription() == null ? "" : change.getDescription()),
+                new DBParam("TYPE_KEY", change.getTypeKey()),
+                new DBParam("STATUS", change.getStatusKey()),
+                new DBParam("SORT_ORDER", nextSort(parentId, projectKey)),
+                new DBParam("CREATED", now),
+                new DBParam("UPDATED", now),
+                new DBParam("CREATED_BY", user.getKey()),
+                new DBParam("UPDATED_BY", user.getKey()),
+                new DBParam("PROJECT_KEY", projectKey));
+        entity.setParentId(parentId);
+        entity.setCustodianKey(change.getCustodianKey());
+        entity.save();
+        replaceAttributes(entity, drafts(change));
+        logActivity(entity.getID(), user.getKey(), "created", "", "", entity.getName());
+        logPlaceChange(user, placeContainer(parentId, assetsIn(projectKey), null), "place_add", entity);
+    }
+
+    private void updateImported(ApplicationUser user, EquipmentExchange.Change change, Map<Integer, AssetEntity> index) {
+        AssetEntity entity = index.get(change.getExistingId());
+        if (entity == null) {
+            entity = ao().get(AssetEntity.class, change.getExistingId().intValue());
+        }
+        if (entity == null) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        String oldName = entity.getName() == null ? "" : entity.getName();
+        String oldDescription = entity.getDescription() == null ? "" : entity.getDescription();
+        String oldType = entity.getTypeKey() == null ? "" : entity.getTypeKey();
+        String oldStatus = Statuses.canonical(entity.getStatus());
+        String oldCustodian = entity.getCustodianKey() == null ? "" : entity.getCustodianKey();
+        Integer oldParent = TreeLogic.normalizeParent(entity.getParentId());
+        AssetEntity[] projectRows = assetsIn(entity.getProjectKey());
+        Integer fromPlace = placeContainer(oldParent, projectRows, null);
+        Integer toPlace = placeContainer(Integer.valueOf(change.getParentId()), projectRows, null);
+        Map<String, String> oldAttributes = attributeValues(entity.getID());
+        String newDescription = change.getDescription() == null ? oldDescription : change.getDescription();
+        String newCustodian = change.isCustodianPresent()
+                ? (change.getCustodianKey() == null ? "" : change.getCustodianKey())
+                : oldCustodian;
+        entity.setName(change.getName());
+        entity.setDescription(newDescription);
+        entity.setTypeKey(change.getTypeKey());
+        entity.setStatus(change.getStatusKey());
+        entity.setCustodianKey(newCustodian.isEmpty() ? null : newCustodian);
+        entity.setParentId(Integer.valueOf(change.getParentId()));
+        entity.setUpdated(new Date());
+        entity.setUpdatedBy(user.getKey());
+        entity.save();
+        replaceAttributes(entity, drafts(change, oldAttributes));
+        int id = entity.getID();
+        logActivity(id, user.getKey(), "name", "", oldName, change.getName());
+        logActivity(id, user.getKey(), "description", "", clip(oldDescription), clip(newDescription));
+        logActivity(id, user.getKey(), "type", "", oldType, change.getTypeKey());
+        logActivity(id, user.getKey(), "status", "", oldStatus, change.getStatusKey());
+        logActivity(id, user.getKey(), "custodian", "", displayName(oldCustodian), displayName(newCustodian));
+        if (oldParent == null || oldParent.intValue() != change.getParentId()) {
+            AssetEntity previous = oldParent == null ? null : index.get(oldParent);
+            AssetEntity next = index.get(Integer.valueOf(change.getParentId()));
+            logActivity(id, user.getKey(), "move", "", previous == null ? "" : previous.getName(), next == null ? "" : next.getName());
+        }
+        if (fromPlace != null && !fromPlace.equals(toPlace)) {
+            logPlaceChange(user, fromPlace, "place_out", entity);
+        }
+        if (toPlace != null && !toPlace.equals(fromPlace)) {
+            logPlaceChange(user, toPlace, "place_in", entity);
+        }
+        logAttributeChanges(id, user.getKey(), change.getTypeKey(), oldAttributes);
+    }
+
+    private List<AttributeDraft> drafts(EquipmentExchange.Change change) {
+        return drafts(change, null);
+    }
+
+    private List<AttributeDraft> drafts(EquipmentExchange.Change change, Map<String, String> kept) {
+        List<AttributeDraft> attributes = new ArrayList<AttributeDraft>();
+        Set<String> present = new HashSet<String>();
+        for (EquipmentExchange.Value value : change.getAttributes()) {
+            AttributeDraft draft = new AttributeDraft();
+            draft.setFieldKey(value.getFieldKey());
+            draft.setValue(value.getValue());
+            attributes.add(draft);
+            present.add(value.getFieldKey());
+        }
+        if (kept != null) {
+            for (Map.Entry<String, String> entry : kept.entrySet()) {
+                if (present.contains(entry.getKey())) {
+                    continue;
+                }
+                AttributeDraft draft = new AttributeDraft();
+                draft.setFieldKey(entry.getKey());
+                draft.setValue(entry.getValue());
+                attributes.add(draft);
+            }
+        }
+        return attributes;
+    }
+
+    private ImportIssueDto translateIssue(I18nHelper labels, EquipmentExchange.Issue issue) {
+        String text = issue.getArgument() == null || issue.getArgument().isEmpty()
+                ? labels.getText(issue.getMessageKey())
+                : labels.getText(issue.getMessageKey(), issue.getArgument());
+        if (text == null || text.equals(issue.getMessageKey())) {
+            text = issue.getMessageKey();
+        }
+        return new ImportIssueDto(issue.getRow(), text);
+    }
+
+    private EquipmentExchange.Person lookupPerson(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return EquipmentExchange.Person.blank();
+        }
+        String text = raw.trim();
+        ApplicationUser direct = userManager().getUserByKey(text);
+        if (direct == null) {
+            direct = userManager().getUserByName(text);
+        }
+        if (direct != null) {
+            return EquipmentExchange.Person.found(direct.getKey());
+        }
+        if (text.length() < 2) {
+            return EquipmentExchange.Person.missing();
+        }
+        List<ApplicationUser> found = userSearchService().findUsers(text, UserSearchParams.LIMITED_ACTIVE_USERS_IGNORE_EMPTY_QUERY);
+        List<ApplicationUser> exact = new ArrayList<ApplicationUser>();
+        if (found != null) {
+            for (ApplicationUser match : found) {
+                if (samePerson(match, text)) {
+                    exact.add(match);
+                }
+            }
+        }
+        if (exact.size() == 1) {
+            return EquipmentExchange.Person.found(exact.get(0).getKey());
+        }
+        if (exact.size() > 1) {
+            return EquipmentExchange.Person.ambiguous();
+        }
+        return EquipmentExchange.Person.missing();
+    }
+
+    private boolean samePerson(ApplicationUser match, String text) {
+        if (match == null) {
+            return false;
+        }
+        return text.equalsIgnoreCase(match.getName())
+                || text.equalsIgnoreCase(match.getKey())
+                || (match.getEmailAddress() != null && text.equalsIgnoreCase(match.getEmailAddress()))
+                || (match.getDisplayName() != null && text.equalsIgnoreCase(match.getDisplayName()));
+    }
+
+    private String nextKey(String projectKey) {
+        String prefix = ObjectKeys.prefix(projectKey);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            AssetCounterEntity counter = counterFor(prefix);
             int value = Math.max(counter.getNextValue(), 1);
             counter.setNextValue(value + 1);
             counter.save();
-            String key = "AST-" + value;
-            if (ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
+            String key = prefix + "-" + value;
+            if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
                 return key;
             }
         }
         throw new AssetException(500, "asset-tree.error.unexpected");
+    }
+
+    private AssetCounterEntity counterFor(String prefix) {
+        AssetCounterEntity[] rows = ao().find(AssetCounterEntity.class, Query.select().where("PROJECT_KEY = ?", prefix));
+        if (rows.length > 0) {
+            return rows[0];
+        }
+        int start = 1;
+        AssetEntity[] existing = ao().find(AssetEntity.class, Query.select().where("OBJECT_KEY LIKE ?", prefix + "-%"));
+        if (existing != null) {
+            for (AssetEntity row : existing) {
+                int suffix = ObjectKeys.suffix(prefix, row.getObjectKey());
+                if (suffix >= start) {
+                    start = suffix + 1;
+                }
+            }
+        }
+        return ao().create(AssetCounterEntity.class,
+                new DBParam("NEXT_VALUE", start),
+                new DBParam("PROJECT_KEY", prefix));
     }
 
     private int nextSort(Integer parentId, String projectKey) {
@@ -1535,8 +2522,22 @@ public class AssetServiceImpl implements AssetService {
             if (!trimmed.isEmpty() && FieldKinds.NUMBER.equals(field.getKind()) && !NUMBER.matcher(trimmed).matches()) {
                 throw new AssetException(400, "asset-tree.error.number");
             }
+            if (!trimmed.isEmpty() && FieldKinds.DATE.equals(field.getKind())) {
+                String canonical = FieldDates.canonical(trimmed);
+                if (canonical == null) {
+                    throw new AssetException(400, "asset-tree.error.date");
+                }
+                value = canonical;
+            }
             if (!trimmed.isEmpty() && FieldKinds.USER.equals(field.getKind()) && userManager().getUserByKey(trimmed) == null) {
                 throw new AssetException(400, "asset-tree.error.user");
+            }
+            if (!trimmed.isEmpty() && FieldChoices.handles(field.getKind())) {
+                String normalized = FieldChoices.canonicalValue(field.getKind(), field.getOptions(), trimmed);
+                if (normalized == null) {
+                    throw new AssetException(400, FieldChoices.errorKey(field.getKind()));
+                }
+                value = normalized;
             }
             if (trimmed.length() > AssetValidator.MAX_ATTR_VALUE) {
                 throw new AssetException(400, "asset-tree.error.attribute.value.length");
@@ -1598,15 +2599,12 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private AssetEntity requireWritable(ApplicationUser user, int id) {
-        AssetEntity entity = requireAsset(id);
-        Project project = project(entity.getProjectKey());
-        if (!canWrite(user, project)) {
-            if (!canOpen(user, project)) {
-                throw new AssetException(404, "asset-tree.error.notFound");
-            }
-            throw new AssetException(403, "asset-tree.error.forbidden");
-        }
-        return entity;
+        return requireAssetCap(user, id, kindCap(requireAsset(id)));
+    }
+
+    private String kindCap(AssetEntity entity) {
+        AssetTypeEntity type = entity == null ? null : findType(entity.getTypeKey());
+        return type != null && type.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
     }
 
     private AssetEntity requireAsset(int id) {
@@ -1731,37 +2729,55 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private boolean canWrite(ApplicationUser user, Project project) {
-        return hasCap(user, project, GrantCaps.EDIT);
+        return hasCap(user, project, GrantCaps.OBJECT);
     }
 
     private boolean canConfigure(ApplicationUser user, Project project) {
-        return hasCap(user, project, GrantCaps.SCHEMA);
+        return hasCap(user, project, GrantCaps.TYPES);
     }
 
     private void applyRights(ProjectDto dto, ApplicationUser user, Project project) {
-        boolean change = hasCap(user, project, GrantCaps.EDIT);
-        dto.setCanEdit(change);
-        dto.setCanChange(change);
-        dto.setCanCreate(hasCap(user, project, GrantCaps.CREATE));
-        dto.setCanMove(hasCap(user, project, GrantCaps.MOVE));
-        dto.setCanRemove(hasCap(user, project, GrantCaps.REMOVE));
-        dto.setCanComment(hasCap(user, project, GrantCaps.COMMENT));
-        dto.setCanConfigure(hasCap(user, project, GrantCaps.SCHEMA));
-        dto.setCanGrant(hasCap(user, project, GrantCaps.ACCESS));
+        boolean places = hasCap(user, project, GrantCaps.PLACES);
+        boolean objects = hasCap(user, project, GrantCaps.OBJECT);
+        boolean types = hasCap(user, project, GrantCaps.TYPES);
+        boolean assets = hasCap(user, project, GrantCaps.ASSETS);
+        boolean admin = hasCap(user, project, GrantCaps.ADMIN);
+        dto.setCanPlaces(places);
+        dto.setCanObjects(objects);
+        dto.setCanTypes(types);
+        dto.setCanAssets(assets);
+        dto.setCanAdmin(admin);
+        dto.setCanEdit(objects);
+        dto.setCanChange(objects);
+        dto.setCanCreate(objects);
+        dto.setCanMove(places || objects);
+        dto.setCanRemove(places || objects);
+        dto.setCanComment(places || objects);
+        dto.setCanConfigure(types);
+        dto.setCanGrant(assets || admin);
     }
 
     private boolean hasCap(ApplicationUser user, Project project, String cap) {
         if (user == null || project == null) {
             return false;
         }
-        if (isAdmin(user) || permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
+        if (isAdmin(user)) {
+            return true;
+        }
+        if (grantHas(user, project, cap)) {
+            return true;
+        }
+        if (GrantCaps.ADMIN.equals(cap)) {
+            return false;
+        }
+        if (permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
             return true;
         }
         if (canOpen(user, project) && (hasGlobalManage(user)
                 || permissionManager().hasPermission(EDIT_ASSETS, project, user))) {
             return true;
         }
-        return grantHas(user, project, cap);
+        return false;
     }
 
     private Project requireProjectCap(ApplicationUser user, String projectKey, String cap) {
@@ -1960,9 +2976,12 @@ public class AssetServiceImpl implements AssetService {
         dto.setTypeKey(type.getTypeKey());
         dto.setProjectKey(type.getProjectKey());
         dto.setColor(type.getColor());
+        dto.setIcon(TypeIcons.resolve(type.getIcon(), type.isLocation()));
         dto.setSystemType(type.isSystemType());
         dto.setLocation(type.isLocation());
         dto.setShowInTree(type.isLocation() || type.isShowInTree());
+        dto.setService(!type.isLocation() && type.isService());
+        dto.setPlaceCaption(type.getPlaceCaption() == null ? "" : type.getPlaceCaption());
         dto.setAssetCount(assetCount);
         if (type.isSystemType() && type.getBaseKey() != null && !type.getBaseKey().isEmpty()) {
             String key = "asset-tree.type." + type.getBaseKey();
@@ -1986,7 +3005,19 @@ public class AssetServiceImpl implements AssetService {
         dto.setRequired(field.isRequired());
         dto.setPosition(field.getPosition());
         dto.setLabel(fieldLabel(field, labels));
+        dto.setOptions(FieldChoices.optionsOf(field.getOptions()));
         return dto;
+    }
+
+    private String resolveIcon(String raw, boolean location) {
+        String icon = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        if (icon.isEmpty()) {
+            return TypeIcons.defaultFor(location);
+        }
+        if (!TypeIcons.isIcon(icon)) {
+            throw new AssetException(400, "asset-tree.error.type.icon");
+        }
+        return icon;
     }
 
     private String fieldLabel(AssetFieldEntity field, I18nHelper labels) {
@@ -2033,7 +3064,8 @@ public class AssetServiceImpl implements AssetService {
                     new DBParam("STATUS_KEY", keys[i]),
                     new DBParam("LABEL", label),
                     new DBParam("CATEGORY", categories[i]),
-                    new DBParam("SORT_ORDER", i));
+                    new DBParam("SORT_ORDER", i),
+                    new DBParam("SUMMARY_MODE", StatusSummary.seedMode(keys[i])));
         }
     }
 
@@ -2074,6 +3106,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setCategory(row.getCategory());
         dto.setSortOrder(row.getSortOrder());
         dto.setAssetCount(count == null ? 0 : count.intValue());
+        dto.setInSummary(StatusSummary.shows(row.getSummaryMode(), row.getStatusKey()));
         return dto;
     }
 
@@ -2105,8 +3138,20 @@ public class AssetServiceImpl implements AssetService {
     private List<GrantDto> grantDtos(String projectKey) {
         List<GrantDto> result = new ArrayList<GrantDto>();
         ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        ProjectGrantEntity[] global = ao().find(ProjectGrantEntity.class, Query.select().where("PROJECT_KEY = ?", GrantCaps.ALL_PROJECTS));
         for (ProjectGrantEntity row : rows) {
             result.add(toGrantDto(row));
+        }
+        for (ProjectGrantEntity row : global) {
+            boolean listed = false;
+            for (GrantDto existing : result) {
+                if (existing.getGroupName() != null && existing.getGroupName().equalsIgnoreCase(row.getGroupName())) {
+                    listed = true;
+                }
+            }
+            if (!listed) {
+                result.add(toGrantDto(row));
+            }
         }
         Collections.sort(result, new Comparator<GrantDto>() {
             @Override
@@ -2165,10 +3210,24 @@ public class AssetServiceImpl implements AssetService {
         try {
             ProjectGrantEntity[] grants = ao().find(ProjectGrantEntity.class);
             for (ProjectGrantEntity grant : grants) {
-                if (grant.getProjectKey() == null || found.containsKey(grant.getProjectKey())) {
+                if (grant.getProjectKey() == null || !inGroup(user, grant.getGroupName())) {
                     continue;
                 }
-                if (!inGroup(user, grant.getGroupName())) {
+                if (GrantCaps.ALL_PROJECTS.equals(grant.getProjectKey())) {
+                    String caps = grant.getCaps();
+                    if (caps == null || caps.trim().isEmpty()) {
+                        caps = GrantCaps.fromLevel(grant.getLevel());
+                    }
+                    if (GrantCaps.has(caps, GrantCaps.ADMIN)) {
+                        for (Project granted : projectManager().getProjects()) {
+                            if (granted != null && granted.getKey() != null) {
+                                found.put(granted.getKey(), granted);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (found.containsKey(grant.getProjectKey())) {
                     continue;
                 }
                 Project granted = project(grant.getProjectKey());
@@ -2186,25 +3245,32 @@ public class AssetServiceImpl implements AssetService {
             return false;
         }
         try {
-            ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class,
-                    Query.select().where("PROJECT_KEY = ?", project.getKey()));
-            for (int i = 0; i < rows.length; i++) {
-                ProjectGrantEntity row = rows[i];
-                if (!inGroup(user, row.getGroupName())) {
-                    continue;
-                }
-                String caps = row.getCaps();
-                if (caps == null || caps.trim().isEmpty()) {
-                    caps = GrantCaps.fromLevel(row.getLevel());
-                }
-                if (GrantCaps.has(caps, cap)) {
-                    return true;
-                }
+            if (grantRowsAllow(user, project.getKey(), cap)) {
+                return true;
             }
-            return false;
+            return grantRowsAllow(user, GrantCaps.ALL_PROJECTS, cap);
         } catch (RuntimeException ex) {
             return false;
         }
+    }
+
+    private boolean grantRowsAllow(ApplicationUser user, String projectKey, String cap) {
+        ProjectGrantEntity[] rows = ao().find(ProjectGrantEntity.class,
+                Query.select().where("PROJECT_KEY = ?", projectKey));
+        for (int i = 0; i < rows.length; i++) {
+            ProjectGrantEntity row = rows[i];
+            if (!inGroup(user, row.getGroupName())) {
+                continue;
+            }
+            String caps = row.getCaps();
+            if (caps == null || caps.trim().isEmpty()) {
+                caps = GrantCaps.fromLevel(row.getLevel());
+            }
+            if (GrantCaps.has(caps, cap)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean inGroup(ApplicationUser user, String groupName) {
@@ -2277,16 +3343,22 @@ public class AssetServiceImpl implements AssetService {
         if (type != null) {
             dto.setTypeLabel(type.getLabel());
             dto.setColor(type.getColor());
+            dto.setIcon(type.getIcon());
         } else {
             dto.setTypeLabel(entity.getTypeKey());
             dto.setColor("#5D6B82");
+            dto.setIcon(TypeIcons.DEFAULT_OBJECT);
         }
         dto.setAttributes(attributeDtos(type, attributes));
+        List<ServicePlanEntity> plans = plansOf(entity.getID());
+        dto.setServiceDue(dueNames(plans, LocalDate.now()));
+        dto.setOfferedTypes(type != null && type.isLocation() ? offeredKeys(entity.getOfferedTypes()) : new ArrayList<String>());
         if (withIssues) {
             dto.setIssues(issuesFor(entity.getID()));
             dto.setComments(commentDtos(entity.getID()));
             dto.setFiles(fileDtos(entity.getID()));
             dto.setActivities(activityDtos(entity.getID()));
+            dto.setPlans(planDtos(plans, LocalDate.now()));
         }
         return dto;
     }
@@ -2392,7 +3464,13 @@ public class AssetServiceImpl implements AssetService {
             dto.setOldValue(row.getOldValue() == null ? "" : row.getOldValue());
             dto.setNewValue(row.getNewValue() == null ? "" : row.getNewValue());
             dto.setCreated(format(row.getCreated()));
-            dto.setAuthor(profile(row.getAuthorKey()));
+            if (row.getAuthorKey() == null || row.getAuthorKey().isEmpty()) {
+                UserProfileDto actor = new UserProfileDto();
+                actor.setDisplayName(mailText("asset-tree.ui.serviceActor"));
+                dto.setAuthor(actor);
+            } else {
+                dto.setAuthor(profile(row.getAuthorKey()));
+            }
             result.add(dto);
         }
         return result;
@@ -2649,6 +3727,469 @@ public class AssetServiceImpl implements AssetService {
             bucket.add(asset.getID());
         }
         return children;
+    }
+
+    private static final int MAX_PLANS = 12;
+
+    @Override
+    public ServicePlanDto createPlan(ApplicationUser user, final int assetId, final ServicePlanDraft draft) {
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        ServicePlanDto created = ao().executeInTransaction(new TransactionCallback<ServicePlanDto>() {
+            @Override
+            public ServicePlanDto doInTransaction() {
+                AssetEntity asset = equipmentForPlan(user, assetId);
+                AssetTypeEntity type = findType(asset.getTypeKey());
+                if (type == null || !type.isService()) {
+                    throw new AssetException(400, "asset-tree.error.service.type");
+                }
+                if (plansOf(assetId).size() >= MAX_PLANS) {
+                    throw new AssetException(400, "asset-tree.error.service.limit");
+                }
+                ServicePlanEntity row = ao().create(ServicePlanEntity.class, new DBParam("ASSET_ID", assetId));
+                fillPlan(row, asset, draft, true);
+                row.save();
+                applyDueQuietly(asset.getProjectKey(), notices);
+                return planDto(row, LocalDate.now());
+            }
+        });
+        dispatchNotices(notices);
+        return created;
+    }
+
+    @Override
+    public ServicePlanDto updatePlan(ApplicationUser user, final int assetId, final int planId, final ServicePlanDraft draft) {
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        ServicePlanDto updated = ao().executeInTransaction(new TransactionCallback<ServicePlanDto>() {
+            @Override
+            public ServicePlanDto doInTransaction() {
+                AssetEntity asset = equipmentForPlan(user, assetId);
+                ServicePlanEntity row = findPlan(assetId, planId);
+                if (row == null) {
+                    throw new AssetException(404, "asset-tree.error.notFound");
+                }
+                fillPlan(row, asset, draft, false);
+                row.save();
+                applyDueQuietly(asset.getProjectKey(), notices);
+                return planDto(row, LocalDate.now());
+            }
+        });
+        dispatchNotices(notices);
+        return updated;
+    }
+
+    @Override
+    public void deletePlan(ApplicationUser user, final int assetId, final int planId) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                equipmentForPlan(user, assetId);
+                ServicePlanEntity row = findPlan(assetId, planId);
+                if (row == null) {
+                    throw new AssetException(404, "asset-tree.error.notFound");
+                }
+                ao().delete(row);
+                return null;
+            }
+        });
+    }
+
+    @Override
+    public AssetDto offerType(ApplicationUser user, final int assetId, final PlaceTypeDraft draft, final boolean present) {
+        final List<String> requested = requestedTypes(draft);
+        if (requested.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.notFound");
+        }
+        return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
+            @Override
+            public AssetDto doInTransaction() {
+                AssetEntity place = requireAssetCap(user, assetId, GrantCaps.PLACES);
+                if (!isLocation(place)) {
+                    throw new AssetException(400, "asset-tree.error.type.place");
+                }
+                List<String> keys = offeredKeys(place.getOfferedTypes());
+                for (String typeKey : requested) {
+                    AssetTypeEntity type = requireType(typeKey);
+                    if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
+                        throw new AssetException(400, "asset-tree.error.type");
+                    }
+                    if (present) {
+                        if (!keys.contains(type.getTypeKey())) {
+                            keys.add(type.getTypeKey());
+                        }
+                    } else {
+                        if (placeHasEquipment(place, type.getTypeKey())) {
+                            throw new AssetException(409, "asset-tree.error.type.busy");
+                        }
+                        keys.remove(type.getTypeKey());
+                    }
+                }
+                place.setOfferedTypes(joinOffered(keys));
+                place.setUpdated(new Date());
+                place.setUpdatedBy(user.getKey());
+                place.save();
+                AssetEntity[] rows = assetsIn(place.getProjectKey());
+                return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
+            }
+        });
+    }
+
+    private List<String> requestedTypes(PlaceTypeDraft draft) {
+        List<String> keys = new ArrayList<String>();
+        if (draft != null && draft.getTypeKeys() != null) {
+            for (String key : draft.getTypeKeys()) {
+                String trimmed = key == null ? "" : key.trim();
+                if (!trimmed.isEmpty() && !keys.contains(trimmed)) {
+                    keys.add(trimmed);
+                }
+            }
+        }
+        if (draft != null && draft.getTypeKey() != null) {
+            String trimmed = draft.getTypeKey().trim();
+            if (!trimmed.isEmpty() && !keys.contains(trimmed)) {
+                keys.add(trimmed);
+            }
+        }
+        if (keys.size() > 40) {
+            throw new AssetException(400, "asset-tree.error.type");
+        }
+        return keys;
+    }
+
+    private List<String> offeredKeys(String raw) {
+        List<String> keys = new ArrayList<String>();
+        if (raw == null || raw.isEmpty()) {
+            return keys;
+        }
+        for (String part : raw.split("\n")) {
+            String key = part.trim();
+            if (!key.isEmpty() && !keys.contains(key)) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    private String joinOffered(List<String> keys) {
+        StringBuilder builder = new StringBuilder();
+        for (String key : keys) {
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append(key);
+        }
+        return builder.toString();
+    }
+
+    private boolean placeHasEquipment(AssetEntity place, String typeKey) {
+        for (AssetEntity asset : assetsIn(place.getProjectKey())) {
+            Integer parent = TreeLogic.normalizeParent(asset.getParentId());
+            if (parent != null && parent.intValue() == place.getID()
+                    && typeKey.equals(asset.getTypeKey()) && !isLocation(asset)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void applyDuePlans() {
+        List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                applyDueInside(null, notices);
+                return null;
+            }
+        });
+        dispatchNotices(notices);
+    }
+
+    private void applyDueQuietly(String projectKey, List<ServiceNotice> notices) {
+        try {
+            applyDueInside(projectKey, notices);
+        } catch (RuntimeException ex) {
+            log.warn("Service dates were not applied", ex);
+        }
+    }
+
+    private void applyDueInside(String projectKey, List<ServiceNotice> notices) {
+        LocalDate today = LocalDate.now();
+        ServicePlanEntity[] rows = ao().find(ServicePlanEntity.class);
+        if (rows == null) {
+            return;
+        }
+        List<ServicePlanEntity> ordered = new ArrayList<ServicePlanEntity>();
+        Collections.addAll(ordered, rows);
+        Collections.sort(ordered, new Comparator<ServicePlanEntity>() {
+            @Override
+            public int compare(ServicePlanEntity left, ServicePlanEntity right) {
+                return left.getID() - right.getID();
+            }
+        });
+        for (ServicePlanEntity plan : ordered) {
+            try {
+                applyOne(plan, projectKey, today, notices);
+            } catch (RuntimeException ex) {
+                log.warn("Service plan {} was skipped", Integer.valueOf(plan.getID()), ex);
+            }
+        }
+    }
+
+    private void applyOne(ServicePlanEntity plan, String projectKey, LocalDate today, List<ServiceNotice> notices) {
+        AssetEntity asset = ao().get(AssetEntity.class, plan.getAssetId());
+        if (asset == null || isLocation(asset)) {
+            return;
+        }
+        if (projectKey != null && !projectKey.equals(asset.getProjectKey())) {
+            return;
+        }
+        LocalDate next = ServiceDue.next(plan.getLastDone(), plan.getEveryCount(), plan.getEveryUnit());
+        if (!ServiceDue.reached(next, today)) {
+            return;
+        }
+        String dueKey = next.toString();
+        if (dueKey.equals(plan.getAppliedFor())) {
+            return;
+        }
+        String statusKey = plan.getStatusKey() == null ? "" : plan.getStatusKey().trim();
+        if (!statusKey.isEmpty() && findStatus(asset.getProjectKey(), statusKey) != null) {
+            String oldStatus = Statuses.canonical(asset.getStatus());
+            if (!statusKey.equals(oldStatus)) {
+                asset.setStatus(statusKey);
+                asset.setUpdated(new Date());
+                asset.setUpdatedBy("");
+                asset.save();
+                logActivity(asset.getID(), "", "status", "", oldStatus, statusKey);
+            }
+        }
+        recordActivity(asset.getID(), "", "service_due", plan.getName(), plan.getLastDone(), dueKey);
+        plan.setAppliedFor(dueKey);
+        plan.save();
+        if (plan.getNotifyFlag() == 1) {
+            ServiceNotice notice = noticeFor(asset, plan, dueKey, statusKey);
+            if (notice != null) {
+                notices.add(notice);
+            }
+        }
+    }
+
+    private ServiceNotice noticeFor(AssetEntity asset, ServicePlanEntity plan, String dueKey, String statusKey) {
+        UserProfileDto person = profile(asset.getCustodianKey());
+        if (person == null || person.getEmail() == null || person.getEmail().trim().isEmpty()) {
+            return null;
+        }
+        String statusLabel = statusKey.isEmpty() ? "" : statusText(statusKey);
+        ProjectStatusEntity known = statusKey.isEmpty() ? null : findStatus(asset.getProjectKey(), statusKey);
+        if (known != null && known.getLabel() != null && !known.getLabel().isEmpty()) {
+            statusLabel = known.getLabel();
+        }
+        String link = jiraBaseUrl() + "/plugins/servlet/asset-tree?project=" + asset.getProjectKey()
+                + "&view=all#" + asset.getID();
+        String subject = mailText("asset-tree.mail.subject", plan.getName(), asset.getName());
+        StringBuilder body = new StringBuilder();
+        body.append(asset.getName()).append(" (").append(asset.getObjectKey()).append(")\n");
+        body.append(plan.getName()).append(": ").append(plan.getLastDone()).append(" -> ").append(dueKey).append('\n');
+        if (!statusLabel.isEmpty()) {
+            body.append(statusLabel).append('\n');
+        }
+        body.append(link);
+        return new ServiceNotice(person.getEmail().trim(), subject, body.toString());
+    }
+
+    private String mailText(String key, String... args) {
+        try {
+            I18nHelper labels = i18n();
+            if (labels != null) {
+                String text;
+                if (args == null || args.length == 0) {
+                    text = labels.getText(key);
+                } else if (args.length == 1) {
+                    text = labels.getText(key, args[0]);
+                } else {
+                    text = labels.getText(key, args[0], args[1]);
+                }
+                if (text != null && !text.equals(key) && !text.startsWith("asset-tree.")) {
+                    return text;
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.debug("Service text skipped", ex);
+        }
+        if ("asset-tree.ui.serviceActor".equals(key)) {
+            return "Asset tree";
+        }
+        if (args != null && args.length >= 2) {
+            return args[0] + ": " + args[1];
+        }
+        return key;
+    }
+
+    private void dispatchNotices(List<ServiceNotice> notices) {
+        if (notices == null) {
+            return;
+        }
+        for (ServiceNotice notice : notices) {
+            try {
+                Email email = new Email(notice.email);
+                email.setSubject(notice.subject);
+                email.setBody(notice.body);
+                email.setMimeType("text/plain; charset=UTF-8");
+                MailQueue queue = ComponentAccessor.getComponent(MailQueue.class);
+                if (queue != null) {
+                    queue.addItem(new SingleMailQueueItem(email));
+                }
+            } catch (RuntimeException ex) {
+                log.warn("Service notice was not queued", ex);
+            }
+        }
+    }
+
+    private AssetEntity equipmentForPlan(ApplicationUser user, int assetId) {
+        AssetEntity asset = requireAssetCap(user, assetId, GrantCaps.OBJECT);
+        if (isLocation(asset)) {
+            throw new AssetException(400, "asset-tree.error.service.place");
+        }
+        return asset;
+    }
+
+    private void fillPlan(ServicePlanEntity row, AssetEntity asset, ServicePlanDraft draft, boolean creating) {
+        if (draft == null) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        if (Boolean.TRUE.equals(draft.getDone())) {
+            row.setLastDone(LocalDate.now().toString());
+            row.setAppliedFor("");
+        } else if (draft.getLastDone() != null || creating) {
+            String last = FieldDates.canonical(draft.getLastDone());
+            if (last == null || last.isEmpty()) {
+                throw new AssetException(400, "asset-tree.error.service");
+            }
+            if (!last.equals(row.getLastDone())) {
+                row.setLastDone(last);
+                row.setAppliedFor("");
+            }
+        }
+        if (draft.getName() != null || creating) {
+            String name = draft.getName() == null ? "" : draft.getName().trim();
+            if (name.isEmpty() || name.length() > 80) {
+                throw new AssetException(400, "asset-tree.error.service");
+            }
+            row.setName(name);
+        }
+        String unit = row.getEveryUnit();
+        int count = row.getEveryCount();
+        if (draft.getEveryUnit() != null || creating) {
+            unit = ServiceDue.unit(draft.getEveryUnit());
+        }
+        if (draft.getEveryCount() != null || creating) {
+            count = draft.getEveryCount() == null ? 0 : draft.getEveryCount().intValue();
+        }
+        if (unit == null) {
+            unit = "";
+        }
+        if ((draft.getEveryUnit() != null || draft.getEveryCount() != null || creating)
+                && !ServiceDue.countAllowed(count, unit)) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        String storedUnit = row.getEveryUnit() == null ? "" : row.getEveryUnit();
+        if (!unit.equals(storedUnit) || count != row.getEveryCount()) {
+            row.setAppliedFor("");
+        }
+        row.setEveryUnit(unit);
+        row.setEveryCount(count);
+        if (draft.getStatusKey() != null || creating) {
+            String statusKey = draft.getStatusKey() == null ? "" : draft.getStatusKey().trim();
+            if (!statusKey.isEmpty() && findStatus(asset.getProjectKey(), statusKey) == null) {
+                throw new AssetException(400, "asset-tree.error.status");
+            }
+            row.setStatusKey(statusKey);
+        }
+        if (draft.getNotify() != null || creating) {
+            boolean notify = draft.getNotify() == null || draft.getNotify().booleanValue();
+            row.setNotifyFlag(notify ? 1 : 0);
+        }
+        if (row.getName() == null || row.getLastDone() == null || row.getEveryUnit() == null) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+    }
+
+    private ServicePlanEntity findPlan(int assetId, int planId) {
+        ServicePlanEntity row = ao().get(ServicePlanEntity.class, planId);
+        if (row == null || row.getAssetId() != assetId) {
+            return null;
+        }
+        return row;
+    }
+
+    private List<ServicePlanEntity> plansOf(int assetId) {
+        ServicePlanEntity[] rows = ao().find(ServicePlanEntity.class, Query.select().where("ASSET_ID = ?", assetId));
+        List<ServicePlanEntity> ordered = new ArrayList<ServicePlanEntity>();
+        if (rows != null) {
+            Collections.addAll(ordered, rows);
+        }
+        Collections.sort(ordered, new Comparator<ServicePlanEntity>() {
+            @Override
+            public int compare(ServicePlanEntity left, ServicePlanEntity right) {
+                return left.getID() - right.getID();
+            }
+        });
+        return ordered;
+    }
+
+    private List<ServicePlanDto> planDtos(List<ServicePlanEntity> rows, LocalDate today) {
+        List<ServicePlanDto> result = new ArrayList<ServicePlanDto>();
+        if (rows == null) {
+            return result;
+        }
+        for (ServicePlanEntity row : rows) {
+            result.add(planDto(row, today));
+        }
+        return result;
+    }
+
+    private ServicePlanDto planDto(ServicePlanEntity row, LocalDate today) {
+        ServicePlanDto dto = new ServicePlanDto();
+        dto.setId(row.getID());
+        dto.setName(row.getName() == null ? "" : row.getName());
+        dto.setLastDone(row.getLastDone() == null ? "" : row.getLastDone());
+        dto.setEveryCount(row.getEveryCount());
+        dto.setEveryUnit(row.getEveryUnit() == null ? "" : row.getEveryUnit());
+        dto.setStatusKey(row.getStatusKey() == null ? "" : row.getStatusKey());
+        dto.setNotify(row.getNotifyFlag() == 1);
+        LocalDate next = ServiceDue.next(row.getLastDone(), row.getEveryCount(), row.getEveryUnit());
+        dto.setNextDue(next == null ? "" : next.toString());
+        dto.setDue(ServiceDue.reached(next, today));
+        return dto;
+    }
+
+    private String dueNames(List<ServicePlanEntity> rows, LocalDate today) {
+        StringBuilder names = new StringBuilder();
+        if (rows == null) {
+            return "";
+        }
+        for (ServicePlanEntity row : rows) {
+            LocalDate next = ServiceDue.next(row.getLastDone(), row.getEveryCount(), row.getEveryUnit());
+            if (!ServiceDue.reached(next, today)) {
+                continue;
+            }
+            if (names.length() > 0) {
+                names.append(", ");
+            }
+            names.append(row.getName() == null ? "" : row.getName());
+        }
+        return names.toString();
+    }
+
+    private static final class ServiceNotice {
+        private final String email;
+        private final String subject;
+        private final String body;
+
+        private ServiceNotice(String email, String subject, String body) {
+            this.email = email;
+            this.subject = subject;
+            this.body = body;
+        }
     }
 
     private static final Comparator<AssetEntity> SIBLING_ORDER = new Comparator<AssetEntity>() {
