@@ -315,6 +315,7 @@ public final class UiCatalog {
             "printAction",
             "printEmpty",
             "printBlocked",
+            "printQrSkipped",
             "cardScan",
             "backToList",
             "mineHint",

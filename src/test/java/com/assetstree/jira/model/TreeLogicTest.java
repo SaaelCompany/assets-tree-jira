@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -47,6 +48,38 @@ public class TreeLogicTest {
         parents.put(3, 2);
         assertEquals(0, TreeLogic.depth(parents, 1));
         assertEquals(2, TreeLogic.depth(parents, 3));
+    }
+
+    @Test
+    public void equipmentCountsEachSubtreeOnce() {
+        Map<Integer, List<Integer>> children = new HashMap<Integer, List<Integer>>();
+        children.put(1, Arrays.asList(2, 3));
+        children.put(2, Collections.singletonList(4));
+        Set<Integer> locations = new HashSet<Integer>();
+        locations.add(Integer.valueOf(1));
+        locations.add(Integer.valueOf(2));
+
+        Map<Integer, Integer> counts = TreeLogic.equipmentCounts(children, locations);
+
+        assertEquals(Integer.valueOf(2), counts.get(Integer.valueOf(1)));
+        assertEquals(Integer.valueOf(1), counts.get(Integer.valueOf(2)));
+        assertEquals(Integer.valueOf(1), counts.get(Integer.valueOf(3)));
+        assertEquals(Integer.valueOf(1), counts.get(Integer.valueOf(4)));
+    }
+
+    @Test
+    public void equipmentCountsStopOnACycle() {
+        Map<Integer, List<Integer>> children = new HashMap<Integer, List<Integer>>();
+        children.put(1, Collections.singletonList(2));
+        children.put(2, Collections.singletonList(1));
+        Set<Integer> locations = new HashSet<Integer>();
+        locations.add(Integer.valueOf(1));
+        locations.add(Integer.valueOf(2));
+
+        Map<Integer, Integer> counts = TreeLogic.equipmentCounts(children, locations);
+
+        assertEquals(Integer.valueOf(0), counts.get(Integer.valueOf(1)));
+        assertEquals(Integer.valueOf(0), counts.get(Integer.valueOf(2)));
     }
 
     @Test

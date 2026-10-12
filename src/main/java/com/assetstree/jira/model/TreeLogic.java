@@ -2,6 +2,7 @@ package com.assetstree.jira.model;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -71,6 +72,37 @@ public final class TreeLogic {
 
     public static int subtreeHeight(Map<Integer, List<Integer>> childrenByParent, int id) {
         return height(childrenByParent, id, new HashSet<Integer>());
+    }
+
+    /**
+     * Equipment under each node. A location contributes only what sits beneath it.
+     * A cycle contributes nothing and does not walk forever.
+     */
+    public static Map<Integer, Integer> equipmentCounts(Map<Integer, List<Integer>> childrenByParent, Set<Integer> locations) {
+        Map<Integer, Integer> counts = new HashMap<Integer, Integer>();
+        if (childrenByParent == null || childrenByParent.isEmpty()) {
+            return counts;
+        }
+        Set<Integer> nodes = new HashSet<Integer>();
+        for (Map.Entry<Integer, List<Integer>> entry : childrenByParent.entrySet()) {
+            if (entry.getKey() != null) {
+                nodes.add(entry.getKey());
+            }
+            List<Integer> children = entry.getValue();
+            if (children == null) {
+                continue;
+            }
+            for (Integer child : children) {
+                if (child != null) {
+                    nodes.add(child);
+                }
+            }
+        }
+        Set<Integer> visiting = new HashSet<Integer>();
+        for (Integer id : nodes) {
+            countEquipment(id.intValue(), childrenByParent, locations, counts, visiting);
+        }
+        return counts;
     }
 
     public static List<Integer> descendants(Map<Integer, List<Integer>> childrenByParent, int rootId) {
@@ -177,6 +209,34 @@ public final class TreeLogic {
         while (builder.length() > 0 && builder.charAt(builder.length() - 1) == '-') {
             builder.setLength(builder.length() - 1);
         }
+    }
+
+    private static int countEquipment(int id, Map<Integer, List<Integer>> childrenByParent, Set<Integer> locations,
+                                      Map<Integer, Integer> counts, Set<Integer> visiting) {
+        Integer key = Integer.valueOf(id);
+        Integer known = counts.get(key);
+        if (known != null) {
+            return known.intValue();
+        }
+        if (!visiting.add(key)) {
+            return 0;
+        }
+        int total = 0;
+        List<Integer> children = childrenByParent.get(key);
+        if (children != null) {
+            for (Integer child : children) {
+                if (child == null) {
+                    continue;
+                }
+                total += countEquipment(child.intValue(), childrenByParent, locations, counts, visiting);
+            }
+        }
+        visiting.remove(key);
+        if (locations == null || !locations.contains(key)) {
+            total += 1;
+        }
+        counts.put(key, Integer.valueOf(total));
+        return total;
     }
 
     private static int height(Map<Integer, List<Integer>> childrenByParent, int id, Set<Integer> seen) {

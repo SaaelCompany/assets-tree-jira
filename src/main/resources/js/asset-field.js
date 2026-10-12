@@ -952,9 +952,36 @@
         }
         if (!watch.started && window.MutationObserver) {
             watch.started = true;
+            var timer = null;
+            var applying = false;
+            var again = false;
+            function run() {
+                if (applying) {
+                    again = true;
+                    return;
+                }
+                applying = true;
+                try {
+                    boot();
+                    refresh();
+                } finally {
+                    applying = false;
+                }
+                if (again) {
+                    again = false;
+                    timer = setTimeout(run, 80);
+                }
+            }
             var observer = new MutationObserver(function () {
-                boot();
-                refresh();
+                if (applying) {
+                    again = true;
+                    return;
+                }
+                if (timer) return;
+                timer = setTimeout(function () {
+                    timer = null;
+                    run();
+                }, 80);
             });
             observer.observe(document.body, { childList: true, subtree: true });
         }

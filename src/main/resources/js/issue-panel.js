@@ -136,15 +136,18 @@
             input.placeholder = t(i18n, 'panelSearch');
             var results = el('ul', 'asset-tree-panel-results');
             var timer = null;
+            var searchToken = 0;
             input.addEventListener('input', function () {
                 clearTimeout(timer);
                 var query = input.value.replace(/^\s+|\s+$/g, '');
                 timer = setTimeout(function () {
+                    var seq = ++searchToken;
                     if (query.length < 1) {
                         results.innerHTML = '';
                         return;
                     }
                     ajax('GET', '/issues/' + issueId + '/search?q=' + encodeURIComponent(query), null, function (status, payload) {
+                        if (seq !== searchToken || input.value.replace(/^\s+|\s+$/g, '') !== query) return;
                         results.innerHTML = '';
                         if (status !== 200) return;
                         (payload || []).slice(0, 8).forEach(function (asset) {
@@ -204,8 +207,10 @@
 
     function loadLinks(panel, issueId, i18n, canEdit, projectKey) {
         var list = ensureList(panel);
+        var token = (panel._linksToken || 0) + 1;
+        panel._linksToken = token;
         ajax('GET', '/issues/' + issueId + '/assets', null, function (status, payload) {
-            if (!panel.parentNode) return;
+            if (panel._linksToken !== token || !panel.parentNode) return;
             list = ensureList(panel);
             list.innerHTML = '';
             if (status !== 200) {

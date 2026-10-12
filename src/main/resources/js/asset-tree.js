@@ -128,6 +128,10 @@
         baseUrl: ''
     };
     var idIndex = null;
+    var childIndex = null;
+    var countIndex = null;
+    var fieldCache = null;
+    var treeToken = 0;
     var noticeTimer = null;
 
     function normalizeView(raw) {
@@ -212,6 +216,9 @@
 
     function invalidate() {
         idIndex = null;
+        childIndex = null;
+        countIndex = null;
+        fieldCache = null;
     }
 
     function compareAssets(left, right) {
@@ -222,12 +229,32 @@
     }
 
     function childrenOf(parentId) {
-        return state.assets.filter(function (asset) {
-            if (parentId === null) {
-                return asset.parentId === null || asset.parentId === undefined || !byId()[asset.parentId];
-            }
-            return asset.parentId === parentId;
-        }).sort(compareAssets);
+        if (!childIndex) {
+            var byParent = {};
+            var roots = [];
+            state.assets.forEach(function (asset) {
+                var parent = asset.parentId;
+                if (parent === null || parent === undefined || !byId()[parent]) {
+                    roots.push(asset);
+                } else {
+                    var bucket = byParent[parent];
+                    if (!bucket) {
+                        bucket = [];
+                        byParent[parent] = bucket;
+                    }
+                    bucket.push(asset);
+                }
+            });
+            roots.sort(compareAssets);
+            Object.keys(byParent).forEach(function (key) {
+                byParent[key].sort(compareAssets);
+            });
+            childIndex = { byParent: byParent, roots: roots };
+        }
+        if (parentId === null) {
+            return childIndex.roots;
+        }
+        return childIndex.byParent[parentId] || [];
     }
 
     function descendantsOf(id) {
@@ -669,6 +696,9 @@
     }
 
     function filterFields() {
+        if (fieldCache) {
+            return fieldCache;
+        }
         var fields = [
             { key: 'name', label: t('name'), kind: 'text' },
             { key: 'type', label: t('type'), kind: 'type' },
@@ -689,6 +719,7 @@
                 });
             });
         });
+        fieldCache = fields;
         return fields;
     }
 
@@ -1020,12 +1051,27 @@
     }
 
     function equipmentCount(assetId) {
-        var count = 0;
-        childrenOf(assetId).forEach(function (child) {
-            if (isFolder(child)) count += equipmentCount(child.id);
-            else count += 1;
-        });
-        return count;
+        if (!countIndex) {
+            countIndex = {};
+            var visiting = {};
+            function fill(id) {
+                if (Object.prototype.hasOwnProperty.call(countIndex, id)) return countIndex[id];
+                if (visiting[id]) return 0;
+                visiting[id] = true;
+                var count = 0;
+                childrenOf(id).forEach(function (child) {
+                    if (isFolder(child)) count += fill(child.id);
+                    else count += 1;
+                });
+                visiting[id] = false;
+                countIndex[id] = count;
+                return count;
+            }
+            state.assets.forEach(function (asset) {
+                fill(asset.id);
+            });
+        }
+        return countIndex[assetId] || 0;
     }
 
     function typeGroupsFor(placeId) {
@@ -1504,7 +1550,6 @@
             state.assets.forEach(function (asset) {
                 if (showsInTree(asset)) state.expanded[asset.id] = true;
             });
-            state.query = '';
             rememberExpanded();
             renderNodes();
         }));
@@ -1678,7 +1723,6 @@
             chevron.addEventListener('click', function (event) {
                 event.stopPropagation();
                 state.expanded[asset.id] = !isExpanded(asset.id);
-                state.query = '';
                 rememberExpanded();
                 renderNodes();
             });
@@ -2219,7 +2263,7 @@
         }), [t('name'), t('keyLabel'), t('status'), t('custodian')], {
             scope: 'group:' + group.placeId + ':' + group.typeKey,
             rows: kids.map(function (child) {
-                return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey };
+                return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey, asset: child };
             })
         }));
         return section;
@@ -2710,7 +2754,8 @@
                     key: String(child.id),
                     kind: isFolder(child) ? 'place' : 'object',
                     label: child.name,
-                    projectKey: child.projectKey || state.projectKey
+                    projectKey: child.projectKey || state.projectKey,
+                    asset: child
                 };
             })
         }));
@@ -3009,7 +3054,7 @@
                 bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
                 bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
                     printCards(items.map(function (item) {
-                        return byId()[parseInt(item.key, 10)];
+                        return item.asset || assetByAnyId(parseInt(item.key, 10));
                     }));
                 }));
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
@@ -3499,13 +3544,16 @@
         input.placeholder = t('custodianSearch');
         var results = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         input.addEventListener('input', function () {
             clearTimeout(timer);
             timer = setTimeout(function () {
                 var query = input.value.trim();
+                var seq = ++searchSeq;
                 results.innerHTML = '';
                 if (query.length < 2) return;
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || input.value.trim() !== query) return;
                     results.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -3901,6 +3949,21 @@
         return base + '/plugins/servlet/asset-tree?project=' + encodeURIComponent(project) + '&key=' + encodeURIComponent(key);
     }
 
+    function assetByAnyId(id) {
+        if (!id && id !== 0) return null;
+        var known = byId()[id];
+        if (known) return known;
+        var pools = [state.searchHits, state.mineAssets, state.holderAssets];
+        for (var p = 0; p < pools.length; p++) {
+            var pool = pools[p];
+            if (!pool) continue;
+            for (var i = 0; i < pool.length; i++) {
+                if (pool[i] && pool[i].id === id) return pool[i];
+            }
+        }
+        return null;
+    }
+
     function printCards(assets) {
         var cards = (assets || []).filter(function (asset) {
             return asset && !isFolder(asset) && asset.objectKey;
@@ -3913,22 +3976,33 @@
             notify(t('errorTitle'));
             return;
         }
-        var sheet = window.open('', '_blank');
-        if (!sheet) {
-            notify(t('printBlocked'));
-            return;
-        }
+        var skipped = 0;
         var body = cards.map(function (asset) {
             var link = cardLink(asset);
+            var code = window.AssetTreeQr.svg(link);
+            if (!code) {
+                skipped++;
+                return '';
+            }
             var type = asset.typeLabel || typeOf(asset.typeKey).label || '';
             var place = placePath(asset);
-            return '<article class="card"><div class="qr">' + window.AssetTreeQr.svg(link) + '</div><div class="text">'
+            return '<article class="card"><div class="qr">' + code + '</div><div class="text">'
                 + '<div class="name">' + htmlEscape(asset.name || '') + '</div>'
                 + '<div class="meta">' + htmlEscape(type) + (place ? ' · ' + htmlEscape(place) : '') + '</div>'
                 + '<div class="key">' + htmlEscape(asset.objectKey) + '</div>'
                 + '<div class="scan">' + htmlEscape(t('cardScan')) + '</div>'
                 + '</div></article>';
         }).join('');
+        if (!body) {
+            notify(t('printQrSkipped'));
+            return;
+        }
+        var sheet = window.open('', '_blank');
+        if (!sheet) {
+            notify(t('printBlocked'));
+            return;
+        }
+        if (skipped) notify(t('printQrSkipped'));
         var style = 'body{margin:0;color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
             + '.bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
             + '.bar p{margin:0;flex:1}.bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
@@ -5795,7 +5869,12 @@
     }
 
     function reloadTree(done) {
-        ajax('GET', '/assets?projectKey=' + encodeURIComponent(state.projectKey), null, function (status, payload) {
+        var key = state.projectKey;
+        var token = ++treeToken;
+        ajax('GET', '/assets?projectKey=' + encodeURIComponent(key), null, function (status, payload) {
+            if (token !== treeToken || key !== state.projectKey) {
+                return;
+            }
             if (status !== 200) {
                 state.treeReady = false;
                 state.loading = false;
@@ -5969,16 +6048,19 @@
         text.value = userKey || '';
         var list = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         text.addEventListener('input', function () {
             hidden.value = '';
             clearTimeout(timer);
             var query = text.value.trim();
             timer = setTimeout(function () {
+                var seq = ++searchSeq;
                 if (query.length < 2) {
                     list.innerHTML = '';
                     return;
                 }
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || text.value.trim() !== query) return;
                     list.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -6038,14 +6120,17 @@
         search.value = state.holderQuery || '';
         var results = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         search.addEventListener('input', function () {
             state.holderQuery = search.value;
             clearTimeout(timer);
             timer = setTimeout(function () {
                 var query = search.value.trim();
+                var seq = ++searchSeq;
                 results.innerHTML = '';
                 if (query.length < 2) return;
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || search.value.trim() !== query) return;
                     results.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -6915,7 +7000,8 @@
                     key: String(asset.id),
                     kind: typeOf(asset.typeKey).location ? 'place' : 'object',
                     label: asset.name,
-                    projectKey: asset.projectKey || state.projectKey
+                    projectKey: asset.projectKey || state.projectKey,
+                    asset: asset
                 };
             })
         }));

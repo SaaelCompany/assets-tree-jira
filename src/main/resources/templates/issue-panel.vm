@@ -29,7 +29,7 @@
   #if($assetTreeAssets && $assetTreeAssets.size() > 0)
     <ul class="asset-tree-panel-list" id="asset-tree-panel-list">
       #foreach($asset in $assetTreeAssets)
-        <li><a href="${panelBase}/plugins/servlet/asset-tree?project=${asset.projectKey}#${asset.id}">$asset.objectKey  $asset.name#if($asset.location && $asset.location != "") · $asset.location#end</a></li>
+        <li><a href="${panelBase}/plugins/servlet/asset-tree?project=${textutils.htmlEncode($asset.projectKey)}#${asset.id}">$textutils.htmlEncode($asset.objectKey)  $textutils.htmlEncode($asset.name)#if($asset.location && $asset.location != "") · $textutils.htmlEncode($asset.location)#end</a></li>
       #end
     </ul>
   #else

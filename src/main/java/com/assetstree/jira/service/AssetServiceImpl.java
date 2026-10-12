@@ -109,6 +109,7 @@ import com.assetstree.jira.model.TypeIcons;
 import com.assetstree.jira.web.UiCatalog;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
+import net.java.ao.RawEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -129,11 +130,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 public class AssetServiceImpl implements AssetService {
     private static final Logger log = LoggerFactory.getLogger(AssetServiceImpl.class);
     private static final int SEARCH_LIMIT = 30;
+    private static final int ID_BATCH = 200;
+    private static final ConcurrentHashMap<String, Object> KEY_LOCKS = new ConcurrentHashMap<String, Object>();
     private static final Pattern NUMBER = Pattern.compile("^-?\\d{1,12}(\\.\\d{1,4})?$");
     private static final GlobalPermissionKey MANAGE_ASSETS = GlobalPermissionKey.of("MANAGE_ASSETS");
     private static final GlobalPermissionKey MANAGE_ASSETS_FULL = GlobalPermissionKey.of(PluginInfo.KEY + ":MANAGE_ASSETS");
@@ -308,12 +312,13 @@ public class AssetServiceImpl implements AssetService {
         AssetListDto list = ao().executeInTransaction(new TransactionCallback<AssetListDto>() {
             @Override
             public AssetListDto doInTransaction() {
-                applyDueQuietly(key, notices);
                 AssetEntity[] rows = assetsIn(key);
-                Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset();
+                applyDueFor(key, rows, notices);
+                Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
+                Map<String, String[]> holders = new HashMap<String, String[]>();
                 List<AssetEntity> matched = new ArrayList<AssetEntity>();
                 for (AssetEntity row : rows) {
-                    if (!needle.isEmpty() && !matches(row, attributes.get(row.getID()), needle)) {
+                    if (!needle.isEmpty() && !matches(row, attributes.get(row.getID()), needle, holders)) {
                         continue;
                     }
                     matched.add(row);
@@ -348,10 +353,11 @@ public class AssetServiceImpl implements AssetService {
             @Override
             public AssetDto doInTransaction() {
                 AssetEntity entity = requireReadable(user, id);
-                applyDueQuietly(entity.getProjectKey(), notices);
+                String projectKey = entity.getProjectKey();
+                AssetEntity[] rows = assetsIn(projectKey);
+                applyDueFor(projectKey, rows, notices);
                 entity = requireReadable(user, id);
-                AssetEntity[] rows = assetsIn(entity.getProjectKey());
-                return toDto(entity, attributesFor(id), indexTypes(typeDtos(entity.getProjectKey(), rows)), indexAssets(rows), true);
+                return toDto(entity, attributesFor(id), indexTypes(typeDtos(projectKey, rows)), indexAssets(rows), true);
             }
         });
         dispatchNotices(notices);
@@ -645,19 +651,22 @@ public class AssetServiceImpl implements AssetService {
                     logPlaceChange(user, placeContainer(TreeLogic.normalizeParent(gone.getParentId()), all, doomed), "place_remove", gone);
                 }
                 List<Integer> fileIds = new ArrayList<Integer>();
-                for (Integer assetId : toDelete) {
-                    for (AssetFileEntity file : ao().find(AssetFileEntity.class, Query.select().where("ASSET_ID = ?", assetId))) {
-                        fileIds.add(file.getID());
-                    }
-                    ao().deleteWithSQL(AssetAttributeEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(InventoryMarkEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetCommentEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetFileEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetActivityEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(ServicePlanEntity.class, "ASSET_ID = ?", assetId);
-                    deletePortalRulesFor(assetId.intValue());
+                for (AssetFileEntity file : findIn(AssetFileEntity.class, "ASSET_ID", toDelete, null)) {
+                    fileIds.add(Integer.valueOf(file.getID()));
                 }
+                deleteRows(AssetAttributeEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetIssueLinkEntity.class, "ASSET_ID", toDelete);
+                deleteRows(InventoryMarkEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetCommentEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetFileEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetActivityEntity.class, "ASSET_ID", toDelete);
+                deleteRows(ServicePlanEntity.class, "ASSET_ID", toDelete);
+                List<Integer> ruleIds = new ArrayList<Integer>();
+                for (PortalRuleEntity rule : findIn(PortalRuleEntity.class, "ASSET_ID", toDelete, null)) {
+                    ruleIds.add(Integer.valueOf(rule.getID()));
+                }
+                deleteRows(PortalRuleConditionEntity.class, "RULE_ID", ruleIds);
+                deleteRows(PortalRuleEntity.class, "ID", ruleIds);
                 for (Integer fileId : fileIds) {
                     AssetFileStore.delete(fileId.intValue());
                 }
@@ -1318,17 +1327,20 @@ public class AssetServiceImpl implements AssetService {
                 }
                 report.setByType(byType);
                 Map<Integer, List<Integer>> children = childrenMap(rows);
+                Set<Integer> locationIds = new HashSet<Integer>();
+                for (Map.Entry<Integer, Boolean> entry : locationAsset.entrySet()) {
+                    if (Boolean.TRUE.equals(entry.getValue())) {
+                        locationIds.add(entry.getKey());
+                    }
+                }
+                Map<Integer, Integer> equipmentByPlace = TreeLogic.equipmentCounts(children, locationIds);
                 List<ReportPlaceDto> places = new ArrayList<ReportPlaceDto>();
                 for (AssetEntity row : rows) {
                     if (!Boolean.TRUE.equals(locationAsset.get(row.getID()))) {
                         continue;
                     }
-                    int nested = 0;
-                    for (Integer descendant : TreeLogic.descendants(children, row.getID())) {
-                        if (!Boolean.TRUE.equals(locationAsset.get(descendant))) {
-                            nested++;
-                        }
-                    }
+                    Integer nestedCount = equipmentByPlace.get(row.getID());
+                    int nested = nestedCount == null ? 0 : nestedCount.intValue();
                     ReportPlaceDto place = new ReportPlaceDto();
                     place.setId(row.getID());
                     place.setName(row.getName());
@@ -1415,10 +1427,7 @@ public class AssetServiceImpl implements AssetService {
                 AssetEntity[] rows = assetsIn(project.getKey());
                 Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), rows));
                 Map<Integer, AssetEntity> index = indexAssets(rows);
-                Map<Integer, InventoryMarkEntity> marks = new HashMap<Integer, InventoryMarkEntity>();
-                for (InventoryMarkEntity mark : ao().find(InventoryMarkEntity.class)) {
-                    marks.put(Integer.valueOf(mark.getAssetId()), mark);
-                }
+                Map<Integer, InventoryMarkEntity> marks = marksFor(idsOf(rows));
                 List<InventoryRowDto> list = new ArrayList<InventoryRowDto>();
                 int checked = 0;
                 for (AssetEntity row : rows) {
@@ -1476,6 +1485,9 @@ public class AssetServiceImpl implements AssetService {
                     mark.setCheckedAt(new Date());
                     mark.setCheckedBy(user.getKey());
                     mark.save();
+                    for (int i = 1; i < existing.length; i++) {
+                        ao().delete(existing[i]);
+                    }
                 }
                 AssetEntity[] rows = assetsIn(entity.getProjectKey());
                 Map<String, AssetTypeDto> types = indexTypes(typeDtos(entity.getProjectKey(), rows));
@@ -1609,14 +1621,6 @@ public class AssetServiceImpl implements AssetService {
                 return null;
             }
         });
-    }
-
-    private void deletePortalRulesFor(int assetId) {
-        PortalRuleEntity[] rules = ao().find(PortalRuleEntity.class, Query.select().where("ASSET_ID = ?", assetId));
-        for (PortalRuleEntity rule : rules) {
-            ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", rule.getID());
-            ao().delete(rule);
-        }
     }
 
     private List<PortalConditionDraft> cleanConditions(List<PortalConditionDraft> raw) {
@@ -1760,14 +1764,11 @@ public class AssetServiceImpl implements AssetService {
             public List<AssetDto> doInTransaction() {
                 List<AssetDto> found = new ArrayList<AssetDto>();
                 for (ProjectDto project : visibleProjects(user)) {
-                    applyDueQuietly(project.getKey(), notices);
                     AssetEntity[] rows = assetsIn(project.getKey());
+                    applyDueFor(project.getKey(), rows, notices);
                     Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), rows));
                     Map<Integer, AssetEntity> index = indexAssets(rows);
-                    Map<Integer, List<AssetAttributeEntity>> attributes = new HashMap<Integer, List<AssetAttributeEntity>>();
-                    for (AssetEntity row : rows) {
-                        attributes.put(row.getID(), attributesFor(row.getID()));
-                    }
+                    Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
                     for (AssetEntity row : rows) {
                         String role = holderRole(row, attributes.get(row.getID()), types.get(row.getTypeKey()), holder);
                         if (role == null) {
@@ -1874,18 +1875,40 @@ public class AssetServiceImpl implements AssetService {
             @Override
             public List<AssetDto> doInTransaction() {
                 AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class, Query.select().where("ISSUE_ID = ?", issueId));
+                List<AssetEntity> visible = new ArrayList<AssetEntity>();
+                Map<String, AssetEntity[]> rowsByProject = new HashMap<String, AssetEntity[]>();
+                if (links != null) {
+                    for (AssetIssueLinkEntity link : links) {
+                        AssetEntity entity = ao().get(AssetEntity.class, link.getAssetId());
+                        if (entity == null) {
+                            continue;
+                        }
+                        Project project = project(entity.getProjectKey());
+                        if (!canOpen(user, project)) {
+                            continue;
+                        }
+                        visible.add(entity);
+                        if (!rowsByProject.containsKey(entity.getProjectKey())) {
+                            rowsByProject.put(entity.getProjectKey(), assetsIn(entity.getProjectKey()));
+                        }
+                    }
+                }
+                Map<String, Map<String, AssetTypeDto>> typesByProject = new HashMap<String, Map<String, AssetTypeDto>>();
+                Map<String, Map<Integer, AssetEntity>> indexByProject = new HashMap<String, Map<Integer, AssetEntity>>();
+                Map<String, Map<Integer, List<AssetAttributeEntity>>> attributesByProject =
+                        new HashMap<String, Map<Integer, List<AssetAttributeEntity>>>();
+                for (Map.Entry<String, AssetEntity[]> entry : rowsByProject.entrySet()) {
+                    AssetEntity[] rows = entry.getValue();
+                    typesByProject.put(entry.getKey(), indexTypes(typeDtos(entry.getKey(), rows)));
+                    indexByProject.put(entry.getKey(), indexAssets(rows));
+                    attributesByProject.put(entry.getKey(), attributesByAsset(idsOf(rows)));
+                }
                 List<AssetDto> assets = new ArrayList<AssetDto>();
-                for (AssetIssueLinkEntity link : links) {
-                    AssetEntity entity = ao().get(AssetEntity.class, link.getAssetId());
-                    if (entity == null) {
-                        continue;
-                    }
-                    Project project = project(entity.getProjectKey());
-                    if (!canOpen(user, project)) {
-                        continue;
-                    }
-                    AssetEntity[] rows = assetsIn(entity.getProjectKey());
-                    assets.add(toDto(entity, attributesFor(entity.getID()), indexTypes(typeDtos(entity.getProjectKey(), rows)), indexAssets(rows), false));
+                for (AssetEntity entity : visible) {
+                    String projectKey = entity.getProjectKey();
+                    Map<Integer, List<AssetAttributeEntity>> attributes = attributesByProject.get(projectKey);
+                    List<AssetAttributeEntity> stored = attributes == null ? null : attributes.get(Integer.valueOf(entity.getID()));
+                    assets.add(toDto(entity, stored, typesByProject.get(projectKey), indexByProject.get(projectKey), false));
                 }
                 Collections.sort(assets, new Comparator<AssetDto>() {
                     @Override
@@ -2449,14 +2472,19 @@ public class AssetServiceImpl implements AssetService {
 
     private String nextKey(String projectKey) {
         String prefix = ObjectKeys.prefix(projectKey);
-        for (int attempt = 0; attempt < 8; attempt++) {
-            AssetCounterEntity counter = counterFor(prefix);
-            int value = Math.max(counter.getNextValue(), 1);
-            counter.setNextValue(value + 1);
-            counter.save();
-            String key = prefix + "-" + value;
-            if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
-                return key;
+        Object created = new Object();
+        Object raced = KEY_LOCKS.putIfAbsent(prefix, created);
+        Object lock = raced == null ? created : raced;
+        synchronized (lock) {
+            for (int attempt = 0; attempt < 8; attempt++) {
+                AssetCounterEntity counter = counterFor(prefix);
+                int value = Math.max(counter.getNextValue(), 1);
+                counter.setNextValue(value + 1);
+                counter.save();
+                String key = prefix + "-" + value;
+                if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
+                    return key;
+                }
             }
         }
         throw new AssetException(500, "asset-tree.error.unexpected");
@@ -2895,14 +2923,14 @@ public class AssetServiceImpl implements AssetService {
         return found.length == 0 ? null : found[0];
     }
 
-    private Map<Integer, List<AssetAttributeEntity>> attributesByAsset() {
-        AssetAttributeEntity[] all = ao().find(AssetAttributeEntity.class, Query.select().order("ATTR_POSITION ASC"));
+    private Map<Integer, List<AssetAttributeEntity>> attributesByAsset(Collection<Integer> assetIds) {
         Map<Integer, List<AssetAttributeEntity>> map = new HashMap<Integer, List<AssetAttributeEntity>>();
-        for (AssetAttributeEntity attribute : all) {
-            List<AssetAttributeEntity> bucket = map.get(attribute.getAssetId());
+        for (AssetAttributeEntity attribute : findIn(AssetAttributeEntity.class, "ASSET_ID", assetIds, "ATTR_POSITION ASC")) {
+            Integer assetId = Integer.valueOf(attribute.getAssetId());
+            List<AssetAttributeEntity> bucket = map.get(assetId);
             if (bucket == null) {
                 bucket = new ArrayList<AssetAttributeEntity>();
-                map.put(attribute.getAssetId(), bucket);
+                map.put(assetId, bucket);
             }
             bucket.add(attribute);
         }
@@ -2913,17 +2941,112 @@ public class AssetServiceImpl implements AssetService {
         AssetAttributeEntity[] rows = ao().find(AssetAttributeEntity.class,
                 Query.select().where("ASSET_ID = ?", assetId).order("ATTR_POSITION ASC"));
         List<AssetAttributeEntity> list = new ArrayList<AssetAttributeEntity>();
-        Collections.addAll(list, rows);
+        if (rows != null) {
+            Collections.addAll(list, rows);
+        }
         return list;
     }
 
-    private boolean matches(AssetEntity asset, List<AssetAttributeEntity> attributes, String needle) {
+    private static List<Integer> idsOf(AssetEntity[] rows) {
+        List<Integer> ids = new ArrayList<Integer>();
+        if (rows == null) {
+            return ids;
+        }
+        for (AssetEntity row : rows) {
+            ids.add(Integer.valueOf(row.getID()));
+        }
+        return ids;
+    }
+
+    private Map<Integer, InventoryMarkEntity> marksFor(Collection<Integer> assetIds) {
+        Map<Integer, InventoryMarkEntity> marks = new HashMap<Integer, InventoryMarkEntity>();
+        for (InventoryMarkEntity mark : findIn(InventoryMarkEntity.class, "ASSET_ID", assetIds, null)) {
+            Integer assetId = Integer.valueOf(mark.getAssetId());
+            InventoryMarkEntity previous = marks.get(assetId);
+            if (previous == null || newerMark(mark, previous)) {
+                marks.put(assetId, mark);
+            }
+        }
+        return marks;
+    }
+
+    private static boolean newerMark(InventoryMarkEntity candidate, InventoryMarkEntity current) {
+        Date left = candidate.getCheckedAt();
+        Date right = current.getCheckedAt();
+        if (left == null) {
+            return false;
+        }
+        if (right == null) {
+            return true;
+        }
+        return left.after(right);
+    }
+
+    private <T extends RawEntity<Integer>> List<T> findIn(Class<T> type, String column, Collection<?> values, String order) {
+        List<T> found = new ArrayList<T>();
+        if (values == null || values.isEmpty()) {
+            return found;
+        }
+        List<Object> items = new ArrayList<Object>();
+        for (Object value : values) {
+            if (value != null) {
+                items.add(value);
+            }
+        }
+        for (int offset = 0; offset < items.size(); offset += ID_BATCH) {
+            int end = Math.min(offset + ID_BATCH, items.size());
+            List<Object> slice = items.subList(offset, end);
+            StringBuilder clause = new StringBuilder(column.length() + slice.size() * 2 + 8);
+            clause.append(column).append(" IN (");
+            Object[] params = new Object[slice.size()];
+            for (int i = 0; i < slice.size(); i++) {
+                if (i > 0) {
+                    clause.append(',');
+                }
+                clause.append('?');
+                params[i] = slice.get(i);
+            }
+            clause.append(')');
+            Query query = Query.select().where(clause.toString(), params);
+            if (order != null && !order.isEmpty()) {
+                query = query.order(order);
+            }
+            T[] rows = ao().find(type, query);
+            if (rows != null) {
+                Collections.addAll(found, rows);
+            }
+        }
+        return found;
+    }
+
+    private <T extends RawEntity<Integer>> void deleteRows(Class<T> type, String column, List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
+        for (int offset = 0; offset < ids.size(); offset += ID_BATCH) {
+            int end = Math.min(offset + ID_BATCH, ids.size());
+            List<Integer> slice = ids.subList(offset, end);
+            StringBuilder clause = new StringBuilder(column.length() + slice.size() * 2 + 8);
+            clause.append(column).append(" IN (");
+            Object[] params = new Object[slice.size()];
+            for (int i = 0; i < slice.size(); i++) {
+                if (i > 0) {
+                    clause.append(',');
+                }
+                clause.append('?');
+                params[i] = slice.get(i);
+            }
+            clause.append(')');
+            ao().deleteWithSQL(type, clause.toString(), params);
+        }
+    }
+
+    private boolean matches(AssetEntity asset, List<AssetAttributeEntity> attributes, String needle, Map<String, String[]> holders) {
         if (contains(asset.getName(), needle) || contains(asset.getObjectKey(), needle)
                 || contains(asset.getDescription(), needle) || contains(asset.getCustodianKey(), needle)) {
             return true;
         }
-        UserProfileDto holder = profile(asset.getCustodianKey());
-        if (holder != null && (contains(holder.getDisplayName(), needle) || contains(holder.getEmail(), needle))) {
+        if (holderMatches(asset.getCustodianKey(), needle, holders)) {
             return true;
         }
         if (attributes == null) {
@@ -2941,6 +3064,21 @@ public class AssetServiceImpl implements AssetService {
         return value != null && value.toLowerCase(Locale.ROOT).contains(needle);
     }
 
+    private boolean holderMatches(String userKey, String needle, Map<String, String[]> holders) {
+        if (userKey == null || userKey.isEmpty()) {
+            return false;
+        }
+        String[] cached = holders.get(userKey);
+        if (cached == null) {
+            ApplicationUser person = userManager().getUserByKey(userKey);
+            String name = person == null || person.getDisplayName() == null ? "" : person.getDisplayName();
+            String email = person == null || person.getEmailAddress() == null ? "" : person.getEmailAddress();
+            cached = new String[] {name, email};
+            holders.put(userKey, cached);
+        }
+        return contains(cached[0], needle) || contains(cached[1], needle);
+    }
+
     private List<AssetTypeDto> typeDtos(String projectKey, AssetEntity[] assets) {
         Map<String, Integer> counts = new HashMap<String, Integer>();
         if (assets != null) {
@@ -2950,9 +3088,12 @@ public class AssetServiceImpl implements AssetService {
             }
         }
         List<AssetTypeEntity> ordered = new ArrayList<AssetTypeEntity>();
-        for (AssetTypeEntity type : ao().find(AssetTypeEntity.class)) {
-            if (ProjectKeys.same(type.getProjectKey(), projectKey)) {
-                ordered.add(type);
+        AssetTypeEntity[] found = ao().find(AssetTypeEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (found != null) {
+            for (AssetTypeEntity type : found) {
+                if (ProjectKeys.same(type.getProjectKey(), projectKey)) {
+                    ordered.add(type);
+                }
             }
         }
         Collections.sort(ordered, new Comparator<AssetTypeEntity>() {
@@ -2962,16 +3103,45 @@ public class AssetServiceImpl implements AssetService {
                 return byOrder != 0 ? byOrder : left.getTypeKey().compareTo(right.getTypeKey());
             }
         });
+        List<String> typeKeys = new ArrayList<String>();
+        for (AssetTypeEntity type : ordered) {
+            typeKeys.add(type.getTypeKey());
+        }
+        Map<String, List<AssetFieldEntity>> fieldsByType = fieldsByType(typeKeys);
         I18nHelper labels = i18n();
         List<AssetTypeDto> result = new ArrayList<AssetTypeDto>();
         for (AssetTypeEntity type : ordered) {
             Integer count = counts.get(type.getTypeKey());
-            result.add(toTypeDto(type, labels, count == null ? 0 : count.intValue()));
+            List<AssetFieldEntity> typeFields = fieldsByType.get(type.getTypeKey());
+            result.add(toTypeDto(type, labels, count == null ? 0 : count.intValue(),
+                    typeFields == null ? Collections.<AssetFieldEntity>emptyList() : typeFields));
         }
         return result;
     }
 
+    private Map<String, List<AssetFieldEntity>> fieldsByType(List<String> typeKeys) {
+        Map<String, List<AssetFieldEntity>> map = new HashMap<String, List<AssetFieldEntity>>();
+        for (AssetFieldEntity field : findIn(AssetFieldEntity.class, "TYPE_KEY", typeKeys, "POSITION ASC")) {
+            List<AssetFieldEntity> bucket = map.get(field.getTypeKey());
+            if (bucket == null) {
+                bucket = new ArrayList<AssetFieldEntity>();
+                map.put(field.getTypeKey(), bucket);
+            }
+            bucket.add(field);
+        }
+        return map;
+    }
+
     private AssetTypeDto toTypeDto(AssetTypeEntity type, I18nHelper labels, int assetCount) {
+        AssetFieldEntity[] stored = fields(type.getTypeKey());
+        List<AssetFieldEntity> typeFields = new ArrayList<AssetFieldEntity>();
+        if (stored != null) {
+            Collections.addAll(typeFields, stored);
+        }
+        return toTypeDto(type, labels, assetCount, typeFields);
+    }
+
+    private AssetTypeDto toTypeDto(AssetTypeEntity type, I18nHelper labels, int assetCount, List<AssetFieldEntity> typeFields) {
         AssetTypeDto dto = new AssetTypeDto();
         dto.setTypeKey(type.getTypeKey());
         dto.setProjectKey(type.getProjectKey());
@@ -2991,8 +3161,10 @@ public class AssetServiceImpl implements AssetService {
             dto.setLabel(type.getLabel());
         }
         List<FieldDto> fields = new ArrayList<FieldDto>();
-        for (AssetFieldEntity field : fields(type.getTypeKey())) {
-            fields.add(toFieldDto(field, labels));
+        if (typeFields != null) {
+            for (AssetFieldEntity field : typeFields) {
+                fields.add(toFieldDto(field, labels));
+            }
         }
         dto.setFields(fields);
         return dto;
@@ -3897,7 +4069,7 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                applyDueInside(null, notices);
+                applyDueInside(null, null, notices);
                 return null;
             }
         });
@@ -3906,13 +4078,27 @@ public class AssetServiceImpl implements AssetService {
 
     private void applyDueQuietly(String projectKey, List<ServiceNotice> notices) {
         try {
-            applyDueInside(projectKey, notices);
+            applyDueInside(projectKey, null, notices);
         } catch (RuntimeException ex) {
             log.warn("Service dates were not applied", ex);
         }
     }
 
-    private void applyDueInside(String projectKey, List<ServiceNotice> notices) {
+    private void applyDueFor(String projectKey, AssetEntity[] rows, List<ServiceNotice> notices) {
+        Map<Integer, AssetEntity> known = new HashMap<Integer, AssetEntity>();
+        if (rows != null) {
+            for (AssetEntity row : rows) {
+                known.put(Integer.valueOf(row.getID()), row);
+            }
+        }
+        try {
+            applyDueInside(projectKey, known, notices);
+        } catch (RuntimeException ex) {
+            log.warn("Service dates were not applied", ex);
+        }
+    }
+
+    private void applyDueInside(String projectKey, Map<Integer, AssetEntity> known, List<ServiceNotice> notices) {
         LocalDate today = LocalDate.now();
         ServicePlanEntity[] rows = ao().find(ServicePlanEntity.class);
         if (rows == null) {
@@ -3926,17 +4112,38 @@ public class AssetServiceImpl implements AssetService {
                 return left.getID() - right.getID();
             }
         });
+        Set<Integer> allowed = null;
+        if (projectKey != null) {
+            allowed = new HashSet<Integer>();
+            if (known != null) {
+                allowed.addAll(known.keySet());
+            } else {
+                AssetEntity[] assets = assetsIn(projectKey);
+                if (assets != null) {
+                    for (AssetEntity asset : assets) {
+                        allowed.add(Integer.valueOf(asset.getID()));
+                    }
+                }
+            }
+        }
         for (ServicePlanEntity plan : ordered) {
+            if (allowed != null && !allowed.contains(Integer.valueOf(plan.getAssetId()))) {
+                continue;
+            }
             try {
-                applyOne(plan, projectKey, today, notices);
+                applyOne(plan, known, projectKey, today, notices);
             } catch (RuntimeException ex) {
                 log.warn("Service plan {} was skipped", Integer.valueOf(plan.getID()), ex);
             }
         }
     }
 
-    private void applyOne(ServicePlanEntity plan, String projectKey, LocalDate today, List<ServiceNotice> notices) {
-        AssetEntity asset = ao().get(AssetEntity.class, plan.getAssetId());
+    private void applyOne(ServicePlanEntity plan, Map<Integer, AssetEntity> known, String projectKey, LocalDate today,
+                           List<ServiceNotice> notices) {
+        AssetEntity asset = known == null ? null : known.get(Integer.valueOf(plan.getAssetId()));
+        if (asset == null) {
+            asset = ao().get(AssetEntity.class, plan.getAssetId());
+        }
         if (asset == null || isLocation(asset)) {
             return;
         }
