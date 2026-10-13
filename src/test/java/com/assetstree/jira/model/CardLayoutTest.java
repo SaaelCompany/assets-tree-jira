@@ -6,6 +6,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class CardLayoutTest {
@@ -49,5 +50,97 @@ public class CardLayoutTest {
         assertEquals(Arrays.asList("name", "attr:model"), CardLayout.split(stored));
         assertTrue(CardLayout.split(null).isEmpty());
         assertEquals("", CardLayout.join(null));
+    }
+
+    @Test
+    public void freeBlocksKeepCaptionLogoAndCustomCode() {
+        CardElement caption = block("text");
+        caption.setText("  \u041c\u041e\u041b:\n\"\u0418\u0432\u0430\u043d\u043e\u0432\"  ");
+        caption.setX(4);
+        caption.setY(6);
+        caption.setW(40);
+        caption.setH(12);
+        caption.setSize(14);
+        caption.setColor("#DE350B");
+        caption.setFont("serif");
+        caption.setBold(true);
+        caption.setAlign("center");
+
+        CardElement field = block("field");
+        field.setToken("attr:serial");
+        field.setX(4);
+        field.setY(20);
+
+        CardElement dropped = block("field");
+        dropped.setToken("attr:Bad");
+
+        CardElement logo = block("logo");
+        logo.setSrc("data:image/png;base64,iVBORw0KGgo=");
+        logo.setX(60);
+        logo.setY(4);
+        logo.setW(18);
+        logo.setH(10);
+
+        CardElement ownCode = block("qr");
+        ownCode.setToken("custom");
+        ownCode.setText("https://example.com/room");
+        ownCode.setX(40);
+        ownCode.setY(30);
+        ownCode.setW(20);
+        ownCode.setH(20);
+
+        CardElement assetCode = block("qr");
+        assetCode.setToken("asset");
+        assetCode.setX(3);
+        assetCode.setY(4);
+        assetCode.setW(22);
+        assetCode.setH(22);
+
+        CardLayout raw = new CardLayout();
+        raw.setSize("wide");
+        raw.setElements(Arrays.asList(caption, field, dropped, logo, ownCode, assetCode, null));
+
+        CardLayout layout = CardLayout.normalize(raw);
+        String stored = CardCanvas.write(layout.getElements());
+        CardLayout again = new CardLayout();
+        again.setSize("wide");
+        again.setElements(CardCanvas.read(stored));
+        again = CardLayout.normalize(again);
+
+        assertEquals(5, again.getElements().size());
+        CardElement keptCaption = again.getElements().get(0);
+        assertEquals("text", keptCaption.getKind());
+        assertEquals("\u041c\u041e\u041b:\n\"\u0418\u0432\u0430\u043d\u043e\u0432\"", keptCaption.getText());
+        assertEquals(14, keptCaption.getSize());
+        assertEquals("#de350b", keptCaption.getColor());
+        assertEquals("serif", keptCaption.getFont());
+        assertTrue(keptCaption.getBold());
+        assertEquals("center", keptCaption.getAlign());
+        assertEquals("attr:serial", again.getElements().get(1).getToken());
+        assertEquals("logo", again.getElements().get(2).getKind());
+        assertEquals("custom", again.getElements().get(3).getToken());
+        assertEquals("asset", again.getElements().get(4).getToken());
+        assertEquals(Arrays.asList("attr:serial"), again.getLines());
+        assertEquals(CardLayout.QR_LEFT, again.getQr());
+        assertNull(CardCanvas.read("{"));
+        assertTrue(CardCanvas.read("[]").isEmpty());
+    }
+
+    @Test
+    public void missingCanvasKeepsTheLineLayout() {
+        CardLayout raw = new CardLayout();
+        raw.setLines(Arrays.asList("name", "key"));
+
+        CardLayout layout = CardLayout.normalize(raw);
+
+        assertNull(layout.getElements());
+        assertEquals(Arrays.asList("name", "key"), layout.getLines());
+    }
+
+    private static CardElement block(String kind) {
+        CardElement element = new CardElement();
+        element.setId(kind + "01");
+        element.setKind(kind);
+        return element;
     }
 }

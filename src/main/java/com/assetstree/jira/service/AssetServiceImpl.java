@@ -76,6 +76,7 @@ import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CopyNames;
 import com.assetstree.jira.model.BulkDraft;
+import com.assetstree.jira.model.CardCanvas;
 import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
@@ -1651,6 +1652,7 @@ public class AssetServiceImpl implements AssetService {
                 row.setCardSize(layout.getSize());
                 row.setQrPlace(layout.getQr());
                 row.setLines(CardLayout.join(layout.getLines()));
+                row.setCanvas(layout.getElements() == null ? null : CardCanvas.write(layout.getElements()));
                 row.save();
                 return layout;
             }
@@ -1696,6 +1698,10 @@ public class AssetServiceImpl implements AssetService {
         raw.setSize(row.getCardSize());
         raw.setQr(row.getQrPlace());
         raw.setLines(CardLayout.split(row.getLines()));
+        String canvas = row.getCanvas();
+        if (canvas != null && !canvas.trim().isEmpty()) {
+            raw.setElements(CardCanvas.read(canvas));
+        }
         return CardLayout.normalize(raw);
     }
 

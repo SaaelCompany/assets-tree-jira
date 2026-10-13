@@ -128,7 +128,8 @@
         baseUrl: '',
         cardDraft: null,
         cardDrag: '',
-        cardSuppressClick: false
+        cardSuppressClick: false,
+        cardSelected: ''
     };
     var idIndex = null;
     var childIndex = null;
@@ -3973,8 +3974,196 @@
     var CARD_SIZES = { card: true, wide: true, label: true };
     var CARD_QRS = { left: true, right: true, top: true, none: true };
 
+    var CARD_KINDS = { text: true, field: true, qr: true, logo: true };
+    var CARD_FONTS = { sans: true, serif: true, mono: true };
+    var CARD_ALIGNS = { left: true, center: true, right: true };
+    var CARD_SRC = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/;
+    var CARD_COLOR = /^#[0-9a-fA-F]{6}$/;
+    var CARD_ELEMENT_ID = /^[a-z0-9]{4,16}$/;
+
     function defaultCard() {
         return { size: 'card', qr: 'left', lines: ['name', 'type', 'place', 'key', 'scan'] };
+    }
+
+    function cardSheet(size) {
+        if (size === 'wide') return { w: 100, h: 64 };
+        if (size === 'label') return { w: 58, h: 36 };
+        return { w: 86, h: 54 };
+    }
+
+    function cardFieldToken(raw) {
+        var trimmed = String(raw || '').replace(/^\s+|\s+$/g, '');
+        if (!trimmed) return '';
+        var lower = trimmed.toLowerCase();
+        var token = CARD_BLOCK_SET[lower] ? lower : trimmed;
+        if (CARD_BLOCK_SET[token] || /^attr:[a-z][a-z0-9-]{0,39}$/.test(token)) return token;
+        return '';
+    }
+
+    function cardCleanText(raw) {
+        var source = String(raw || '');
+        var out = '';
+        var space = false;
+        var breaks = 0;
+        for (var i = 0; i < source.length && out.length < 180; i++) {
+            var c = source.charAt(i);
+            if (c === '\r') continue;
+            if (c === '\n') {
+                if (!out || out.charAt(out.length - 1) === '\n' || breaks >= 8) continue;
+                out += '\n';
+                breaks += 1;
+                space = false;
+                continue;
+            }
+            if (c === ' ' || c === '\t') {
+                space = !!out && out.charAt(out.length - 1) !== '\n';
+                continue;
+            }
+            if (c.charCodeAt(0) < 32) continue;
+            if (space) {
+                out += ' ';
+                space = false;
+            }
+            out += c;
+        }
+        return out.replace(/^\s+|\s+$/g, '');
+    }
+
+    function cardRound(value) {
+        var number = Number(value);
+        if (!isFinite(number)) return 0;
+        return Math.round(number * 100) / 100;
+    }
+
+    function cardNewId(used) {
+        var probe = 100000 + Math.floor(Math.random() * 1000000);
+        var id = probe.toString(36);
+        while (!CARD_ELEMENT_ID.test(id) || used[id]) {
+            probe += 1;
+            id = probe.toString(36);
+        }
+        used[id] = true;
+        return id;
+    }
+
+    function cardFontFamily(font) {
+        if (font === 'serif') return 'Georgia, "Times New Roman", serif';
+        if (font === 'mono') return 'ui-monospace, SFMono-Regular, Menlo, monospace';
+        return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    }
+
+    function cleanElements(raw, size) {
+        var sheet = cardSheet(size);
+        var elements = [];
+        var ids = {};
+        var fields = {};
+        var assetCode = false;
+        (raw || []).forEach(function (item) {
+            if (!item || elements.length >= 24) return;
+            var kind = String(item.kind || '').toLowerCase();
+            if (!CARD_KINDS[kind]) return;
+            var kept = { kind: kind, token: '', text: '', src: '', bold: !!item.bold };
+            if (kind === 'field') {
+                var token = cardFieldToken(item.token);
+                if (!token || fields[token]) return;
+                fields[token] = true;
+                kept.token = token;
+            } else if (kind === 'qr') {
+                var mode = String(item.token || '').toLowerCase();
+                if (mode !== 'asset' && mode !== 'custom') mode = cardCleanText(item.text) ? 'custom' : 'asset';
+                if (mode === 'asset') {
+                    if (assetCode) return;
+                    assetCode = true;
+                    kept.token = 'asset';
+                } else {
+                    var payload = cardCleanText(item.text);
+                    if (!payload) return;
+                    kept.token = 'custom';
+                    kept.text = payload;
+                }
+            } else if (kind === 'logo') {
+                var src = String(item.src || '').replace(/^\s+|\s+$/g, '');
+                if (src.length > 90000 || !CARD_SRC.test(src)) return;
+                kept.src = src;
+            } else {
+                var caption = cardCleanText(item.text);
+                if (!caption) return;
+                kept.text = caption;
+            }
+            var id = String(item.id || '').toLowerCase();
+            if (!CARD_ELEMENT_ID.test(id) || ids[id]) id = cardNewId(ids);
+            else ids[id] = true;
+            kept.id = id;
+            var w = kind === 'qr' || kind === 'logo' ? 22 : 36;
+            var h = kind === 'qr' || kind === 'logo' ? 22 : 8;
+            if (Number(item.w) >= 4) w = Number(item.w);
+            if (Number(item.h) >= 4) h = Number(item.h);
+            kept.w = Math.max(4, Math.min(sheet.w, cardRound(w)));
+            kept.h = Math.max(4, Math.min(sheet.h, cardRound(h)));
+            kept.x = Math.max(0, Math.min(sheet.w - 4, cardRound(item.x)));
+            kept.y = Math.max(0, Math.min(sheet.h - 4, cardRound(item.y)));
+            var fontSize = parseInt(item.size, 10);
+            kept.size = fontSize >= 6 && fontSize <= 36 ? fontSize : 11;
+            var color = String(item.color || '');
+            kept.color = CARD_COLOR.test(color) ? color.toLowerCase() : '#172b4d';
+            var font = String(item.font || '').toLowerCase();
+            kept.font = CARD_FONTS[font] ? font : 'sans';
+            var align = String(item.align || '').toLowerCase();
+            kept.align = CARD_ALIGNS[align] ? align : 'left';
+            elements.push(kept);
+        });
+        return elements;
+    }
+
+    function legacyLineStyle(token, size) {
+        var small = size === 'label';
+        if (token === 'name') return { size: small ? 10 : 13, bold: true, color: '#172b4d', font: 'sans', h: small ? 5 : 7 };
+        if (token === 'key') return { size: small ? 9 : 12, bold: false, color: '#172b4d', font: 'mono', h: small ? 4.5 : 6 };
+        if (token === 'scan') return { size: small ? 7 : 8, bold: false, color: '#6b778c', font: 'sans', h: small ? 6 : 8 };
+        if (token === 'description') return { size: small ? 7 : 9, bold: false, color: '#44546f', font: 'sans', h: small ? 6 : 10 };
+        return { size: small ? 8 : 9, bold: false, color: '#44546f', font: 'sans', h: small ? 4 : 5 };
+    }
+
+    function elementsFromLegacy(layout) {
+        var size = layout.size;
+        var sheet = cardSheet(size);
+        var place = layout.qr;
+        var qr = null;
+        if (place === 'top') {
+            var side = size === 'wide' ? 26 : (size === 'label' ? 14 : 22);
+            qr = { x: (sheet.w - side) / 2, y: size === 'label' ? 2 : 3, w: side, h: side };
+        } else if (place === 'left' || place === 'right') {
+            var box = size === 'wide' ? 54 : (size === 'label' ? 26 : 46);
+            var inset = size === 'label' ? 2 : 3;
+            qr = { x: place === 'right' ? sheet.w - inset - box : inset, y: size === 'label' ? 5 : 4, w: box, h: box };
+        }
+        var pad = size === 'label' ? 2.5 : 4;
+        var column = { x: pad, y: pad, w: sheet.w - pad * 2 };
+        if (qr && place === 'top') column.y = qr.y + qr.h + 1.5;
+        else if (qr && place === 'right') column.w = Math.max(12, qr.x - pad - 1);
+        else if (qr) {
+            column.x = qr.x + qr.w + 1;
+            column.w = Math.max(12, sheet.w - column.x - pad);
+        }
+        var items = [];
+        if (qr) {
+            items.push({
+                id: 'qrold1', kind: 'qr', token: 'asset', text: '', src: '',
+                x: qr.x, y: qr.y, w: qr.w, h: qr.h,
+                size: 11, color: '#172b4d', font: 'sans', bold: false, align: 'left'
+            });
+        }
+        var y = column.y;
+        (layout.lines || []).forEach(function (token, index) {
+            var style = legacyLineStyle(token, size);
+            items.push({
+                id: 'line' + index + 'old', kind: 'field', token: token, text: '', src: '',
+                x: column.x, y: y, w: column.w, h: style.h,
+                size: style.size, color: style.color, font: style.font, bold: style.bold, align: 'left'
+            });
+            y += style.h + 0.6;
+        });
+        return cleanElements(items, size);
     }
 
     function normalizeClientCard(layout) {
@@ -3984,21 +4173,18 @@
         var lines = [];
         var seen = {};
         (source.lines || []).forEach(function (line) {
-            var trimmed = String(line || '').replace(/^\s+|\s+$/g, '');
-            if (!trimmed || lines.length >= 12) return;
-            var lower = trimmed.toLowerCase();
-            var token = CARD_BLOCK_SET[lower] ? lower : trimmed;
-            if (seen[token]) return;
-            if (CARD_BLOCK_SET[token] || /^attr:[a-z][a-z0-9-]{0,39}$/.test(token)) {
-                seen[token] = true;
-                lines.push(token);
-            }
+            var token = cardFieldToken(line);
+            if (!token || seen[token] || lines.length >= 12) return;
+            seen[token] = true;
+            lines.push(token);
         });
-        return { size: size, qr: qr, lines: lines };
+        var card = { size: size, qr: qr, lines: lines };
+        if (source.elements) card.elements = cleanElements(source.elements, size);
+        return card;
     }
 
     function copyCard(layout) {
-        if (!layout || !layout.lines) return defaultCard();
+        if (!layout) return defaultCard();
         return normalizeClientCard(layout);
     }
 
@@ -4007,8 +4193,10 @@
         if (!state.cardDraft || state.cardDraft.projectKey !== key) {
             var project = currentProject();
             var layout = copyCard(project && project.card);
+            if (!layout.elements) layout.elements = elementsFromLegacy(layout);
             layout.projectKey = key;
             state.cardDraft = layout;
+            state.cardSelected = '';
         }
         return state.cardDraft;
     }
@@ -4146,6 +4334,10 @@
             + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-name{font-size:10pt}'
             + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-key{font-size:9pt}'
             + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-scan{font-size:6.5pt}'
+            + '.asset-tree-card-preview .asset-tree-card.is-free{position:relative;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-item{position:absolute;box-sizing:border-box;overflow:hidden;line-height:1.15;margin:0;padding:0;white-space:pre-wrap;word-wrap:break-word}'
+            + '.asset-tree-card-preview .asset-tree-card-item.is-qr svg{width:100%;height:100%;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-item.is-logo img{width:100%;height:100%;object-fit:contain;display:block}'
             + '@media print{.asset-tree-card-preview .bar{display:none}.asset-tree-card-preview .sheet{padding:0;gap:3mm}.asset-tree-card-preview .asset-tree-card{border-color:#000}}';
     }
 
@@ -4165,8 +4357,53 @@
         return 'meta';
     }
 
+    function cardItemStyle(item) {
+        return 'left:' + item.x + 'mm;top:' + item.y + 'mm;width:' + item.w + 'mm;height:' + item.h
+            + 'mm;font-size:' + item.size + 'pt;color:' + item.color + ';font-family:' + cardFontFamily(item.font)
+            + ';font-weight:' + (item.bold ? '700' : '400') + ';text-align:' + item.align + ';';
+    }
+
+    function cardItemHtml(asset, item, preview) {
+        var style = cardItemStyle(item);
+        if (item.kind === 'logo') {
+            return '<div class="asset-tree-card-item is-logo" style="' + style + '"><img alt="" src="' + item.src + '"></div>';
+        }
+        if (item.kind === 'qr') {
+            var payload = item.token === 'asset' ? cardLink(asset) : item.text;
+            var code = '';
+            if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+                code = window.AssetTreeQr.svg(payload) || '';
+            }
+            if (!code) return preview ? '<div class="asset-tree-card-item is-qr" style="' + style + '"></div>' : '';
+            return '<div class="asset-tree-card-item is-qr" style="' + style + '">' + code + '</div>';
+        }
+        var text = item.kind === 'text' ? item.text : cardLineText(asset, item.token);
+        if (!text) return '';
+        return '<div class="asset-tree-card-item is-' + item.kind + '" style="' + style + '">' + htmlEscape(text) + '</div>';
+    }
+
+    function cardNeedsQr(layout) {
+        var card = normalizeClientCard(layout);
+        if (card.elements) {
+            for (var i = 0; i < card.elements.length; i++) {
+                if (card.elements[i].kind === 'qr') return true;
+            }
+            return false;
+        }
+        return card.qr !== 'none';
+    }
+
     function cardArticle(asset, layout, preview) {
         var card = normalizeClientCard(layout);
+        if (card.elements) {
+            var parts = [];
+            card.elements.forEach(function (item) {
+                var html = cardItemHtml(asset, item, preview);
+                if (html) parts.push(html);
+            });
+            if (!parts.length && !preview) return '';
+            return '<article class="asset-tree-card is-free is-' + card.size + '">' + parts.join('') + '</article>';
+        }
         var code = '';
         if (card.qr !== 'none') {
             if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
@@ -4196,7 +4433,7 @@
         }
         var needsLibrary = false;
         cards.forEach(function (asset) {
-            if (cardLayoutFor(asset.projectKey).qr !== 'none') needsLibrary = true;
+            if (cardNeedsQr(cardLayoutFor(asset.projectKey))) needsLibrary = true;
         });
         if (needsLibrary && (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function')) {
             notify(t('errorTitle'));
@@ -4207,7 +4444,7 @@
             var layout = cardLayoutFor(asset.projectKey);
             var html = cardArticle(asset, layout, false);
             if (!html) {
-                if (layout.qr !== 'none') qrSkipped++;
+                if (cardNeedsQr(layout)) qrSkipped++;
                 return '';
             }
             return html;
@@ -6182,6 +6419,7 @@
         state.pickScope = '';
         state.bulkErrors = [];
         state.cardDraft = null;
+        state.cardSelected = '';
         reportToken++;
         state.treeReady = false;
         state.holderUser = null;
@@ -7522,89 +7760,235 @@
         });
     }
 
-    function insertCardLine(token, index) {
-        if (!token || token === 'qr') return;
-        var lines = cardDraft().lines;
-        var from = lines.indexOf(token);
-        if (from < 0 && lines.length >= 12) return;
-        if (from >= 0) {
-            lines.splice(from, 1);
-            if (from < index) index -= 1;
-        }
-        if (index < 0) index = 0;
-        if (index > lines.length) index = lines.length;
-        lines.splice(index, 0, token);
-        renderFrame();
-    }
-
-    function removeCardLine(token) {
-        var lines = cardDraft().lines;
-        var at = lines.indexOf(token);
-        if (at < 0) return;
-        lines.splice(at, 1);
-        renderFrame();
-    }
-
-    function cardSheetNode() {
-        return document.querySelector('#asset-tree-app .asset-tree-card-sheet');
-    }
-
-    function clearCardDragMarks() {
-        var marked = document.querySelectorAll('.is-moving-qr, .asset-tree-card-gap.is-over, .asset-tree-card-edge.is-over');
-        for (var i = 0; i < marked.length; i++) {
-            marked[i].classList.remove('is-moving-qr');
-            marked[i].classList.remove('is-over');
-        }
-        var ghost = document.getElementById('asset-tree-card-ghost');
-        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
-    }
-
-    function pointerOverSheet(x, y) {
-        var sheet = cardSheetNode();
-        if (!sheet) return false;
-        var rect = sheet.getBoundingClientRect();
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-    }
-
-    function cardInsertIndex(clientY) {
-        var lines = document.querySelectorAll('#asset-tree-app .asset-tree-card-edit .asset-tree-card-line');
-        if (!lines.length) return 0;
-        for (var i = 0; i < lines.length; i++) {
-            var rect = lines[i].getBoundingClientRect();
-            if (clientY < rect.top + rect.height / 2) return i;
-        }
-        return lines.length;
-    }
-
-    function cardEdgeAt(x, y) {
-        var node = document.elementFromPoint(x, y);
-        while (node) {
-            if (node.classList && node.classList.contains('asset-tree-card-edge')) return node;
-            node = node.parentNode;
+    function selectedCardItem() {
+        var id = state.cardSelected;
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === id) return items[i];
         }
         return null;
     }
 
-    function markCardDrop(x, y, token) {
-        var marked = document.querySelectorAll('.asset-tree-card-gap.is-over, .asset-tree-card-edge.is-over');
-        for (var i = 0; i < marked.length; i++) marked[i].classList.remove('is-over');
-        if (token === 'qr') {
-            var edge = cardEdgeAt(x, y);
-            if (edge) edge.classList.add('is-over');
-            return;
-        }
-        if (!pointerOverSheet(x, y)) return;
-        var gaps = document.querySelectorAll('#asset-tree-app .asset-tree-card-edit .asset-tree-card-gap');
-        var gap = gaps[cardInsertIndex(y)];
-        if (gap) gap.classList.add('is-over');
+    function applyItemStyle(node, item) {
+        node.style.left = item.x + 'mm';
+        node.style.top = item.y + 'mm';
+        node.style.width = item.w + 'mm';
+        node.style.height = item.h + 'mm';
+        node.style.fontSize = item.size + 'pt';
+        node.style.color = item.color;
+        node.style.fontFamily = cardFontFamily(item.font);
+        node.style.fontWeight = item.bold ? '700' : '400';
+        node.style.textAlign = item.align || 'left';
     }
 
-    function bindCardPointer(node, token) {
+    function clearCardDragMarks() {
+        var ghost = document.getElementById('asset-tree-card-ghost');
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    }
+
+    function pointOnCard(clientX, clientY) {
+        var article = document.querySelector('#asset-tree-app .asset-tree-card-edit .asset-tree-card');
+        if (!article) return null;
+        var rect = article.getBoundingClientRect();
+        if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+        var sheet = cardSheet(cardDraft().size);
+        return {
+            x: (clientX - rect.left) / rect.width * sheet.w,
+            y: (clientY - rect.top) / rect.height * sheet.h
+        };
+    }
+
+    function fillItemBody(body, item, sample) {
+        while (body.firstChild) body.removeChild(body.firstChild);
+        if (item.kind === 'logo' && item.src) {
+            var img = document.createElement('img');
+            img.alt = '';
+            img.draggable = false;
+            img.src = item.src;
+            body.appendChild(img);
+            return;
+        }
+        if (item.kind === 'qr') {
+            var payload = item.token === 'asset' ? cardLink(sample) : item.text;
+            var code = '';
+            if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+                code = window.AssetTreeQr.svg(payload) || '';
+            }
+            if (code) {
+                body.innerHTML = code;
+                return;
+            }
+            body.appendChild(document.createTextNode(item.token === 'asset' ? t('cardQrAsset') : t('cardQrCustom')));
+            return;
+        }
+        var text = item.kind === 'text' ? item.text : (cardLineText(sample, item.token) || blockLabel(item.token));
+        body.appendChild(document.createTextNode(text || ''));
+    }
+
+    function paintSelectedItem() {
+        var item = selectedCardItem();
+        if (!item) return;
+        var node = document.querySelector('#asset-tree-app .asset-tree-card-item[data-card-id="' + item.id + '"]');
+        if (!node) return;
+        applyItemStyle(node, item);
+        var body = node.querySelector('.asset-tree-card-body');
+        if (!body || document.activeElement === body) return;
+        if (item.kind === 'text') body.textContent = item.text;
+        else if (item.kind === 'qr' && item.token === 'custom') fillItemBody(body, item, sampleCardAsset());
+    }
+
+    function addCardElement(spec, x, y) {
+        var draft = cardDraft();
+        if (!draft.elements) draft.elements = [];
+        if (draft.elements.length >= 24) {
+            notify(t('cardFull'));
+            return;
+        }
+        if (spec.kind === 'field' || (spec.kind === 'qr' && spec.token === 'asset')) {
+            for (var i = 0; i < draft.elements.length; i++) {
+                var existing = draft.elements[i];
+                if (existing.kind === spec.kind && existing.token === spec.token) return;
+            }
+        }
+        var wide = spec.kind === 'qr' || spec.kind === 'logo';
+        var item = {
+            id: cardNewId({}),
+            kind: spec.kind,
+            token: spec.token || '',
+            text: spec.text || '',
+            src: spec.src || '',
+            x: 4,
+            y: 4 + (draft.elements.length % 6) * 3,
+            w: spec.w || (wide ? 22 : 36),
+            h: spec.h || (wide ? 22 : 8),
+            size: spec.size || (spec.kind === 'text' ? 12 : 11),
+            color: spec.color || '#172b4d',
+            font: spec.font || 'sans',
+            bold: spec.bold != null ? !!spec.bold : spec.kind === 'text',
+            align: 'left'
+        };
+        if (x != null && y != null) {
+            item.x = x - item.w / 2;
+            item.y = y - item.h / 2;
+        }
+        var cleaned = cleanElements(draft.elements.concat([item]), draft.size);
+        if (cleaned.length !== draft.elements.length + 1) return;
+        draft.elements = cleaned;
+        state.cardSelected = cleaned[cleaned.length - 1].id;
+        renderFrame();
+    }
+
+    function removeCardElement(id) {
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === id) {
+                items.splice(i, 1);
+                break;
+            }
+        }
+        if (state.cardSelected === id) state.cardSelected = '';
+        renderFrame();
+    }
+
+    function readCardLogo(file, done) {
+        if (!file || String(file.type || '').indexOf('image/') !== 0 || file.type === 'image/svg+xml') {
+            notify(t('cardLogoType'));
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+            var img = new Image();
+            img.onload = function () {
+                var maxPx = 240;
+                var scale = Math.min(1, maxPx / img.width, maxPx / img.height);
+                var width = Math.max(1, Math.round(img.width * scale));
+                var height = Math.max(1, Math.round(img.height * scale));
+                var canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                var context = canvas.getContext('2d');
+                if (!context) {
+                    notify(t('cardLogoType'));
+                    return;
+                }
+                context.drawImage(img, 0, 0, width, height);
+                var url = canvas.toDataURL('image/png');
+                if (!url || url.length > 90000) {
+                    notify(t('cardLogoBig'));
+                    return;
+                }
+                done(url, width, height);
+            };
+            img.onerror = function () { notify(t('cardLogoType')); };
+            img.src = String(reader.result || '');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function chooseCardLogo(replaceId) {
+        var input = document.getElementById('asset-tree-card-logo');
+        if (!input) return;
+        input.setAttribute('data-replace', replaceId || '');
+        input.click();
+    }
+
+    function bindCardItem(node, item) {
         node.addEventListener('mousedown', function (event) {
             if (event.button !== 0) return;
             var target = event.target;
-            if (target && target.classList && target.classList.contains('asset-tree-card-x')) return;
-            if (node.tagName !== 'BUTTON') event.preventDefault();
+            var className = target && target.classList;
+            if (className && className.contains('asset-tree-card-x')) return;
+            var resize = className && className.contains('asset-tree-card-resize');
+            var grip = className && className.contains('asset-tree-card-grip');
+            if (state.cardSelected === item.id && item.kind === 'text' && !resize && !grip) return;
+            event.preventDefault();
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var originX = item.x;
+            var originY = item.y;
+            var originW = item.w;
+            var originH = item.h;
+            function ratio() {
+                var rect = node.parentNode.getBoundingClientRect();
+                var sheet = cardSheet(cardDraft().size);
+                return { x: sheet.w / rect.width, y: sheet.h / rect.height, sheet: sheet };
+            }
+            function move(ev) {
+                if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
+                var scale = ratio();
+                if (resize) {
+                    var nextW = originW + (ev.clientX - startX) * scale.x;
+                    var nextH = originH + (ev.clientY - startY) * scale.y;
+                    if (item.kind === 'qr') {
+                        var side = Math.max(nextW, nextH);
+                        nextW = side;
+                        nextH = side;
+                    } else if (item.kind === 'logo' && originW > 0) {
+                        nextH = nextW * (originH / originW);
+                    }
+                    item.w = Math.max(4, Math.min(scale.sheet.w, cardRound(nextW)));
+                    item.h = Math.max(4, Math.min(scale.sheet.h, cardRound(nextH)));
+                } else {
+                    item.x = Math.max(0, Math.min(scale.sheet.w - 4, cardRound(originX + (ev.clientX - startX) * scale.x)));
+                    item.y = Math.max(0, Math.min(scale.sheet.h - 4, cardRound(originY + (ev.clientY - startY) * scale.y)));
+                }
+                applyItemStyle(node, item);
+            }
+            function up() {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                var changed = state.cardSelected !== item.id;
+                state.cardSelected = item.id;
+                if (changed) renderFrame();
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+    }
+
+    function bindPaletteDrop(node, spec) {
+        node.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
             var startX = event.clientX;
             var startY = event.clientY;
             var moved = false;
@@ -7612,41 +7996,26 @@
                 if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 5) return;
                 if (!moved) {
                     moved = true;
-                    state.cardDrag = token;
-                    node.classList.add('is-dragging');
-                    var ghost = el('div', 'asset-tree-card-ghost', token === 'qr' ? t('cardQr') : blockLabel(token));
+                    state.cardDrag = spec.kind;
+                    var ghost = el('div', 'asset-tree-card-ghost', spec.label);
                     ghost.id = 'asset-tree-card-ghost';
                     document.body.appendChild(ghost);
-                    if (token === 'qr') {
-                        var sheet = cardSheetNode();
-                        if (sheet) sheet.classList.add('is-moving-qr');
-                    }
                 }
                 var ghostNode = document.getElementById('asset-tree-card-ghost');
                 if (ghostNode) {
                     ghostNode.style.left = (ev.clientX + 12) + 'px';
                     ghostNode.style.top = (ev.clientY + 12) + 'px';
                 }
-                markCardDrop(ev.clientX, ev.clientY, token);
             }
             function up(ev) {
                 document.removeEventListener('mousemove', move);
                 document.removeEventListener('mouseup', up);
+                clearCardDragMarks();
+                state.cardDrag = '';
                 if (!moved) return;
                 state.cardSuppressClick = true;
-                var edge = token === 'qr' ? cardEdgeAt(ev.clientX, ev.clientY) : null;
-                var index = token === 'qr' ? -1 : (pointerOverSheet(ev.clientX, ev.clientY) ? cardInsertIndex(ev.clientY) : -1);
-                clearCardDragMarks();
-                node.classList.remove('is-dragging');
-                state.cardDrag = '';
-                if (token === 'qr') {
-                    if (edge) {
-                        cardDraft().qr = edge.getAttribute('data-place') || 'left';
-                        renderFrame();
-                    }
-                    return;
-                }
-                if (index >= 0) insertCardLine(token, index);
+                var point = pointOnCard(ev.clientX, ev.clientY);
+                if (point) addCardElement(spec, point.x, point.y);
             }
             document.addEventListener('mousemove', move);
             document.addEventListener('mouseup', up);
@@ -7658,6 +8027,7 @@
         remove.type = 'button';
         remove.title = t('cardRemove');
         remove.setAttribute('aria-label', t('cardRemove'));
+        remove.addEventListener('mousedown', function (event) { event.stopPropagation(); });
         remove.addEventListener('click', function (event) {
             event.preventDefault();
             event.stopPropagation();
@@ -7666,60 +8036,139 @@
         return remove;
     }
 
-    function cardGap(index, empty) {
-        var gap = el('div', 'asset-tree-card-gap' + (empty ? ' is-empty' : ''));
-        if (empty) gap.appendChild(document.createTextNode(t('cardDropHere')));
-        return gap;
-    }
-
-    function cardEdge(place) {
-        var label = t('cardQrTop');
-        if (place === 'left') label = t('cardQrLeft');
-        if (place === 'right') label = t('cardQrRight');
-        var edge = el('div', 'asset-tree-card-edge is-' + place, label);
-        edge.setAttribute('data-place', place);
-        return edge;
-    }
-
-    function editorLine(token, sample) {
-        var row = el('div', 'asset-tree-card-line is-' + lineKind(token));
-        row.title = blockLabel(token);
-        row.appendChild(document.createTextNode(cardLineText(sample, token) || blockLabel(token)));
-        row.appendChild(cardRemoveButton(function () { removeCardLine(token); }));
-        bindCardPointer(row, token);
-        return row;
-    }
-
-    function editorQr(sample) {
-        var box = el('div', 'asset-tree-card-qr');
-        box.title = t('cardQr');
-        var code = '';
-        if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
-            code = window.AssetTreeQr.svg(cardLink(sample)) || '';
+    function editorItem(item, sample) {
+        var selected = state.cardSelected === item.id;
+        var node = el('div', 'asset-tree-card-item is-' + item.kind + (selected ? ' is-selected' : ''));
+        node.setAttribute('data-card-id', item.id);
+        node.title = item.kind === 'field' ? blockLabel(item.token) : (item.kind === 'text' ? t('cardCaption') : (item.kind === 'logo' ? t('cardLogo') : t('cardQr')));
+        applyItemStyle(node, item);
+        var body = el('div', 'asset-tree-card-body');
+        fillItemBody(body, item, sample);
+        if (item.kind === 'text') {
+            body.contentEditable = 'true';
+            body.addEventListener('input', function () {
+                item.text = body.innerText || '';
+                var area = document.getElementById('asset-tree-card-caption');
+                if (area && document.activeElement !== area) area.value = item.text;
+            });
+            body.addEventListener('mousedown', function (event) {
+                if (state.cardSelected === item.id) event.stopPropagation();
+            });
         }
-        if (code) box.innerHTML = code;
-        box.appendChild(cardRemoveButton(function () {
-            cardDraft().qr = 'none';
-            renderFrame();
-        }));
-        bindCardPointer(box, 'qr');
-        return box;
+        node.appendChild(body);
+        if (selected) node.appendChild(el('div', 'asset-tree-card-grip'));
+        node.appendChild(el('div', 'asset-tree-card-resize'));
+        node.appendChild(cardRemoveButton(function () { removeCardElement(item.id); }));
+        bindCardItem(node, item);
+        return node;
     }
 
-    function cardChip(token) {
-        var chip = button(blockLabel(token), 'asset-tree-card-chip', function () {
+    function cardHas(kind, token) {
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].kind === kind && items[i].token === token) return true;
+        }
+        return false;
+    }
+
+    function paletteButton(label, spec) {
+        var chip = button(label, 'asset-tree-card-chip', function () {
             if (state.cardSuppressClick) {
                 state.cardSuppressClick = false;
                 return;
             }
-            insertCardLine(token, cardDraft().lines.length);
+            addCardElement(spec, null, null);
         });
-        if (cardDraft().lines.length >= 12) {
+        if ((cardDraft().elements || []).length >= 24) {
             chip.disabled = true;
             return chip;
         }
-        bindCardPointer(chip, token);
+        spec.label = label;
+        bindPaletteDrop(chip, spec);
         return chip;
+    }
+
+    function renderCardTools(stage) {
+        var item = selectedCardItem();
+        var tools = el('div', 'asset-tree-card-tools');
+        if (!item) {
+            tools.appendChild(el('p', 'asset-tree-hint', t('cardPick')));
+            stage.appendChild(tools);
+            return;
+        }
+        var font = selectBox('asset-tree-card-font', [
+            { value: 'sans', label: t('cardFontSans') },
+            { value: 'serif', label: t('cardFontSerif') },
+            { value: 'mono', label: t('cardFontMono') }
+        ], item.font);
+        font.addEventListener('change', function () {
+            item.font = font.value;
+            paintSelectedItem();
+        });
+        tools.appendChild(field(t('cardFont'), font));
+        var sizeWrap = el('div', 'asset-tree-card-sizebox');
+        var sizeInput = input('asset-tree-card-fontsize', String(item.size));
+        sizeInput.type = 'number';
+        sizeInput.min = '6';
+        sizeInput.max = '36';
+        sizeInput.addEventListener('input', function () {
+            var next = parseInt(sizeInput.value, 10);
+            if (next >= 6 && next <= 36) {
+                item.size = next;
+                paintSelectedItem();
+            }
+        });
+        sizeWrap.appendChild(button('A\u2212', 'asset-tree-btn', function () {
+            item.size = Math.max(6, item.size - 1);
+            sizeInput.value = String(item.size);
+            paintSelectedItem();
+        }));
+        sizeWrap.appendChild(sizeInput);
+        sizeWrap.appendChild(button('A+', 'asset-tree-btn', function () {
+            item.size = Math.min(36, item.size + 1);
+            sizeInput.value = String(item.size);
+            paintSelectedItem();
+        }));
+        tools.appendChild(field(t('cardTextSize'), sizeWrap));
+        var color = el('input');
+        color.type = 'color';
+        color.value = item.color;
+        color.addEventListener('input', function () {
+            item.color = color.value;
+            paintSelectedItem();
+        });
+        tools.appendChild(field(t('cardColor'), color));
+        var bold = button(t('cardBold'), 'asset-tree-btn' + (item.bold ? ' primary' : ''), function () {
+            item.bold = !item.bold;
+            renderFrame();
+        });
+        tools.appendChild(bold);
+        [['left', 'cardAlignLeft'], ['center', 'cardAlignCenter'], ['right', 'cardAlignRight']].forEach(function (pair) {
+            tools.appendChild(button(t(pair[1]), 'asset-tree-btn' + (item.align === pair[0] ? ' primary' : ''), function () {
+                item.align = pair[0];
+                renderFrame();
+            }));
+        });
+        if (item.kind === 'text' || (item.kind === 'qr' && item.token === 'custom')) {
+            var area = el('textarea');
+            area.id = 'asset-tree-card-caption';
+            area.rows = 2;
+            area.value = item.text;
+            area.addEventListener('input', function () {
+                item.text = area.value;
+                paintSelectedItem();
+            });
+            tools.appendChild(field(item.kind === 'text' ? t('cardCaption') : t('cardQrText'), area));
+        }
+        if (item.kind === 'logo') {
+            tools.appendChild(button(t('cardReplaceLogo'), 'asset-tree-btn', function () {
+                chooseCardLogo(item.id);
+            }));
+        }
+        tools.appendChild(button(t('cardRemove'), 'asset-tree-btn', function () {
+            removeCardElement(item.id);
+        }));
+        stage.appendChild(tools);
     }
 
     function saveCardDraft() {
@@ -7728,7 +8177,14 @@
         ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/card', {
             size: draft.size,
             qr: draft.qr,
-            lines: draft.lines.slice()
+            lines: (draft.lines || []).slice(),
+            elements: (draft.elements || []).map(function (item) {
+                return {
+                    id: item.id, kind: item.kind, token: item.token, text: item.text, src: item.src,
+                    x: item.x, y: item.y, w: item.w, h: item.h, size: item.size,
+                    color: item.color, font: item.font, bold: !!item.bold, align: item.align
+                };
+            })
         }, function (status, payload) {
             setBusy(false);
             if (status < 200 || status >= 300 || !payload) {
@@ -7738,6 +8194,7 @@
             var project = currentProject();
             if (project) project.card = copyCard(payload);
             state.cardDraft = null;
+            state.cardSelected = '';
             notify(t('saved'));
             renderFrame();
         });
@@ -7751,32 +8208,59 @@
         block.appendChild(el('p', 'asset-tree-hint', t('cardHint')));
 
         var palette = el('div', 'asset-tree-card-palette');
+        palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardAdd')));
+        var logoFile = el('input');
+        logoFile.type = 'file';
+        logoFile.id = 'asset-tree-card-logo';
+        logoFile.accept = 'image/png,image/jpeg';
+        logoFile.className = 'asset-tree-import-file';
+        logoFile.addEventListener('change', function () {
+            var chosen = logoFile.files && logoFile.files[0];
+            var replaceId = logoFile.getAttribute('data-replace') || '';
+            logoFile.value = '';
+            if (!chosen) return;
+            readCardLogo(chosen, function (url, pixelWidth, pixelHeight) {
+                var w = 22;
+                var h = Math.max(4, cardRound(w * pixelHeight / pixelWidth));
+                if (replaceId) {
+                    (cardDraft().elements || []).forEach(function (entry) {
+                        if (entry.id !== replaceId) return;
+                        entry.src = url;
+                        entry.w = w;
+                        entry.h = h;
+                    });
+                    cardDraft().elements = cleanElements(cardDraft().elements, cardDraft().size);
+                    renderFrame();
+                    return;
+                }
+                addCardElement({ kind: 'logo', src: url, w: w, h: h }, null, null);
+            });
+        });
+        palette.appendChild(logoFile);
+        palette.appendChild(paletteButton(t('cardCaption'), { kind: 'text', text: t('cardCaption') }));
+        palette.appendChild(button(t('cardLogo'), 'asset-tree-card-chip', function () {
+            chooseCardLogo('');
+        }));
+        if (!cardHas('qr', 'asset')) {
+            palette.appendChild(paletteButton(t('cardQrAsset'), { kind: 'qr', token: 'asset', w: 28, h: 28 }));
+        }
+        palette.appendChild(paletteButton(t('cardQrCustom'), { kind: 'qr', token: 'custom', text: t('cardQrCustom'), w: 28, h: 28 }));
         palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardOff')));
         var unused = [];
         CARD_BLOCKS.forEach(function (token) {
-            if (draft.lines.indexOf(token) < 0) unused.push(token);
+            if (!cardHas('field', token)) unused.push(token);
         });
         customFields().forEach(function (fieldDef) {
             var token = 'attr:' + fieldDef.fieldKey;
-            if (draft.lines.indexOf(token) < 0) unused.push(token);
+            if (!cardHas('field', token)) unused.push(token);
         });
-        if (draft.qr === 'none') {
-            var qrChip = button(t('cardQr'), 'asset-tree-card-chip', function () {
-                if (state.cardSuppressClick) {
-                    state.cardSuppressClick = false;
-                    return;
-                }
-                cardDraft().qr = 'left';
-                renderFrame();
-            });
-            bindCardPointer(qrChip, 'qr');
-            palette.appendChild(qrChip);
-        }
-        if (!unused.length && draft.qr !== 'none') {
-            palette.appendChild(el('p', 'asset-tree-hint', t('cardPaletteEmpty')));
-        }
+        if (!unused.length) palette.appendChild(el('p', 'asset-tree-hint', t('cardPaletteEmpty')));
         unused.forEach(function (token) {
-            palette.appendChild(cardChip(token));
+            var style = legacyLineStyle(token, draft.size);
+            palette.appendChild(paletteButton(blockLabel(token), {
+                kind: 'field', token: token, w: 36, h: style.h, size: style.size,
+                color: style.color, font: style.font, bold: style.bold
+            }));
         });
         block.appendChild(palette);
 
@@ -7787,35 +8271,24 @@
             { value: 'label', label: t('cardSizeLabel') }
         ], draft.size);
         size.addEventListener('change', function () {
-            cardDraft().size = size.value;
+            var current = cardDraft();
+            current.size = size.value;
+            current.elements = cleanElements(current.elements, current.size);
             renderFrame();
         });
         stage.appendChild(field(t('cardSize'), size));
+        renderCardTools(stage);
 
         var sheet = el('div', 'asset-tree-card-sheet');
         var preview = el('div', 'asset-tree-card-preview asset-tree-card-edit');
-        var article = el('article', 'asset-tree-card is-' + draft.size + ' is-' + draft.qr);
-        if (draft.qr !== 'none') article.appendChild(editorQr(sample));
-        var text = el('div', 'asset-tree-card-text');
-        if (!draft.lines.length) {
-            text.appendChild(cardGap(0, true));
-        } else {
-            draft.lines.forEach(function (token, index) {
-                text.appendChild(cardGap(index, false));
-                text.appendChild(editorLine(token, sample));
-            });
-            text.appendChild(cardGap(draft.lines.length, false));
-        }
-        article.appendChild(text);
+        var article = el('article', 'asset-tree-card is-free is-' + draft.size);
+        (draft.elements || []).forEach(function (item) {
+            article.appendChild(editorItem(item, sample));
+        });
         preview.appendChild(article);
         sheet.appendChild(preview);
-        sheet.appendChild(cardEdge('top'));
-        sheet.appendChild(cardEdge('left'));
-        sheet.appendChild(cardEdge('right'));
         stage.appendChild(sheet);
-        if (!draft.lines.length && draft.qr === 'none') {
-            stage.appendChild(el('p', 'asset-tree-hint', t('cardEmpty')));
-        }
+        if (!(draft.elements || []).length) stage.appendChild(el('p', 'asset-tree-hint', t('cardEmpty')));
         var actions = el('div', 'asset-tree-inline-actions');
         actions.appendChild(button(t('save'), 'asset-tree-btn primary', saveCardDraft));
         stage.appendChild(actions);

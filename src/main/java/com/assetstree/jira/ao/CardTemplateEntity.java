@@ -32,4 +32,10 @@ public interface CardTemplateEntity extends Entity {
     String getLines();
 
     void setLines(String lines);
+
+    /** Free-form blocks. Empty means the line layout above is still in use. */
+    @StringLength(StringLength.UNLIMITED)
+    String getCanvas();
+
+    void setCanvas(String canvas);
 }

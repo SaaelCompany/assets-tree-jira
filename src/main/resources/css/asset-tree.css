@@ -3162,56 +3162,102 @@ a.asset-tree-url {
     box-shadow: 0 1px 2px rgba(9, 30, 66, 0.25);
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card {
-    overflow: auto;
+#asset-tree-app .asset-tree-card-edit .asset-tree-card.is-free {
+    overflow: visible;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-line,
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-qr {
-    position: relative;
+#asset-tree-app .asset-tree-card-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: flex-end;
+    margin: 0 0 12px;
+}
+
+#asset-tree-app .asset-tree-card-tools .asset-tree-field {
+    margin: 0;
+    max-width: 240px;
+}
+
+#asset-tree-app .asset-tree-card-tools .asset-tree-hint {
+    margin: 0;
+}
+
+#asset-tree-app .asset-tree-card-tools textarea {
+    width: 220px;
+    min-height: 48px;
+}
+
+#asset-tree-app .asset-tree-card-tools input[type="color"] {
+    width: 42px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #dfe1e6;
+    background: #fff;
+}
+
+#asset-tree-app .asset-tree-card-sizebox {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+#asset-tree-app .asset-tree-card-sizebox input {
+    width: 58px;
+}
+
+#asset-tree-app .asset-tree-card-edit .asset-tree-card-item {
     cursor: grab;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-line {
-    padding-right: 18px;
-    border: 1px dashed transparent;
-    border-radius: 2px;
+#asset-tree-app .asset-tree-card-edit .asset-tree-card-item.is-selected {
+    outline: 0.4mm solid #0052cc;
+    z-index: 2;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-line:hover,
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-qr:hover {
-    border-color: #4c9aff;
-    background: rgba(222, 235, 255, 0.55);
+#asset-tree-app .asset-tree-card-body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-line.is-dragging,
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-qr.is-dragging,
-#asset-tree-app button.asset-tree-card-chip.is-dragging {
-    opacity: 0.45;
+#asset-tree-app .asset-tree-card-body img,
+#asset-tree-app .asset-tree-card-item.is-qr svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-gap {
-    flex: 0 0 5px;
-    height: 5px;
-    border-radius: 2px;
-}
-
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-gap.is-over,
-#asset-tree-app .asset-tree-card-edge.is-over {
+#asset-tree-app .asset-tree-card-grip {
+    position: absolute;
+    top: -3.2mm;
+    left: 0;
+    right: 0;
+    height: 3mm;
+    cursor: grab;
     background: #4c9aff;
 }
 
-#asset-tree-app .asset-tree-card-edit .asset-tree-card-gap.is-empty {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 28px;
-    height: auto;
-    border: 1px dashed #b3bac5;
-    color: #6b778c;
-    font-size: 11px;
-    text-align: center;
+#asset-tree-app .asset-tree-card-resize {
+    display: none;
+    position: absolute;
+    right: -1.2mm;
+    bottom: -1.2mm;
+    z-index: 2;
+    width: 3.2mm;
+    height: 3.2mm;
+    background: #0052cc;
+    cursor: nwse-resize;
+}
+
+#asset-tree-app .asset-tree-card-item.is-selected .asset-tree-card-resize,
+#asset-tree-app .asset-tree-card-item:hover .asset-tree-card-resize {
+    display: block;
+}
+
+#asset-tree-app button.asset-tree-card-chip.is-dragging {
+    opacity: 0.45;
 }
 
 #asset-tree-app button.asset-tree-card-x {
@@ -3234,50 +3280,11 @@ a.asset-tree-url {
     cursor: pointer;
 }
 
-#asset-tree-app .asset-tree-card-line:hover button.asset-tree-card-x,
-#asset-tree-app .asset-tree-card-qr:hover button.asset-tree-card-x {
+#asset-tree-app .asset-tree-card-item:hover button.asset-tree-card-x,
+#asset-tree-app .asset-tree-card-item.is-selected button.asset-tree-card-x {
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
-}
-
-#asset-tree-app .asset-tree-card-edge {
-    display: none;
-    position: absolute;
-    z-index: 3;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    background: rgba(222, 235, 255, 0.94);
-    color: #0747a6;
-    border: 1px dashed #4c9aff;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-#asset-tree-app .asset-tree-card-sheet.is-moving-qr .asset-tree-card-edge {
-    display: flex;
-}
-
-#asset-tree-app .asset-tree-card-edge.is-top {
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 22px;
-}
-
-#asset-tree-app .asset-tree-card-edge.is-left {
-    top: 22px;
-    bottom: 0;
-    left: 0;
-    width: 36px;
-}
-
-#asset-tree-app .asset-tree-card-edge.is-right {
-    top: 22px;
-    bottom: 0;
-    right: 0;
-    width: 36px;
 }
 
 .asset-tree-card-ghost {

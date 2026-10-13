@@ -204,11 +204,156 @@ STATE = {
 CARD_BLOCKS = {"name", "key", "type", "place", "status", "custodian", "project", "description", "scan"}
 CARD_SIZES = {"card", "wide", "label"}
 CARD_QRS = {"left", "right", "top", "none"}
+CARD_KINDS = {"text", "field", "qr", "logo"}
+CARD_FONTS = {"sans", "serif", "mono"}
+CARD_ALIGNS = {"left", "center", "right"}
 CARD_ATTR = re.compile(r"^attr:[a-z][a-z0-9-]{0,39}$")
+CARD_ID = re.compile(r"^[a-z0-9]{4,16}$")
+CARD_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+CARD_SRC = re.compile(r"^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+=*$")
 
 
 def default_card():
     return {"size": "card", "qr": "left", "lines": ["name", "type", "place", "key", "scan"]}
+
+
+def card_field_token(raw):
+    trimmed = str(raw or "").strip()
+    if not trimmed:
+        return ""
+    lower = trimmed.lower()
+    token = lower if lower in CARD_BLOCKS else trimmed
+    if token in CARD_BLOCKS or CARD_ATTR.match(token):
+        return token
+    return ""
+
+
+def card_sheet(size):
+    if size == "wide":
+        return 100.0, 64.0
+    if size == "label":
+        return 58.0, 36.0
+    return 86.0, 54.0
+
+
+def card_text(raw):
+    out = []
+    space = False
+    breaks = 0
+    for char in str(raw or ""):
+        if len(out) >= 180:
+            break
+        if char == "\r":
+            continue
+        if char == "\n":
+            if not out or out[-1] == "\n" or breaks >= 8:
+                continue
+            out.append("\n")
+            breaks += 1
+            space = False
+            continue
+        if char in (" ", "\t"):
+            space = bool(out) and out[-1] != "\n"
+            continue
+        if ord(char) < 32:
+            continue
+        if space:
+            out.append(" ")
+            space = False
+        out.append(char)
+    return "".join(out).strip()
+
+
+def normalize_elements(raw, size):
+    width, height = card_sheet(size)
+    elements = []
+    ids = set()
+    fields = set()
+    asset_code = False
+    serial = 0
+    for item in raw or []:
+        if not isinstance(item, dict) or len(elements) >= 24:
+            continue
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in CARD_KINDS:
+            continue
+        kept = {
+            "kind": kind, "token": "", "text": "", "src": "",
+            "bold": bool(item.get("bold")),
+        }
+        if kind == "field":
+            token = card_field_token(item.get("token"))
+            if not token or token in fields:
+                continue
+            fields.add(token)
+            kept["token"] = token
+        elif kind == "qr":
+            mode = str(item.get("token") or "").strip().lower()
+            if mode not in ("asset", "custom"):
+                mode = "custom" if card_text(item.get("text")) else "asset"
+            if mode == "asset":
+                if asset_code:
+                    continue
+                asset_code = True
+                kept["token"] = "asset"
+            else:
+                payload = card_text(item.get("text"))
+                if not payload:
+                    continue
+                kept["token"] = "custom"
+                kept["text"] = payload
+        elif kind == "logo":
+            src = str(item.get("src") or "").strip()
+            if len(src) > 90000 or not CARD_SRC.match(src):
+                continue
+            kept["src"] = src
+        else:
+            caption = card_text(item.get("text"))
+            if not caption:
+                continue
+            kept["text"] = caption
+        element_id = str(item.get("id") or "").strip().lower()
+        if not CARD_ID.match(element_id) or element_id in ids:
+            probe = serial + 100000
+            element_id = format(probe, "x")
+            while not CARD_ID.match(element_id) or element_id in ids:
+                probe += 1
+                element_id = format(probe, "x")
+        ids.add(element_id)
+        serial += 1
+        kept["id"] = element_id
+        box = 22.0 if kind in ("qr", "logo") else 36.0
+        tall = 22.0 if kind in ("qr", "logo") else 8.0
+        try:
+            given_w = float(item.get("w") or 0)
+            given_h = float(item.get("h") or 0)
+            given_x = float(item.get("x") or 0)
+            given_y = float(item.get("y") or 0)
+        except (TypeError, ValueError):
+            given_w = given_h = given_x = given_y = 0
+        if given_w >= 4:
+            box = given_w
+        if given_h >= 4:
+            tall = given_h
+        box = max(4.0, min(width, round(box, 2)))
+        tall = max(4.0, min(height, round(tall, 2)))
+        kept["w"] = box
+        kept["h"] = tall
+        kept["x"] = max(0.0, min(width - 4, round(given_x, 2)))
+        kept["y"] = max(0.0, min(height - 4, round(given_y, 2)))
+        try:
+            font_size = int(item.get("size") or 0)
+        except (TypeError, ValueError):
+            font_size = 0
+        kept["size"] = font_size if 6 <= font_size <= 36 else 11
+        color = str(item.get("color") or "").strip()
+        kept["color"] = color.lower() if CARD_COLOR.match(color) else "#172b4d"
+        font = str(item.get("font") or "").strip().lower()
+        kept["font"] = font if font in CARD_FONTS else "sans"
+        align = str(item.get("align") or "").strip().lower()
+        kept["align"] = align if align in CARD_ALIGNS else "left"
+        elements.append(kept)
+    return elements
 
 
 def normalize_card(raw):
@@ -225,20 +370,18 @@ def normalize_card(raw):
         lines = []
         seen = set()
         for line in raw.get("lines") or []:
-            trimmed = str(line or "").strip()
-            if not trimmed:
-                continue
-            lower = trimmed.lower()
-            token = lower if lower in CARD_BLOCKS else trimmed
-            if token in seen:
-                continue
-            if token not in CARD_BLOCKS and not CARD_ATTR.match(token):
+            token = card_field_token(line)
+            if not token or token in seen:
                 continue
             seen.add(token)
             lines.append(token)
             if len(lines) >= 12:
                 break
         layout["lines"] = lines
+    if raw.get("elements") is not None:
+        layout["elements"] = normalize_elements(raw.get("elements"), layout["size"])
+        layout["lines"] = [item["token"] for item in layout["elements"] if item["kind"] == "field"]
+        layout["qr"] = "left" if any(item["kind"] == "qr" and item["token"] == "asset" for item in layout["elements"]) else "none"
     return layout
 
 
@@ -2235,7 +2378,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.90",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.91",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
