@@ -159,6 +159,31 @@ public class CardLayoutTest {
         assertEquals(Integer.valueOf(0), CardLayout.normalize(raw).getGrid());
     }
 
+    @Test
+    public void onePictureSlotAndASecondIsDropped() {
+        CardElement first = block("picture");
+        first.setId("pic1");
+        first.setX(10);
+        first.setY(8);
+        first.setW(30);
+        first.setH(30);
+        CardElement second = block("picture");
+        second.setId("pic2");
+
+        CardLayout layout = CardLayout.normalize(layoutOf(first, second));
+
+        assertEquals(1, layout.getElements().size());
+        assertEquals("picture", layout.getElements().get(0).getKind());
+        assertEquals("", layout.getElements().get(0).getSrc());
+        assertEquals(30, layout.getElements().get(0).getW(), 0.001);
+    }
+
+    private static CardLayout layoutOf(CardElement... elements) {
+        CardLayout raw = new CardLayout();
+        raw.setElements(Arrays.asList(elements));
+        return raw;
+    }
+
     private static CardElement block(String kind) {
         CardElement element = new CardElement();
         element.setId(kind + "01");

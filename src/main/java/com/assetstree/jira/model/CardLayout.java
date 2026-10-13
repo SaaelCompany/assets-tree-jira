@@ -37,13 +37,14 @@ public class CardLayout {
     public static final String KIND_FIELD = "field";
     public static final String KIND_QR = "qr";
     public static final String KIND_LOGO = "logo";
+    public static final String KIND_PICTURE = "picture";
 
     private static final Pattern ATTR = Pattern.compile("^attr:[a-z][a-z0-9-]{0,39}$");
     private static final Pattern ID = Pattern.compile("^[a-z0-9]{4,16}$");
     private static final Pattern COLOR = Pattern.compile("^#[0-9a-fA-F]{6}$");
     private static final Pattern SRC = Pattern.compile("^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+=*$");
     private static final Set<String> QRS = new HashSet<String>(Arrays.asList(QR_LEFT, QR_RIGHT, QR_TOP, QR_NONE));
-    private static final Set<String> KINDS = new HashSet<String>(Arrays.asList(KIND_TEXT, KIND_FIELD, KIND_QR, KIND_LOGO));
+    private static final Set<String> KINDS = new HashSet<String>(Arrays.asList(KIND_TEXT, KIND_FIELD, KIND_QR, KIND_LOGO, KIND_PICTURE));
     private static final Set<String> FONTS = new HashSet<String>(Arrays.asList("sans", "serif", "mono"));
     private static final Set<String> ALIGNS = new HashSet<String>(Arrays.asList("left", "center", "right"));
     private static final Set<String> BLOCKS = new LinkedHashSet<String>(Arrays.asList(
@@ -184,6 +185,7 @@ public class CardLayout {
         Set<String> ids = new HashSet<String>();
         Set<String> fields = new HashSet<String>();
         boolean assetCode = false;
+        boolean picture = false;
         int serial = 0;
         for (CardElement item : raw) {
             if (item == null || next.size() >= MAX_ELEMENTS) {
@@ -220,6 +222,11 @@ public class CardLayout {
                     continue;
                 }
                 kept.setSrc(src);
+            } else if (KIND_PICTURE.equals(kind)) {
+                if (picture) {
+                    continue;
+                }
+                picture = true;
             } else {
                 String caption = cleanText(item.getText());
                 if (caption.isEmpty()) {
@@ -233,8 +240,9 @@ public class CardLayout {
             }
             serial++;
             kept.setId(id);
-            double w = kept.getKind().equals(KIND_QR) || kept.getKind().equals(KIND_LOGO) ? 22 : 36;
-            double h = kept.getKind().equals(KIND_QR) || kept.getKind().equals(KIND_LOGO) ? 22 : 8;
+            boolean mark = KIND_QR.equals(kept.getKind()) || KIND_LOGO.equals(kept.getKind()) || KIND_PICTURE.equals(kept.getKind());
+            double w = mark ? 22 : 36;
+            double h = mark ? 22 : 8;
             if (item.getW() >= 4) {
                 w = item.getW();
             }

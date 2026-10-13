@@ -3240,6 +3240,41 @@ a.asset-tree-url {
     overflow: hidden;
 }
 
+#asset-tree-app .asset-tree-card-item.is-picture .asset-tree-card-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border: 0.3mm dashed #6b778c;
+    color: #6b778c;
+    font-size: 8pt;
+    line-height: 1.2;
+    text-align: center;
+    padding: 1mm;
+}
+
+#asset-tree-app .asset-tree-card-photo-preview {
+    display: block;
+    width: 96px;
+    height: 96px;
+    object-fit: contain;
+    border: 1px solid #dfe1e6;
+    background: #fff;
+    margin: 8px 0;
+}
+
+#asset-tree-app .asset-tree-card-photo-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+#asset-tree-app label.asset-tree-btn {
+    display: inline-flex;
+    align-items: center;
+}
+
 #asset-tree-app .asset-tree-card-body img,
 #asset-tree-app .asset-tree-card-item.is-qr svg {
     width: 100%;

@@ -197,14 +197,14 @@ STATE = {
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
-    "cards": {},
+    "cards": {}, "card_images": {},
 }
 
 
 CARD_BLOCKS = {"name", "key", "type", "place", "status", "custodian", "project", "description", "scan"}
 CARD_SIZES = {"card", "wide", "label", "custom"}
 CARD_QRS = {"left", "right", "top", "none"}
-CARD_KINDS = {"text", "field", "qr", "logo"}
+CARD_KINDS = {"text", "field", "qr", "logo", "picture"}
 CARD_FONTS = {"sans", "serif", "mono"}
 CARD_ALIGNS = {"left", "center", "right"}
 CARD_ATTR = re.compile(r"^attr:[a-z][a-z0-9-]{0,39}$")
@@ -304,6 +304,7 @@ def normalize_elements(raw, width, height):
     ids = set()
     fields = set()
     asset_code = False
+    picture = False
     serial = 0
     for item in raw or []:
         if not isinstance(item, dict) or len(elements) >= 24:
@@ -334,6 +335,10 @@ def normalize_elements(raw, width, height):
             if len(src) > 90000 or not CARD_SRC.match(src):
                 continue
             kept["src"] = src
+        elif kind == "picture":
+            if picture:
+                continue
+            picture = True
         else:
             caption = card_text(item.get("text"))
             if not caption:
@@ -349,8 +354,8 @@ def normalize_elements(raw, width, height):
         ids.add(element_id)
         serial += 1
         kept["id"] = element_id
-        box = 22.0 if kind in ("qr", "logo") else 36.0
-        tall = 22.0 if kind in ("qr", "logo") else 8.0
+        box = 22.0 if kind in ("qr", "logo", "picture") else 36.0
+        tall = 22.0 if kind in ("qr", "logo", "picture") else 8.0
         try:
             given_w = float(item.get("w") or 0)
             given_h = float(item.get("h") or 0)
@@ -890,7 +895,9 @@ def asset_dto(asset, text, with_issues):
         "sortOrder": asset["sortOrder"], "created": asset["created"], "updated": asset["updated"],
         "createdBy": USERS["ivanov"]["displayName"], "updatedBy": USERS["ivanov"]["displayName"], "projectKey": asset["projectKey"],
         "projectName": next(item["name"] for item in PROJECTS if item["key"] == asset["projectKey"]),
-        "location": location_of(asset), "editable": True, "custodian": holder, "attributes": attributes,
+        "location": location_of(asset), "editable": True,
+        "cardImage": asset["id"] in STATE["card_images"],
+        "custodian": holder, "attributes": attributes,
         "serviceDue": service_due_names(asset["id"]),
         "offeredTypes": list(asset.get("offeredTypes") or []) if is_location_id(asset["id"]) else [],
     }
@@ -1182,6 +1189,27 @@ def delete_preview_file(file_id):
     path = preview_file_path(file_id)
     if os.path.isfile(path):
         os.remove(path)
+
+
+CARD_IMAGE_MAX = 512 * 1024
+
+
+def card_image_path(asset_id):
+    return os.path.join(FILE_DIR, "card-%s" % asset_id)
+
+
+def delete_card_image(asset_id):
+    path = card_image_path(asset_id)
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def card_image_kind(data):
+    if data[:8].startswith(b"\x89PNG"):
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    return ""
 
 
 def multipart_token(value):
@@ -1974,6 +2002,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve_api(method, rest, query)
         if path == "/plugins/servlet/asset-tree-file":
             return self.serve_file(method, query)
+        if path == "/plugins/servlet/asset-tree-card-image":
+            return self.serve_card_image(method, query)
         self.send_error(404)
 
     def lang(self):
@@ -2407,7 +2437,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.92",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.93",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2987,6 +3017,8 @@ setTimeout(function () {
             for file_id in [row["id"] for row in files_of(current)]:
                 STATE["files"].pop(file_id, None)
                 delete_preview_file(file_id)
+            STATE["card_images"].pop(current, None)
+            delete_card_image(current)
             for activity_id in [row["id"] for row in activities_of(current)]:
                 STATE["activities"].pop(activity_id, None)
             for plan_id in [row["id"] for row in plan_rows(current)]:
@@ -3328,6 +3360,87 @@ setTimeout(function () {
         with LOCK:
             log_activity(asset_id, "file", "", "", safe)
         self.respond(201, json.dumps({"id": file_id}).encode("utf-8"), "application/json; charset=utf-8")
+
+    def serve_card_image(self, method, query):
+        text = self.text()
+        try:
+            asset_id = int((query.get("assetId") or ["0"])[0])
+        except ValueError:
+            asset_id = 0
+        if asset_id <= 0:
+            self.send_error(400)
+            return
+        if method == "GET":
+            with LOCK:
+                known = asset_id in STATE["card_images"]
+                kind = STATE["card_images"].get(asset_id) or "png"
+            path = card_image_path(asset_id)
+            if not known or not os.path.isfile(path):
+                self.send_error(404)
+                return
+            with open(path, "rb") as handle:
+                data = handle.read()
+            content = "image/jpeg" if kind == "jpeg" else "image/png"
+            self.respond(200, data, content, {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"})
+            return
+        if method == "DELETE":
+            with LOCK:
+                if asset_id not in STATE["assets"]:
+                    missing = True
+                    had = False
+                else:
+                    missing = False
+                    had = asset_id in STATE["card_images"]
+                    STATE["card_images"].pop(asset_id, None)
+                    if had:
+                        log_activity(asset_id, "card_image_delete", "", "1", "")
+                        STATE["assets"][asset_id]["updated"] = now_stamp()
+            if missing:
+                self.respond(404, json.dumps({"message": text["asset-tree.error.notFound"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+                return
+            delete_card_image(asset_id)
+            self.respond(204, b"", "application/json; charset=utf-8")
+            return
+        if method != "POST":
+            self.send_error(405)
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > CARD_IMAGE_MAX + 65536:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.required"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        raw = self.rfile.read(length)
+        parsed = parse_multipart(raw, self.headers.get("Content-Type", ""))
+        if not parsed or not parsed[2]:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.file.required"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        data = parsed[2]
+        if len(data) > CARD_IMAGE_MAX:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.cardImage.size"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        kind = card_image_kind(data)
+        if not kind:
+            self.respond(400, json.dumps({"message": text["asset-tree.error.cardImage.type"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        with LOCK:
+            asset = STATE["assets"].get(asset_id)
+            if not asset:
+                self.respond(404, json.dumps({"message": text["asset-tree.error.notFound"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+                return
+            if is_location_id(asset_id):
+                self.respond(400, json.dumps({"message": text["asset-tree.error.cardImage.place"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+                return
+        try:
+            os.makedirs(FILE_DIR, exist_ok=True)
+            with open(card_image_path(asset_id), "wb") as handle:
+                handle.write(data)
+        except OSError:
+            self.respond(500, json.dumps({"message": text["asset-tree.error.unexpected"]}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            return
+        with LOCK:
+            STATE["card_images"][asset_id] = kind
+            STATE["assets"][asset_id]["updated"] = now_stamp()
+            log_activity(asset_id, "card_image", "", "", "1")
+        self.respond(201, json.dumps({"id": asset_id}).encode("utf-8"), "application/json; charset=utf-8")
 
     def read_json(self):
         length = int(self.headers.get("Content-Length") or 0)

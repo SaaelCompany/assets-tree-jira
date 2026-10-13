@@ -60,6 +60,12 @@ public interface AssetService {
 
     void deleteFile(ApplicationUser user, int assetId, int fileId);
 
+    void storeCardImage(ApplicationUser user, int assetId, byte[] data);
+
+    StoredFile openCardImage(ApplicationUser user, int assetId);
+
+    void deleteCardImage(ApplicationUser user, int assetId);
+
     void deleteAsset(ApplicationUser user, int id, boolean cascade);
 
     AssetDto moveAsset(ApplicationUser user, int id, MoveDraft move);

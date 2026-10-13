@@ -2146,6 +2146,7 @@
                     return;
                 }
                 if (status === 200) {
+                    stampCardImage(payload);
                     state.detail = payload;
                     replaceDetail();
                 }
@@ -2163,6 +2164,7 @@
                 return;
             }
             if (status === 200) {
+                stampCardImage(payload);
                 state.detail = payload;
                 showDetail(payload, false);
             } else if (status === 404) {
@@ -3061,11 +3063,6 @@
                         return item.asset || assetByAnyId(parseInt(item.key, 10));
                     }));
                 }));
-                bar.appendChild(button(t('printQrSheet'), 'asset-tree-btn', function () {
-                    printQrSheet(items.map(function (item) {
-                        return item.asset || assetByAnyId(parseInt(item.key, 10));
-                    }));
-                }));
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
             }
             if (assetsOnly) {
@@ -3658,6 +3655,8 @@
         if (item.action === 'comment_delete') return t('actCommentDelete');
         if (item.action === 'file') return t('actFile');
         if (item.action === 'file_delete') return t('actFileDelete');
+        if (item.action === 'card_image') return t('actCardImage');
+        if (item.action === 'card_image_delete') return t('actCardImageDelete');
         if (item.action === 'move') return t('actMove');
         if (item.action === 'place_add') return t('actPlaceAdd');
         if (item.action === 'place_remove') return t('actPlaceRemove');
@@ -3680,7 +3679,7 @@
         text.appendChild(el('span', null, stamp(item.created)));
         head.appendChild(text);
         row.appendChild(head);
-        if (item.action === 'created') return row;
+        if (item.action === 'created' || item.action === 'card_image' || item.action === 'card_image_delete') return row;
         if (placeKind(item.action)) {
             var placeChange = el('div', 'asset-tree-history-change');
             var placeLabel = item.newValue || item.oldValue || '';
@@ -3904,6 +3903,112 @@
         node.textContent = message || '';
     }
 
+    function stampCardImage(payload) {
+        if (!payload || !payload.id) return;
+        [state.assets, state.searchHits, state.mineAssets, state.holderAssets].forEach(function (pool) {
+            if (!pool) return;
+            for (var i = 0; i < pool.length; i++) {
+                if (pool[i] && pool[i].id === payload.id) {
+                    pool[i].cardImage = !!payload.cardImage;
+                    pool[i].updated = payload.updated;
+                }
+            }
+        });
+    }
+
+    function cardImageUrl(asset) {
+        var base = String(state.baseUrl || '').replace(/\/+$/, '');
+        if (!base) base = window.location.origin + contextPath();
+        var stamp = asset && asset.updated ? encodeURIComponent(asset.updated) : '';
+        return base + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id + (stamp ? '&v=' + stamp : '');
+    }
+
+    function showCardImageError(message) {
+        var node = document.getElementById('asset-tree-card-image-error');
+        if (!node) {
+            if (message) setFormError(message);
+            return;
+        }
+        node.hidden = !message;
+        node.textContent = message || '';
+    }
+
+    function uploadCardImage(asset, file) {
+        if (!file) return;
+        showCardImageError('');
+        var xhr = new XMLHttpRequest();
+        var data = new FormData();
+        data.append('file', file, file.name || 'card.png');
+        xhr.open('POST', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
+        xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                notify(t('saved'));
+                selectAsset(asset.id, true);
+                return;
+            }
+            var payload = null;
+            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
+            showCardImageError((payload && payload.message) || t('errorTitle'));
+        };
+        xhr.send(data);
+    }
+
+    function cardImageBlock(asset) {
+        var body = el('div', 'asset-tree-card-photo');
+        body.appendChild(el('p', 'asset-tree-hint', t('cardPictureHint')));
+        if (asset.cardImage) {
+            var img = el('img', 'asset-tree-card-photo-preview');
+            img.alt = '';
+            img.src = cardImageUrl(asset);
+            body.appendChild(img);
+        } else {
+            body.appendChild(el('p', 'asset-tree-hint', t('cardPictureEmpty')));
+        }
+        var error = el('p', 'asset-tree-form-error');
+        error.id = 'asset-tree-card-image-error';
+        error.hidden = true;
+        body.appendChild(error);
+        if (mayEdit(asset)) {
+            var actions = el('div', 'asset-tree-card-photo-actions');
+            var input = el('input');
+            input.type = 'file';
+            input.accept = 'image/png,image/jpeg';
+            input.className = 'asset-tree-import-file';
+            var label = el('label', 'asset-tree-btn');
+            label.appendChild(document.createTextNode(asset.cardImage ? t('cardPictureReplace') : t('cardPictureAdd')));
+            label.appendChild(input);
+            input.addEventListener('change', function () {
+                var chosen = input.files && input.files[0];
+                input.value = '';
+                if (chosen) uploadCardImage(asset, chosen);
+            });
+            actions.appendChild(label);
+            if (asset.cardImage) {
+                actions.appendChild(button(t('cardPictureRemove'), 'asset-tree-linkish', function () {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('DELETE', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
+                    xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+                    xhr.setRequestHeader('Accept', 'application/json');
+                    xhr.onreadystatechange = function () {
+                        if (xhr.readyState !== 4) return;
+                        if (xhr.status >= 200 && xhr.status < 300) selectAsset(asset.id, true);
+                        else {
+                            var payload = null;
+                            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
+                            showCardImageError((payload && payload.message) || t('errorTitle'));
+                        }
+                    };
+                    xhr.send();
+                }));
+            }
+            body.appendChild(actions);
+        }
+        return moduleBlock(t('cardPicture'), body);
+    }
+
     function uploadFile(asset, file) {
         if (!file) return;
         showFileError('');
@@ -3979,7 +4084,7 @@
     var CARD_SIZES = { card: true, wide: true, label: true };
     var CARD_QRS = { left: true, right: true, top: true, none: true };
 
-    var CARD_KINDS = { text: true, field: true, qr: true, logo: true };
+    var CARD_KINDS = { text: true, field: true, qr: true, logo: true, picture: true };
     var CARD_FONTS = { sans: true, serif: true, mono: true };
     var CARD_ALIGNS = { left: true, center: true, right: true };
     var CARD_SRC = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/;
@@ -4086,6 +4191,7 @@
         var ids = {};
         var fields = {};
         var assetCode = false;
+        var picture = false;
         (raw || []).forEach(function (item) {
             if (!item || elements.length >= 24) return;
             var kind = String(item.kind || '').toLowerCase();
@@ -4106,6 +4212,9 @@
                 var src = String(item.src || '').replace(/^\s+|\s+$/g, '');
                 if (src.length > 90000 || !CARD_SRC.test(src)) return;
                 kept.src = src;
+            } else if (kind === 'picture') {
+                if (picture) return;
+                picture = true;
             } else {
                 var caption = cardCleanText(item.text);
                 if (!caption) return;
@@ -4115,8 +4224,9 @@
             if (!CARD_ELEMENT_ID.test(id) || ids[id]) id = cardNewId(ids);
             else ids[id] = true;
             kept.id = id;
-            var w = kind === 'qr' || kind === 'logo' ? 22 : 36;
-            var h = kind === 'qr' || kind === 'logo' ? 22 : 8;
+            var mark = kind === 'qr' || kind === 'logo' || kind === 'picture';
+            var w = mark ? 22 : 36;
+            var h = mark ? 22 : 8;
             if (Number(item.w) >= 4) w = Number(item.w);
             if (Number(item.h) >= 4) h = Number(item.h);
             kept.w = Math.max(4, Math.min(sheet.w, cardRound(w)));
@@ -4369,7 +4479,7 @@
             + '.asset-tree-card-preview .asset-tree-card.is-free{position:relative;display:block}'
             + '.asset-tree-card-preview .asset-tree-card-item{position:absolute;box-sizing:border-box;overflow:hidden;line-height:1.15;margin:0;padding:0;white-space:pre-wrap;word-wrap:break-word}'
             + '.asset-tree-card-preview .asset-tree-card-item.is-qr svg{width:100%;height:100%;display:block}'
-            + '.asset-tree-card-preview .asset-tree-card-item.is-logo img{width:100%;height:100%;object-fit:contain;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-item.is-logo img,.asset-tree-card-preview .asset-tree-card-item.is-picture img{width:100%;height:100%;object-fit:contain;display:block}'
             + '@media print{.asset-tree-card-preview .bar{display:none}.asset-tree-card-preview .sheet{padding:0;gap:3mm}.asset-tree-card-preview .asset-tree-card{border-color:#000}}';
     }
 
@@ -4399,6 +4509,10 @@
         var style = cardItemStyle(item);
         if (item.kind === 'logo') {
             return '<div class="asset-tree-card-item is-logo" style="' + style + '"><img alt="" src="' + item.src + '"></div>';
+        }
+        if (item.kind === 'picture') {
+            if (!asset || !asset.cardImage) return '';
+            return '<div class="asset-tree-card-item is-picture" style="' + style + '"><img alt="" src="' + htmlEscape(cardImageUrl(asset)) + '"></div>';
         }
         if (item.kind === 'qr') {
             var payload = item.token === 'asset' ? cardLink(asset) : item.text;
@@ -4496,66 +4610,13 @@
             return;
         }
         if (qrSkipped) notify(t('printQrSkipped'));
-        var label = cardSheet(cardLayoutFor(cards[0].projectKey));
         sheet.document.open();
         sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>body{margin:0}' + cardCss()
-            + '@page{size:A4;margin:8mm}@page label{size:' + label.w + 'mm ' + label.h + 'mm;margin:1mm}'
-            + '.asset-tree-card-preview.is-labels .asset-tree-card{page:label;break-after:page}</style></head><body>'
+            + '@page{size:A4;margin:8mm}</style></head><body>'
             + '<div class="asset-tree-card-preview"><div class="bar"><p>' + htmlEscape(t('printHint')) + '</p>'
-            + '<button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button>'
-            + '<button type="button" onclick="this.parentNode.parentNode.classList.add(\'is-labels\');window.print()">' + htmlEscape(t('printLabels')) + '</button></div>'
+            + '<button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
             + '<div class="sheet">' + body + '</div></div></body></html>');
         sheet.document.close();
-    }
-
-    function printQrSheet(assets) {
-        var cards = (assets || []).filter(function (asset) {
-            return asset && !isFolder(asset) && asset.objectKey;
-        });
-        if (!cards.length) {
-            notify(t('printEmpty'));
-            return;
-        }
-        if (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function') {
-            notify(t('errorTitle'));
-            return;
-        }
-        var skipped = 0;
-        var cells = [];
-        cards.forEach(function (asset) {
-            var code = window.AssetTreeQr.svg(cardLink(asset)) || '';
-            if (!code) {
-                skipped++;
-                return;
-            }
-            cells.push('<div class="qr-cell"><div class="qr-mark">' + code + '</div><p>' + htmlEscape(asset.objectKey || '') + '</p><p class="qr-name">' + htmlEscape(asset.name || '') + '</p></div>');
-        });
-        if (!cells.length) {
-            notify(t('printQrSkipped'));
-            return;
-        }
-        if (skipped) notify(t('printQrSkipped'));
-        var popup = window.open('', '_blank');
-        if (!popup) {
-            notify(t('printBlocked'));
-            return;
-        }
-        var css = '.qr-preview{color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
-            + '.qr-preview .bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
-            + '.qr-preview .bar p{margin:0;flex:1}'
-            + '.qr-preview .bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
-            + '.qr-sheet{display:flex;flex-wrap:wrap;align-content:flex-start;gap:2mm;padding:0}'
-            + '.qr-cell{width:32mm;height:40mm;box-sizing:border-box;page-break-inside:avoid;text-align:center;overflow:hidden}'
-            + '.qr-mark{width:26mm;height:26mm;margin:0 auto}'
-            + '.qr-mark svg{width:100%;height:100%;display:block}'
-            + '.qr-cell p{margin:0;font:7pt ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}'
-            + '.qr-cell p.qr-name{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:6.5pt;color:#44546f}'
-            + '@media print{.qr-preview .bar{display:none}}';
-        popup.document.open();
-        popup.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printQrSheet')) + '</title><style>body{margin:0}' + css + '@page{size:A4;margin:8mm}</style></head><body>'
-            + '<div class="qr-preview"><div class="bar"><p>' + htmlEscape(t('printQrHint')) + '</p><button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
-            + '<div class="qr-sheet">' + cells.join('') + '</div></div></body></html>');
-        popup.document.close();
     }
 
     function showDetailView(asset, issuesLoading, section) {
@@ -4581,9 +4642,6 @@
         if (!isFolder(asset)) {
             ops.appendChild(toolButton(t('printCard'), 'print', function () {
                 printCards([state.detail && state.detail.id === asset.id ? state.detail : asset]);
-            }));
-            ops.appendChild(toolButton(t('printQrSheet'), 'print', function () {
-                printQrSheet([state.detail && state.detail.id === asset.id ? state.detail : asset]);
             }));
         }
         var extra = [];
@@ -4617,6 +4675,7 @@
         var service = serviceBlock(asset);
         if (service) main.appendChild(service);
         main.appendChild(descriptionModule(asset, true));
+        if (!isFolder(asset)) main.appendChild(cardImageBlock(asset));
         main.appendChild(fileBlock(asset));
 
         var issues = el('div');
@@ -7903,6 +7962,10 @@
             body.appendChild(img);
             return;
         }
+        if (item.kind === 'picture') {
+            body.appendChild(document.createTextNode(t('cardPicture')));
+            return;
+        }
         if (item.kind === 'qr') {
             var payload = item.token === 'asset' ? cardLink(sample) : item.text;
             var code = '';
@@ -7939,13 +8002,13 @@
             notify(t('cardFull'));
             return;
         }
-        if (spec.kind === 'field' || (spec.kind === 'qr' && spec.token === 'asset')) {
+        if (spec.kind === 'picture' || spec.kind === 'field' || (spec.kind === 'qr' && spec.token === 'asset')) {
             for (var i = 0; i < draft.elements.length; i++) {
                 var existing = draft.elements[i];
-                if (existing.kind === spec.kind && existing.token === spec.token) return;
+                if (existing.kind === spec.kind && (spec.kind === 'picture' || existing.token === spec.token)) return;
             }
         }
-        var wide = spec.kind === 'qr' || spec.kind === 'logo';
+        var wide = spec.kind === 'qr' || spec.kind === 'logo' || spec.kind === 'picture';
         var item = {
             id: cardNewId({}),
             kind: spec.kind,
@@ -8140,7 +8203,7 @@
         var selected = state.cardSelected === item.id;
         var node = el('div', 'asset-tree-card-item is-' + item.kind + (selected ? ' is-selected' : ''));
         node.setAttribute('data-card-id', item.id);
-        node.title = item.kind === 'field' ? blockLabel(item.token) : (item.kind === 'text' ? t('cardCaption') : (item.kind === 'logo' ? t('cardLogo') : t('cardQr')));
+        node.title = item.kind === 'field' ? blockLabel(item.token) : (item.kind === 'text' ? t('cardCaption') : (item.kind === 'logo' ? t('cardLogo') : (item.kind === 'picture' ? t('cardPicture') : t('cardQr'))));
         applyItemStyle(node, item);
         var body = el('div', 'asset-tree-card-body');
         fillItemBody(body, item, sample);
@@ -8193,6 +8256,13 @@
         var tools = el('div', 'asset-tree-card-tools');
         if (!item) {
             tools.appendChild(el('p', 'asset-tree-hint', t('cardPick')));
+            stage.appendChild(tools);
+            return;
+        }
+        if (item.kind === 'picture') {
+            tools.appendChild(button(t('cardRemove'), 'asset-tree-btn', function () {
+                removeCardElement(item.id);
+            }));
             stage.appendChild(tools);
             return;
         }
@@ -8346,6 +8416,9 @@
         }));
         if (!cardHas('qr', 'asset')) {
             palette.appendChild(paletteButton(t('cardQrAsset'), { kind: 'qr', token: 'asset', w: 28, h: 28 }));
+        }
+        if (!cardHas('picture', '')) {
+            palette.appendChild(paletteButton(t('cardPicture'), { kind: 'picture', w: 28, h: 28 }));
         }
         palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardOff')));
         var unused = [];

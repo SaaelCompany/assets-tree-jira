@@ -633,6 +633,111 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public void storeCardImage(ApplicationUser user, int assetId, byte[] data) {
+        if (data == null || data.length == 0) {
+            throw new AssetException(400, "asset-tree.error.file.required");
+        }
+        if (data.length > CardImageStore.MAX_BYTES) {
+            throw new AssetException(400, "asset-tree.error.cardImage.size");
+        }
+        final String kind = CardImageStore.kindOf(data);
+        if (kind.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.cardImage.type");
+        }
+        final byte[] bytes = data;
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.cardImage.place");
+                }
+                entity.setCardImage(kind);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                return null;
+            }
+        });
+        try {
+            CardImageStore.write(assetId, bytes);
+        } catch (IOException ex) {
+            clearCardImage(assetId);
+            throw new AssetException(500, "asset-tree.error.unexpected");
+        }
+        logActivity(assetId, user.getKey(), "card_image", "", "", "1");
+    }
+
+    @Override
+    public StoredFile openCardImage(ApplicationUser user, int assetId) {
+        AssetEntity entity = requireReadable(user, assetId);
+        String kind = entity.getCardImage();
+        if (kind == null || kind.isEmpty()) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        java.io.File stored = CardImageStore.file(assetId);
+        if (!stored.isFile()) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        byte[] data = new byte[(int) stored.length()];
+        try {
+            FileInputStream input = new FileInputStream(stored);
+            try {
+                int offset = 0;
+                while (offset < data.length) {
+                    int read = input.read(data, offset, data.length - offset);
+                    if (read < 0) {
+                        break;
+                    }
+                    offset += read;
+                }
+            } finally {
+                input.close();
+            }
+        } catch (IOException ex) {
+            throw new AssetException(500, "asset-tree.error.unexpected");
+        }
+        String name = "jpeg".equals(kind) ? "card.jpg" : "card.png";
+        return new StoredFile(name, CardImageStore.contentType(kind), data);
+    }
+
+    @Override
+    public void deleteCardImage(ApplicationUser user, int assetId) {
+        final boolean[] had = new boolean[] {false};
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
+                String kind = entity.getCardImage();
+                had[0] = kind != null && !kind.isEmpty();
+                entity.setCardImage("");
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                return null;
+            }
+        });
+        CardImageStore.delete(assetId);
+        if (had[0]) {
+            logActivity(assetId, user.getKey(), "card_image_delete", "", "1", "");
+        }
+    }
+
+    private void clearCardImage(final int assetId) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = ao().get(AssetEntity.class, assetId);
+                if (entity != null) {
+                    entity.setCardImage("");
+                    entity.save();
+                }
+                return null;
+            }
+        });
+    }
+
+    @Override
     public void deleteAsset(ApplicationUser user, int id, boolean cascade) {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
@@ -673,6 +778,9 @@ public class AssetServiceImpl implements AssetService {
                 deleteRows(PortalRuleEntity.class, "ID", ruleIds);
                 for (Integer fileId : fileIds) {
                     AssetFileStore.delete(fileId.intValue());
+                }
+                for (Integer assetId : toDelete) {
+                    CardImageStore.delete(assetId.intValue());
                 }
                 for (int i = descendants.size() - 1; i >= 0; i--) {
                     AssetEntity child = ao().get(AssetEntity.class, descendants.get(i));
@@ -3597,6 +3705,8 @@ public class AssetServiceImpl implements AssetService {
         Project project = project(entity.getProjectKey());
         dto.setProjectName(project == null ? entity.getProjectKey() : project.getName());
         dto.setEditable(canWrite(authenticationContext().getLoggedInUser(), project));
+        String cardImage = entity.getCardImage();
+        dto.setCardImage(cardImage != null && !cardImage.isEmpty());
         dto.setLocation(location(entity, index));
         dto.setCustodian(profile(entity.getCustodianKey()));
         AssetTypeDto type = types.get(entity.getTypeKey());

@@ -4,7 +4,7 @@ import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 
 /**
- * One block on a free-form printed card: a field, a caption, a code, or a logo.
+ * One block on a free-form printed card: a field, a caption, a code, a logo, or a picture slot.
  */
 @XmlAccessorType(XmlAccessType.PROPERTY)
 public class CardElement {
