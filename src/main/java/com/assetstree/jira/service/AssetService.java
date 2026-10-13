@@ -26,6 +26,7 @@ import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.PortalRuleDto;
@@ -138,6 +139,10 @@ public interface AssetService {
     FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, FlowRuleDraft draft);
 
     void deleteFlowRule(ApplicationUser user, String projectKey, int ruleId);
+
+    FlowGraphDto flowGraph(ApplicationUser user, String projectKey);
+
+    FlowGraphDto saveFlowGraph(ApplicationUser user, String projectKey, FlowGraphDto draft);
 
     CardLayout cardLayout(ApplicationUser user, String projectKey);
 

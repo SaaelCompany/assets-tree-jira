@@ -6,6 +6,7 @@ import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.TypeDraft;
@@ -120,6 +121,14 @@ public class JiraJsonVisibilityTest {
                 FlowRuleDraft.class);
         assertEquals("10001", flow.getIssueTypeId());
         assertEquals("repair", flow.getStatusKey());
+
+        FlowGraphDto graph = mapper.readValue(
+                "{\"nodes\":[{\"id\":\"req1\",\"kind\":\"request\",\"x\":48,\"y\":36,\"issueTypeId\":\"10001\"}],"
+                        + "\"links\":[{\"from\":\"req1\",\"to\":\"sta1\"}]}",
+                FlowGraphDto.class);
+        assertEquals("req1", graph.getNodes().get(0).getId());
+        assertEquals(48, graph.getNodes().get(0).getX());
+        assertEquals("sta1", graph.getLinks().get(0).getTo());
 
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",

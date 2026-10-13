@@ -4682,3 +4682,141 @@ a.asset-tree-url {
     width: auto !important;
     margin: 0 !important;
 }
+
+#asset-tree-app .asset-tree-flow-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+#asset-tree-app .asset-tree-flow-connect {
+    margin: 0;
+    flex: 1;
+}
+
+#asset-tree-app .asset-tree-flow-board {
+    height: 560px;
+    overflow: auto;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background-color: #fafbfc;
+    background-image: radial-gradient(#dfe1e6 1px, transparent 1px);
+    background-size: 20px 20px;
+}
+
+#asset-tree-app .asset-tree-flow-canvas {
+    position: relative;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+#asset-tree-app .asset-tree-flow-empty {
+    margin: 0;
+    padding: 16px;
+    color: #6b778c;
+}
+
+#asset-tree-app .asset-tree-flow-wires {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+#asset-tree-app .asset-tree-flow-wires path {
+    fill: none;
+    stroke: #4c9aff;
+    stroke-width: 2;
+}
+
+#asset-tree-app .asset-tree-flow-wires path.is-draft {
+    stroke-dasharray: 5 4;
+}
+
+#asset-tree-app .asset-tree-flow-node {
+    position: absolute;
+    width: 240px;
+    background: #fff;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    box-shadow: 0 1px 1px rgba(9, 30, 66, 0.13);
+    z-index: 1;
+}
+
+#asset-tree-app .asset-tree-flow-node.is-request {
+    border-top: 3px solid #0052cc;
+}
+
+#asset-tree-app .asset-tree-flow-node.is-status {
+    border-top: 3px solid #ffab00;
+}
+
+#asset-tree-app .asset-tree-flow-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px 4px;
+    cursor: grab;
+    user-select: none;
+}
+
+#asset-tree-app .asset-tree-flow-head strong {
+    font-size: 13px;
+}
+
+#asset-tree-app .asset-tree-flow-remove {
+    margin-left: auto;
+    min-height: 24px;
+    padding: 0 8px;
+    font-size: 12px;
+}
+
+#asset-tree-app .asset-tree-flow-body {
+    padding: 0 10px 12px;
+}
+
+#asset-tree-app .asset-tree-flow-body select {
+    width: 100%;
+}
+
+#asset-tree-app .asset-tree-flow-port {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    padding: 0;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid #0052cc;
+    cursor: crosshair;
+    z-index: 2;
+}
+
+#asset-tree-app .asset-tree-flow-port.is-out {
+    right: -8px;
+}
+
+#asset-tree-app .asset-tree-flow-port.is-in {
+    left: -8px;
+    border-color: #ffab00;
+    cursor: default;
+}
+
+#asset-tree-app .asset-tree-flow-cut {
+    position: absolute;
+    z-index: 3;
+    width: 22px;
+    min-height: 22px;
+    margin: -11px 0 0 -11px;
+    padding: 0;
+    border-radius: 50%;
+    line-height: 20px;
+    font-size: 14px;
+}

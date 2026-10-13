@@ -198,7 +198,7 @@ LOCK = threading.Lock()
 STATE = {
     "seq": 1, "assets": {}, "types": {}, "links": [], "checks": {},
     "portal_rules": [], "portal_seq": 1, "portal_demo": False,
-    "flows": {}, "flow_seq": 1,
+    "flows": {}, "flow_seq": 1, "flow_graphs": {},
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
@@ -1953,6 +1953,92 @@ def bulk_types(project_key, action, keys, text):
     return 200, {"done": done, "errors": errors}
 
 
+def normalize_flow_graph(raw):
+    nodes = []
+    seen = set()
+    for item in (raw or {}).get("nodes") or []:
+        kind = item.get("kind")
+        node_id = (item.get("id") or "").strip().lower()
+        if kind not in ("request", "status") or not re.fullmatch(r"[a-z0-9]{4,16}", node_id) or node_id in seen:
+            continue
+        seen.add(node_id)
+        node = {
+            "id": node_id,
+            "kind": kind,
+            "x": max(0, min(2400, int(item.get("x") or 0))),
+            "y": max(0, min(2400, int(item.get("y") or 0))),
+            "issueTypeId": (item.get("issueTypeId") or "").strip() if kind == "request" else "",
+            "statusKey": (item.get("statusKey") or "").strip() if kind == "status" else "",
+        }
+        nodes.append(node)
+        if len(nodes) >= 40:
+            break
+    by_id = {node["id"]: node for node in nodes}
+    links = []
+    outgoing = {}
+    for item in (raw or {}).get("links") or []:
+        source = by_id.get((item.get("from") or "").strip().lower())
+        target = by_id.get((item.get("to") or "").strip().lower())
+        if not source or not target or source["kind"] != "request" or target["kind"] != "status":
+            continue
+        outgoing[source["id"]] = {"from": source["id"], "to": target["id"]}
+    links.extend(outgoing.values())
+    return {"nodes": nodes, "links": links}
+
+
+def flow_graph_named(graph):
+    names = {item["id"]: item["name"] for item in ISSUE_TYPES}
+    nodes = []
+    for node in graph.get("nodes") or []:
+        copy = dict(node)
+        if copy.get("kind") == "request":
+            copy["issueTypeName"] = names.get(copy.get("issueTypeId") or "", "")
+        nodes.append(copy)
+    return {"nodes": nodes, "links": [dict(link) for link in graph.get("links") or []]}
+
+
+def flow_graph_from_rules(project_key):
+    graph = {"nodes": [], "links": []}
+    for index, rule in enumerate(STATE["flows"].get(project_key, [])):
+        request_id = "req%s" % rule["id"]
+        status_id = "sta%s" % rule["id"]
+        graph["nodes"].append({
+            "id": request_id, "kind": "request", "x": 48, "y": 36 + index * 140,
+            "issueTypeId": rule["issueTypeId"], "issueTypeName": rule["issueTypeName"], "statusKey": "",
+        })
+        graph["nodes"].append({
+            "id": status_id, "kind": "status", "x": 420, "y": 36 + index * 140,
+            "issueTypeId": "", "statusKey": rule["statusKey"],
+        })
+        graph["links"].append({"from": request_id, "to": status_id})
+    return graph
+
+
+def flow_rules_from_graph(project_key, graph, names):
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    chosen = {}
+    for link in graph["links"]:
+        source = nodes.get(link["from"])
+        target = nodes.get(link["to"])
+        if not source or not target:
+            continue
+        type_id = source.get("issueTypeId") or ""
+        status = target.get("statusKey") or ""
+        if type_id and status:
+            chosen[type_id] = status
+    rules = []
+    for type_id, status in chosen.items():
+        rule_id = STATE["flow_seq"]
+        STATE["flow_seq"] += 1
+        rules.append({
+            "id": rule_id,
+            "issueTypeId": type_id,
+            "issueTypeName": names.get(type_id, type_id),
+            "statusKey": status,
+        })
+    return rules
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AssetTreePreview/1.1"
 
@@ -2442,7 +2528,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.95",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.96",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2520,6 +2606,31 @@ setTimeout(function () {
             layout = normalize_card(self.read_json() or {})
             STATE["cards"][match.group(1)] = layout
             return 200, layout
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flow-graph", path)
+        if match and method in ("GET", "PUT"):
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "GET":
+                stored = STATE["flow_graphs"].get(project_key)
+                if stored:
+                    return 200, flow_graph_named(stored)
+                return 200, flow_graph_from_rules(project_key)
+            body = self.read_json() or {}
+            graph = normalize_flow_graph(body)
+            names = {item["id"]: item["name"] for item in ISSUE_TYPES}
+            ensure_statuses(project_key, text)
+            known = {row["statusKey"] for row in STATE["statuses"].get(project_key, [])}
+            for node in graph["nodes"]:
+                if node["kind"] == "request" and node["issueTypeId"] and node["issueTypeId"] not in names:
+                    return 400, {"message": text["asset-tree.error.flow.type"]}
+                if node["kind"] == "status" and node["statusKey"]:
+                    node["statusKey"] = canonical(node["statusKey"])
+                    if node["statusKey"] not in known:
+                        return 400, {"message": text["asset-tree.error.flow.status"]}
+            STATE["flow_graphs"][project_key] = graph
+            STATE["flows"][project_key] = flow_rules_from_graph(project_key, graph, names)
+            return 200, flow_graph_named(graph)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-types", path)
         if match and method == "GET":
             if match.group(1) not in {item["key"] for item in PROJECTS}:

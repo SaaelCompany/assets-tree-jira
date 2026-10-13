@@ -37,6 +37,7 @@ import com.assetstree.jira.ao.CardTemplateEntity;
 import com.assetstree.jira.ao.AssetCounterEntity;
 import com.assetstree.jira.ao.AssetEntity;
 import com.assetstree.jira.ao.AssetFieldEntity;
+import com.assetstree.jira.ao.FlowGraphEntity;
 import com.assetstree.jira.ao.FlowRuleEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
@@ -56,6 +57,8 @@ import com.assetstree.jira.dto.BulkIssueDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
+import com.assetstree.jira.dto.FlowGraphDto;
+import com.assetstree.jira.dto.FlowNodeDto;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FileDto;
@@ -94,6 +97,7 @@ import com.assetstree.jira.model.WorkbookSheet;
 import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.FlowGraph;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.FlowRules;
 import com.assetstree.jira.model.FieldKinds;
@@ -1821,6 +1825,78 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public FlowGraphDto flowGraph(ApplicationUser user, String projectKey) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
+            @Override
+            public FlowGraphDto doInTransaction() {
+                FlowGraphEntity stored = findFlowGraph(project.getKey());
+                FlowGraphDto graph;
+                if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
+                    graph = FlowGraph.read(stored.getBody());
+                } else {
+                    graph = FlowGraph.fromRules(flowRules(project.getKey(), names));
+                }
+                nameFlowNodes(graph, names);
+                return graph;
+            }
+        });
+    }
+
+    @Override
+    public FlowGraphDto saveFlowGraph(ApplicationUser user, String projectKey, FlowGraphDto draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        final FlowGraphDto graph = FlowGraph.normalize(draft);
+        for (FlowNodeDto node : graph.getNodes()) {
+            if (FlowGraph.REQUEST.equals(node.getKind()) && node.getIssueTypeId() != null
+                    && !node.getIssueTypeId().isEmpty() && !names.containsKey(node.getIssueTypeId())) {
+                throw new AssetException(400, "asset-tree.error.flow.type");
+            }
+        }
+        return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
+            @Override
+            public FlowGraphDto doInTransaction() {
+                for (FlowNodeDto node : graph.getNodes()) {
+                    if (!FlowGraph.STATUS.equals(node.getKind()) || node.getStatusKey() == null || node.getStatusKey().isEmpty()) {
+                        continue;
+                    }
+                    try {
+                        node.setStatusKey(resolveStatus(project.getKey(), node.getStatusKey()));
+                    } catch (AssetException ex) {
+                        throw new AssetException(400, "asset-tree.error.flow.status");
+                    }
+                }
+                String body = FlowGraph.write(graph);
+                FlowGraphEntity stored = findFlowGraph(project.getKey());
+                if (stored == null) {
+                    ao().create(FlowGraphEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("BODY", body));
+                } else {
+                    stored.setBody(body);
+                    stored.save();
+                }
+                ao().deleteWithSQL(FlowRuleEntity.class, "PROJECT_KEY = ?", project.getKey());
+                for (FlowRuleDto pair : FlowGraph.pairs(graph)) {
+                    String typeName = names.get(pair.getIssueTypeId());
+                    if (typeName == null) {
+                        continue;
+                    }
+                    ao().create(FlowRuleEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ISSUE_TYPE_ID", pair.getIssueTypeId()),
+                            new DBParam("ISSUE_TYPE_NAME", typeName),
+                            new DBParam("STATUS_KEY", pair.getStatusKey()));
+                }
+                nameFlowNodes(graph, names);
+                return graph;
+            }
+        });
+    }
+
+    @Override
     public CardLayout cardLayout(ApplicationUser user, String projectKey) {
         Project project = requireReadableProject(user, projectKey);
         return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
@@ -2062,6 +2138,26 @@ public class AssetServiceImpl implements AssetService {
         dto.setIssueTypeName(rule.getIssueTypeName());
         dto.setStatusKey(rule.getStatusKey());
         return dto;
+    }
+
+    private FlowGraphEntity findFlowGraph(String projectKey) {
+        FlowGraphEntity[] found = ao().find(FlowGraphEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private void nameFlowNodes(FlowGraphDto graph, Map<String, String> names) {
+        if (graph == null || graph.getNodes() == null || names == null) {
+            return;
+        }
+        for (FlowNodeDto node : graph.getNodes()) {
+            if (node == null || !FlowGraph.REQUEST.equals(node.getKind())) {
+                continue;
+            }
+            String live = names.get(node.getIssueTypeId());
+            if (live != null) {
+                node.setIssueTypeName(live);
+            }
+        }
     }
 
     private void applyRequestFlow(ApplicationUser user, final int assetId, Issue issue) {

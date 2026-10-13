@@ -18,6 +18,7 @@ import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
+import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
@@ -642,6 +643,28 @@ public class AssetResource {
             public Response call() {
                 assetService.deleteFlowRule(user(), projectKey, ruleId);
                 return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/flow-graph")
+    public Response flowGraph(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.flowGraph(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/flow-graph")
+    public Response saveFlowGraph(@PathParam("projectKey") final String projectKey, final FlowGraphDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveFlowGraph(user(), projectKey, draft)).build();
             }
         });
     }
