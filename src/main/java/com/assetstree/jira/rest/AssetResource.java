@@ -6,6 +6,7 @@ import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.CommentDraft;
 import com.assetstree.jira.model.AssetException;
@@ -524,6 +525,28 @@ public class AssetResource {
                 PortalProjectDto dto = new PortalProjectDto();
                 dto.setProjectKey(projectKey);
                 return Response.ok(dto).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/card")
+    public Response cardLayout(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.cardLayout(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/card")
+    public Response saveCardLayout(@PathParam("projectKey") final String projectKey, final CardLayout draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveCardLayout(user(), projectKey, draft)).build();
             }
         });
     }

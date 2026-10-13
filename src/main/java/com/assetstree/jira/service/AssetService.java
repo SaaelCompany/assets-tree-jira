@@ -21,6 +21,7 @@ import com.assetstree.jira.dto.PickerNodeDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
@@ -120,6 +121,10 @@ public interface AssetService {
     PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
 
     void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
+
+    CardLayout cardLayout(ApplicationUser user, String projectKey);
+
+    CardLayout saveCardLayout(ApplicationUser user, String projectKey, CardLayout draft);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 

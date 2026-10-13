@@ -32,6 +32,7 @@ import com.assetstree.jira.PluginInfo;
 import com.assetstree.jira.ao.AssetActivityEntity;
 import com.assetstree.jira.ao.AssetAttributeEntity;
 import com.assetstree.jira.ao.AssetCommentEntity;
+import com.assetstree.jira.ao.CardTemplateEntity;
 import com.assetstree.jira.ao.AssetCounterEntity;
 import com.assetstree.jira.ao.AssetEntity;
 import com.assetstree.jira.ao.AssetFieldEntity;
@@ -75,6 +76,7 @@ import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CopyNames;
 import com.assetstree.jira.model.BulkDraft;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.AssetValidator;
@@ -299,6 +301,7 @@ public class AssetServiceImpl implements AssetService {
         meta.setCanEdit(editable);
         meta.setCanConfigure(configurable);
         meta.setCanGrant(grantable);
+        attachCards(projects);
         meta.setProjects(projects);
         return meta;
     }
@@ -1621,6 +1624,79 @@ public class AssetServiceImpl implements AssetService {
                 return null;
             }
         });
+    }
+
+    @Override
+    public CardLayout cardLayout(ApplicationUser user, String projectKey) {
+        Project project = requireReadableProject(user, projectKey);
+        return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
+            @Override
+            public CardLayout doInTransaction() {
+                return layoutOf(findCard(project.getKey()));
+            }
+        });
+    }
+
+    @Override
+    public CardLayout saveCardLayout(ApplicationUser user, String projectKey, final CardLayout draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final CardLayout layout = CardLayout.normalize(draft);
+        return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
+            @Override
+            public CardLayout doInTransaction() {
+                CardTemplateEntity row = findCard(project.getKey());
+                if (row == null) {
+                    row = ao().create(CardTemplateEntity.class, new DBParam("PROJECT_KEY", project.getKey()));
+                }
+                row.setCardSize(layout.getSize());
+                row.setQrPlace(layout.getQr());
+                row.setLines(CardLayout.join(layout.getLines()));
+                row.save();
+                return layout;
+            }
+        });
+    }
+
+    private void attachCards(List<ProjectDto> projects) {
+        Map<String, CardLayout> stored = new HashMap<String, CardLayout>();
+        try {
+            List<CardTemplateEntity> rows = ao().executeInTransaction(new TransactionCallback<List<CardTemplateEntity>>() {
+                @Override
+                public List<CardTemplateEntity> doInTransaction() {
+                    CardTemplateEntity[] found = ao().find(CardTemplateEntity.class);
+                    List<CardTemplateEntity> list = new ArrayList<CardTemplateEntity>();
+                    if (found != null) {
+                        Collections.addAll(list, found);
+                    }
+                    return list;
+                }
+            });
+            for (CardTemplateEntity row : rows) {
+                stored.put(row.getProjectKey(), layoutOf(row));
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Card layouts were not loaded", ex);
+        }
+        for (ProjectDto project : projects) {
+            CardLayout layout = stored.get(project.getKey());
+            project.setCard(layout == null ? CardLayout.defaults() : layout);
+        }
+    }
+
+    private CardTemplateEntity findCard(String projectKey) {
+        CardTemplateEntity[] found = ao().find(CardTemplateEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private CardLayout layoutOf(CardTemplateEntity row) {
+        if (row == null) {
+            return CardLayout.defaults();
+        }
+        CardLayout raw = new CardLayout();
+        raw.setSize(row.getCardSize());
+        raw.setQr(row.getQrPlace());
+        raw.setLines(CardLayout.split(row.getLines()));
+        return CardLayout.normalize(raw);
     }
 
     private List<PortalConditionDraft> cleanConditions(List<PortalConditionDraft> raw) {

@@ -197,7 +197,56 @@ STATE = {
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
+    "cards": {},
 }
+
+
+CARD_BLOCKS = {"name", "key", "type", "place", "status", "custodian", "project", "description", "scan"}
+CARD_SIZES = {"card", "wide", "label"}
+CARD_QRS = {"left", "right", "top", "none"}
+CARD_ATTR = re.compile(r"^attr:[a-z][a-z0-9-]{0,39}$")
+
+
+def default_card():
+    return {"size": "card", "qr": "left", "lines": ["name", "type", "place", "key", "scan"]}
+
+
+def normalize_card(raw):
+    layout = default_card()
+    if not isinstance(raw, dict):
+        return layout
+    size = str(raw.get("size") or "").strip().lower()
+    qr = str(raw.get("qr") or "").strip().lower()
+    if size in CARD_SIZES:
+        layout["size"] = size
+    if qr in CARD_QRS:
+        layout["qr"] = qr
+    if raw.get("lines") is not None:
+        lines = []
+        seen = set()
+        for line in raw.get("lines") or []:
+            trimmed = str(line or "").strip()
+            if not trimmed:
+                continue
+            lower = trimmed.lower()
+            token = lower if lower in CARD_BLOCKS else trimmed
+            if token in seen:
+                continue
+            if token not in CARD_BLOCKS and not CARD_ATTR.match(token):
+                continue
+            seen.add(token)
+            lines.append(token)
+            if len(lines) >= 12:
+                break
+        layout["lines"] = lines
+    return layout
+
+
+def card_for(key):
+    stored = STATE.get("cards", {}).get(key)
+    if not stored:
+        return default_card()
+    return normalize_card(stored)
 
 
 def project_rights():
@@ -2186,12 +2235,12 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.88",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.89",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
-                "projects": [dict(project_rights(), key=item["key"], name=item["name"]) for item in PROJECTS],
+                "projects": [dict(project_rights(), key=item["key"], name=item["name"], card=card_for(item["key"])) for item in PROJECTS],
             }
         if path == "/assets" and method == "GET":
             project_key = (query.get("projectKey") or [""])[0]
@@ -2255,6 +2304,15 @@ setTimeout(function () {
             if match.group(1) == "7":
                 return 404, {"message": text["asset-tree.error.project.notFound"]}
             return 200, {"projectKey": "TEST"}
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/card", path)
+        if match and method in ("GET", "PUT"):
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "GET":
+                return 200, card_for(match.group(1))
+            layout = normalize_card(self.read_json() or {})
+            STATE["cards"][match.group(1)] = layout
+            return 200, layout
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "DELETE":
             ensure_portal_demo()
