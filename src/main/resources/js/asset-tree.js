@@ -97,6 +97,7 @@
         flowReady: false,
         flowLoading: false,
         issueTypes: null,
+        issueStatuses: null,
         selectedId: null,
         dirty: false,
         expanded: {},
@@ -6639,6 +6640,7 @@
         state.flowReady = false;
         state.flowLoading = false;
         state.issueTypes = null;
+        state.issueStatuses = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -6680,6 +6682,7 @@
         state.flowReady = false;
         state.flowLoading = false;
         state.issueTypes = null;
+        state.issueStatuses = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -8833,6 +8836,8 @@
                 y: node.y || 0,
                 issueTypeId: node.issueTypeId || '',
                 issueTypeName: node.issueTypeName || '',
+                issueStatusId: node.issueStatusId || '',
+                issueStatusName: node.issueStatusName || '',
                 statusKey: node.statusKey || ''
             });
         });
@@ -8859,13 +8864,13 @@
     function renderFlowSettings(panel) {
         var block = el('div', 'asset-tree-settings-block');
         block.appendChild(el('p', 'asset-tree-hint', t('flowSectionHint')));
-        if (!state.flowReady || state.issueTypes === null) {
+        if (!state.flowReady || state.issueTypes === null || state.issueStatuses === null) {
             block.appendChild(el('p', 'asset-tree-hint', t('loading')));
             panel.appendChild(block);
             if (state.flowLoading) return;
             state.flowLoading = true;
             var projectKey = state.projectKey;
-            var pending = 2;
+            var pending = 3;
             function finish() {
                 pending--;
                 if (pending > 0) return;
@@ -8890,19 +8895,27 @@
                 state.issueTypes = status === 200 ? (payload || []) : [];
                 finish();
             });
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/issue-statuses', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                state.issueStatuses = status === 200 ? (payload || []) : [];
+                finish();
+            });
             return;
         }
         var draft = state.flowDraft || cloneFlow(state.flowGraph);
         state.flowDraft = draft;
         var tools = el('div', 'asset-tree-flow-tools');
-        tools.appendChild(button(t('flowAddRequest'), 'asset-tree-btn', function () {
-            addFlowNode(draft, 'request');
-            paintFlow(canvas, draft, error);
-        }));
-        tools.appendChild(button(t('flowAddStatus'), 'asset-tree-btn', function () {
-            addFlowNode(draft, 'status');
-            paintFlow(canvas, draft, error);
-        }));
+        function addTool(label, kind) {
+            var tool = button(label, 'asset-tree-btn asset-tree-flow-add', function () {
+                addFlowNode(draft, kind);
+                paintFlow(canvas, draft, error);
+            });
+            tool.insertBefore(el('span', 'asset-tree-flow-dot is-' + kind), tool.firstChild);
+            tools.appendChild(tool);
+        }
+        addTool(t('flowAddRequest'), 'request');
+        addTool(t('flowAddIssue'), 'issue');
+        addTool(t('flowAddStatus'), 'status');
         tools.appendChild(el('span', 'asset-tree-hint asset-tree-flow-connect', t('flowConnect')));
         block.appendChild(tools);
         var error = el('div', 'asset-tree-form-error');
@@ -8912,6 +8925,7 @@
         board.appendChild(canvas);
         block.appendChild(error);
         block.appendChild(board);
+        panel.appendChild(block);
         paintFlow(canvas, draft, error);
         var actions = el('div', 'asset-tree-inline-actions');
         actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
@@ -8940,24 +8954,36 @@
         (draft.nodes || []).forEach(function (node) {
             if (node.kind === kind) count++;
         });
+        var x = 40;
+        if (kind === 'issue') x = 340;
+        if (kind === 'status') x = 640;
         draft.nodes.push({
             id: flowNodeId(draft),
             kind: kind,
-            x: kind === 'status' ? 420 : 48,
-            y: 36 + count * 140,
+            x: x,
+            y: 48 + count * 168,
             issueTypeId: '',
             issueTypeName: '',
+            issueStatusId: '',
+            issueStatusName: '',
             statusKey: ''
         });
     }
 
+    function flowAccepts(source, target) {
+        if (!source || !target || source.id === target.id) return false;
+        if (source.kind === 'request') return target.kind === 'issue' || target.kind === 'status';
+        if (source.kind === 'issue') return target.kind === 'status';
+        return false;
+    }
+
     function paintFlow(canvas, draft, error) {
         while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
-        var width = 760;
-        var height = 520;
+        var width = 980;
+        var height = 560;
         (draft.nodes || []).forEach(function (node) {
-            width = Math.max(width, (node.x || 0) + 300);
-            height = Math.max(height, (node.y || 0) + 160);
+            width = Math.max(width, (node.x || 0) + 320);
+            height = Math.max(height, (node.y || 0) + 180);
         });
         canvas.style.width = width + 'px';
         canvas.style.height = height + 'px';
@@ -8975,11 +9001,21 @@
             return found;
         }
         function portPoint(id, side) {
+            var node = nodeById(id);
             var card = canvas.querySelector('[data-flow-id="' + id + '"]');
-            if (!card) return { x: 0, y: 0 };
+            var x = node ? (node.x || 0) : 0;
+            var y = node ? (node.y || 0) : 0;
+            var width = 256;
+            var height = 120;
+            if (card && card.offsetWidth) {
+                x = card.offsetLeft;
+                y = card.offsetTop;
+                width = card.offsetWidth;
+                height = card.offsetHeight;
+            }
             return {
-                x: card.offsetLeft + (side === 'out' ? card.offsetWidth : 0),
-                y: card.offsetTop + Math.round(card.offsetHeight / 2)
+                x: x + (side === 'out' ? width : 0),
+                y: y + Math.round(height / 2)
             };
         }
         function curve(from, to) {
@@ -9014,8 +9050,9 @@
                     paintFlow(canvas, draft, error);
                 });
                 cut.style.left = mark.x + 'px';
-                cut.style.top = mark.y + 'px';
+                cut.style.top = (mark.y - 16) + 'px';
                 cut.title = t('flowLinkRemove');
+                cut.setAttribute('aria-label', t('flowLinkRemove'));
                 canvas.appendChild(cut);
             });
         }
@@ -9024,23 +9061,31 @@
             card.setAttribute('data-flow-id', node.id);
             card.style.left = (node.x || 0) + 'px';
             card.style.top = (node.y || 0) + 'px';
+            var title = t('flowNodeRequest');
+            if (node.kind === 'issue') title = t('flowNodeIssue');
+            if (node.kind === 'status') title = t('flowNodeStatus');
             var head = el('div', 'asset-tree-flow-head');
-            head.appendChild(el('strong', null, node.kind === 'status' ? t('flowNodeStatus') : t('flowNodeRequest')));
-            head.appendChild(button(t('flowRemoveNode'), 'asset-tree-btn asset-tree-flow-remove', function () {
+            head.appendChild(el('strong', null, title));
+            var remove = button('×', 'asset-tree-flow-remove', function () {
                 draft.nodes = (draft.nodes || []).filter(function (item) { return item.id !== node.id; });
                 draft.links = (draft.links || []).filter(function (link) {
                     return link.from !== node.id && link.to !== node.id;
                 });
                 paintFlow(canvas, draft, error);
-            }));
+            });
+            remove.title = t('flowRemoveNode');
+            remove.setAttribute('aria-label', t('flowRemoveNode'));
+            head.appendChild(remove);
             card.appendChild(head);
             var body = el('div', 'asset-tree-flow-body');
             var select = el('select');
             var empty = el('option', null, '—');
             empty.value = '';
             select.appendChild(empty);
+            var labelText = t('flowIssueType');
             if (node.kind === 'status') {
-                select.setAttribute('aria-label', t('flowStatus'));
+                labelText = t('flowNodeStatus');
+                select.setAttribute('aria-label', labelText);
                 statusChoices().forEach(function (item) {
                     var option = el('option', null, item.label);
                     option.value = item.value;
@@ -9049,8 +9094,29 @@
                 });
                 select.value = node.statusKey || '';
                 select.addEventListener('change', function () { node.statusKey = select.value; });
+            } else if (node.kind === 'issue') {
+                labelText = t('flowIssueStatus');
+                select.setAttribute('aria-label', labelText);
+                var knownStatus = false;
+                (state.issueStatuses || []).forEach(function (item) {
+                    var option = el('option', null, item.name || item.id);
+                    option.value = item.id;
+                    if (item.id === node.issueStatusId) {
+                        option.selected = true;
+                        knownStatus = true;
+                    }
+                    select.appendChild(option);
+                });
+                if (node.issueStatusId && !knownStatus) {
+                    var missingStatus = el('option', null, node.issueStatusName || node.issueStatusId);
+                    missingStatus.value = node.issueStatusId;
+                    missingStatus.selected = true;
+                    select.appendChild(missingStatus);
+                }
+                select.value = node.issueStatusId || '';
+                select.addEventListener('change', function () { node.issueStatusId = select.value; });
             } else {
-                select.setAttribute('aria-label', t('flowIssueType'));
+                select.setAttribute('aria-label', labelText);
                 var known = false;
                 (state.issueTypes || []).forEach(function (item) {
                     var option = el('option', null, item.name || item.id);
@@ -9070,48 +9136,56 @@
                 select.value = node.issueTypeId || '';
                 select.addEventListener('change', function () { node.issueTypeId = select.value; });
             }
+            body.appendChild(el('label', 'asset-tree-flow-label', labelText));
             body.appendChild(select);
             card.appendChild(body);
-            var port = el('button', 'asset-tree-flow-port ' + (node.kind === 'status' ? 'is-in' : 'is-out'));
-            port.type = 'button';
-            port.title = t('flowConnect');
-            port.addEventListener('pointerdown', function (event) {
-                if (node.kind !== 'request') return;
-                event.preventDefault();
-                event.stopPropagation();
-                var origin = portPoint(node.id, 'out');
-                function move(ev) {
-                    var rect = canvas.getBoundingClientRect();
-                    drawWires({
-                        from: origin,
-                        to: {
-                            x: ev.clientX - rect.left + canvas.parentNode.scrollLeft,
-                            y: ev.clientY - rect.top + canvas.parentNode.scrollTop
+            function attachPort(side) {
+                var port = el('button', 'asset-tree-flow-port is-' + side);
+                port.type = 'button';
+                port.title = t('flowConnect');
+                port.addEventListener('pointerdown', function (event) {
+                    if (side !== 'out') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    var origin = portPoint(node.id, 'out');
+                    function move(ev) {
+                        var rect = canvas.getBoundingClientRect();
+                        drawWires({
+                            from: origin,
+                            to: {
+                                x: ev.clientX - rect.left + canvas.parentNode.scrollLeft,
+                                y: ev.clientY - rect.top + canvas.parentNode.scrollTop
+                            }
+                        });
+                    }
+                    function up(ev) {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        var hit = document.elementFromPoint(ev.clientX, ev.clientY);
+                        var input = null;
+                        while (hit && hit !== canvas) {
+                            if (hit.className && String(hit.className).indexOf('is-in') >= 0) input = hit;
+                            hit = hit.parentNode;
                         }
-                    });
-                }
-                function up(ev) {
-                    window.removeEventListener('pointermove', move);
-                    window.removeEventListener('pointerup', up);
-                    var hit = document.elementFromPoint(ev.clientX, ev.clientY);
-                    var input = null;
-                    while (hit && hit !== canvas) {
-                        if (hit.className && String(hit.className).indexOf('is-in') >= 0) input = hit;
-                        hit = hit.parentNode;
+                        var target = input ? input.parentNode : null;
+                        var targetId = target ? target.getAttribute('data-flow-id') : '';
+                        var targetNode = nodeById(targetId);
+                        if (flowAccepts(node, targetNode)) {
+                            var exists = false;
+                            (draft.links || []).forEach(function (link) {
+                                if (link.from === node.id && link.to === targetNode.id) exists = true;
+                            });
+                            if (!exists) draft.links.push({ from: node.id, to: targetNode.id });
+                        }
+                        paintFlow(canvas, draft, error);
                     }
-                    var target = input ? input.parentNode : null;
-                    var targetId = target ? target.getAttribute('data-flow-id') : '';
-                    var targetNode = nodeById(targetId);
-                    if (targetNode && targetNode.kind === 'status' && targetNode.id !== node.id) {
-                        draft.links = (draft.links || []).filter(function (link) { return link.from !== node.id; });
-                        draft.links.push({ from: node.id, to: targetNode.id });
-                    }
-                    paintFlow(canvas, draft, error);
-                }
-                window.addEventListener('pointermove', move);
-                window.addEventListener('pointerup', up);
-            });
-            card.appendChild(port);
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                });
+                card.appendChild(port);
+            }
+            if (node.kind === 'issue' || node.kind === 'status') attachPort('in');
+            if (node.kind === 'request' || node.kind === 'issue') attachPort('out');
             head.addEventListener('pointerdown', function (event) {
                 if (event.button !== 0 || (event.target && event.target.tagName === 'BUTTON')) return;
                 event.preventDefault();
@@ -9124,11 +9198,11 @@
                     node.y = Math.max(0, Math.min(2400, originY + ev.clientY - startY));
                     card.style.left = node.x + 'px';
                     card.style.top = node.y + 'px';
-                    var extentW = 760;
-                    var extentH = 520;
+                    var extentW = 980;
+                    var extentH = 560;
                     (draft.nodes || []).forEach(function (item) {
-                        extentW = Math.max(extentW, (item.x || 0) + 300);
-                        extentH = Math.max(extentH, (item.y || 0) + 160);
+                        extentW = Math.max(extentW, (item.x || 0) + 320);
+                        extentH = Math.max(extentH, (item.y || 0) + 180);
                     });
                     canvas.style.width = extentW + 'px';
                     canvas.style.height = extentH + 'px';

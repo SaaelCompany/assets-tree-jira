@@ -11,6 +11,8 @@ public class FlowNodeDto {
     private int y;
     private String issueTypeId;
     private String issueTypeName;
+    private String issueStatusId;
+    private String issueStatusName;
     private String statusKey;
 
     public String getId() {
@@ -59,6 +61,22 @@ public class FlowNodeDto {
 
     public void setIssueTypeName(String issueTypeName) {
         this.issueTypeName = issueTypeName;
+    }
+
+    public String getIssueStatusId() {
+        return issueStatusId;
+    }
+
+    public void setIssueStatusId(String issueStatusId) {
+        this.issueStatusId = issueStatusId;
+    }
+
+    public String getIssueStatusName() {
+        return issueStatusName;
+    }
+
+    public void setIssueStatusName(String issueStatusName) {
+        this.issueStatusName = issueStatusName;
     }
 
     public String getStatusKey() {

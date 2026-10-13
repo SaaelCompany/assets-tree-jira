@@ -53,15 +53,66 @@ public class FlowGraphTest {
     }
 
     @Test
-    public void oneRequestNodeKeepsOnlyItsLatestLine() {
+    public void oneRequestNodeKeepsEveryOutgoingLineAndTheLaterStatusWins() {
         FlowGraphDto graph = graph(
                 request("req1", "10001", 0, 0),
                 status("staa", "repair", 400, 0),
                 status("stab", "in_use", 400, 160),
                 link("req1", "staa"),
+                link("req1", "stab"),
                 link("req1", "stab"));
-        assertEquals(1, FlowGraph.normalize(graph).getLinks().size());
-        assertEquals("stab", FlowGraph.normalize(graph).getLinks().get(0).getTo());
+        assertEquals(2, FlowGraph.normalize(graph).getLinks().size());
+        assertEquals("in_use", FlowRules.statusToApply(FlowGraph.pairs(graph), "10001", true, "in_stock", KNOWN));
+        assertEquals("in_use", FlowGraph.equipmentStatus(graph, "10001", null, false));
+    }
+
+    @Test
+    public void aStatusChangeDoesNotFireWhenEquipmentIsAdded() {
+        FlowGraphDto graph = graph(
+                request("req1", "10001", 0, 0),
+                issue("iss1", "5", 280, 0),
+                status("sta1", "repair", 560, 0),
+                status("sta2", "in_use", 560, 160),
+                link("req1", "iss1"),
+                link("iss1", "sta1"),
+                link("req1", "sta2"));
+        assertEquals("in_use", FlowGraph.equipmentStatus(graph, "10001", "5", false));
+        assertEquals("repair", FlowGraph.equipmentStatus(graph, "10001", "5", true));
+        assertNull(FlowGraph.equipmentStatus(graph, "10001", "3", true));
+        assertNull(FlowGraph.equipmentStatus(graph, "10002", "5", true));
+        assertTrue(FlowGraph.pairs(chainOnly()).isEmpty());
+        assertNull(FlowGraph.equipmentStatus(chainOnly(), "10001", "5", false));
+        assertEquals("repair", FlowGraph.equipmentStatus(chainOnly(), "10001", "5", true));
+    }
+
+    @Test
+    public void aRequestStatusWithoutAnIncomingRequestAppliesToEveryType() {
+        FlowGraphDto graph = graph(
+                issue("iss1", "5", 280, 0),
+                status("sta1", "repair", 560, 0),
+                link("iss1", "sta1"));
+        assertEquals("repair", FlowGraph.equipmentStatus(graph, "10002", "5", true));
+        assertNull(FlowGraph.equipmentStatus(graph, "10002", "5", false));
+        assertTrue(FlowGraph.normalize(graph(
+                issue("iss1", "5", 0, 0),
+                issue("iss2", "3", 200, 0),
+                status("sta1", "repair", 400, 0),
+                link("iss1", "iss2"),
+                link("sta1", "iss1"))).getLinks().isEmpty());
+    }
+
+    @Test
+    public void aRequestStatusRoundTrips() {
+        FlowGraphDto graph = graph(
+                request("req1", "10001", 40, 48),
+                issue("iss1", "5", 340, 48),
+                status("sta1", "repair", 640, 48),
+                link("req1", "iss1"),
+                link("iss1", "sta1"));
+        FlowGraphDto again = FlowGraph.read(FlowGraph.write(graph));
+        assertEquals("5", again.getNodes().get(1).getIssueStatusId());
+        assertEquals(2, again.getLinks().size());
+        assertEquals("repair", FlowGraph.equipmentStatus(again, "10001", "5", true));
     }
 
     @Test
@@ -99,6 +150,25 @@ public class FlowGraphTest {
         node.setId(id);
         node.setKind(FlowGraph.REQUEST);
         node.setIssueTypeId(typeId);
+        node.setX(x);
+        node.setY(y);
+        return node;
+    }
+
+    private static FlowGraphDto chainOnly() {
+        return graph(
+                request("req1", "10001", 0, 0),
+                issue("iss1", "5", 280, 0),
+                status("sta1", "repair", 560, 0),
+                link("req1", "iss1"),
+                link("iss1", "sta1"));
+    }
+
+    private static FlowNodeDto issue(String id, String issueStatusId, int x, int y) {
+        FlowNodeDto node = new FlowNodeDto();
+        node.setId(id);
+        node.setKind(FlowGraph.ISSUE);
+        node.setIssueStatusId(issueStatusId);
         node.setX(x);
         node.setY(y);
         return node;

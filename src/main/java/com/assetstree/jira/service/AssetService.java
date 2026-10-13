@@ -134,6 +134,8 @@ public interface AssetService {
 
     List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey);
 
+    List<IssueTypeDto> listIssueStatuses(ApplicationUser user, String projectKey);
+
     List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey);
 
     FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, FlowRuleDraft draft);
@@ -153,6 +155,9 @@ public interface AssetService {
     List<AssetDto> assetsForUser(ApplicationUser user, String userKey);
 
     void syncRequestAsset(ApplicationUser user, Issue issue, String previousAssetId, String nextAssetId);
+
+    /** Moves equipment already linked to this request when the request itself changes status. */
+    void syncRequestStatus(ApplicationUser user, Issue issue);
 
     String describeAsset(String assetId);
 

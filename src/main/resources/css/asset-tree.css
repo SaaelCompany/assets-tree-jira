@@ -4686,23 +4686,55 @@ a.asset-tree-url {
 #asset-tree-app .asset-tree-flow-tools {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 12px;
+}
+
+#asset-tree-app button.asset-tree-flow-add {
+    gap: 8px;
+    border-radius: 999px !important;
+    padding: 0 14px 0 10px !important;
+    background: #fff !important;
+    box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
+}
+
+#asset-tree-app button.asset-tree-flow-add:hover {
+    background: #f4f5f7 !important;
+    border-color: #b3bac5 !important;
+}
+
+#asset-tree-app .asset-tree-flow-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0052cc;
+    flex: 0 0 auto;
+}
+
+#asset-tree-app .asset-tree-flow-dot.is-issue {
+    background: #6554c0;
+}
+
+#asset-tree-app .asset-tree-flow-dot.is-status {
+    background: #ffab00;
 }
 
 #asset-tree-app .asset-tree-flow-connect {
     margin: 0;
     flex: 1;
+    min-width: 180px;
 }
 
 #asset-tree-app .asset-tree-flow-board {
-    height: 560px;
+    height: 620px;
     overflow: auto;
     border: 1px solid #dfe1e6;
-    border-radius: 3px;
-    background-color: #fafbfc;
-    background-image: radial-gradient(#dfe1e6 1px, transparent 1px);
-    background-size: 20px 20px;
+    border-radius: 12px;
+    background-color: #f4f5f7;
+    background-image: radial-gradient(rgba(9, 30, 66, 0.18) 1.15px, transparent 1.2px);
+    background-size: 22px 22px;
+    box-shadow: inset 0 1px 3px rgba(9, 30, 66, 0.06);
 }
 
 #asset-tree-app .asset-tree-flow-canvas {
@@ -4712,9 +4744,15 @@ a.asset-tree-url {
 }
 
 #asset-tree-app .asset-tree-flow-empty {
-    margin: 0;
-    padding: 16px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 320px;
+    margin: 0 0 0 -160px;
+    margin-top: -24px;
+    text-align: center;
     color: #6b778c;
+    pointer-events: none;
 }
 
 #asset-tree-app .asset-tree-flow-wires {
@@ -4731,92 +4769,148 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-flow-wires path {
     fill: none;
-    stroke: #4c9aff;
-    stroke-width: 2;
+    stroke: #5b8def;
+    stroke-width: 2.5;
+    stroke-linecap: round;
 }
 
 #asset-tree-app .asset-tree-flow-wires path.is-draft {
-    stroke-dasharray: 5 4;
+    stroke-dasharray: 6 5;
 }
 
 #asset-tree-app .asset-tree-flow-node {
     position: absolute;
-    width: 240px;
+    width: 256px;
     background: #fff;
-    border: 1px solid #dfe1e6;
-    border-radius: 3px;
-    box-shadow: 0 1px 1px rgba(9, 30, 66, 0.13);
+    border: 1px solid rgba(9, 30, 66, 0.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 20px rgba(9, 30, 66, 0.08), 0 1px 2px rgba(9, 30, 66, 0.06);
     z-index: 1;
-}
-
-#asset-tree-app .asset-tree-flow-node.is-request {
-    border-top: 3px solid #0052cc;
-}
-
-#asset-tree-app .asset-tree-flow-node.is-status {
-    border-top: 3px solid #ffab00;
 }
 
 #asset-tree-app .asset-tree-flow-head {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px 4px;
+    padding: 10px 12px;
+    color: #fff;
+    background: #0052cc;
+    border-radius: 11px 11px 0 0;
     cursor: grab;
     user-select: none;
 }
 
-#asset-tree-app .asset-tree-flow-head strong {
-    font-size: 13px;
+#asset-tree-app .asset-tree-flow-node.is-issue .asset-tree-flow-head {
+    background: #6554c0;
 }
 
-#asset-tree-app .asset-tree-flow-remove {
-    margin-left: auto;
-    min-height: 24px;
-    padding: 0 8px;
-    font-size: 12px;
+#asset-tree-app .asset-tree-flow-node.is-status .asset-tree-flow-head {
+    background: #ffab00;
+    color: #172b4d;
+}
+
+#asset-tree-app .asset-tree-flow-head strong {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+#asset-tree-app button.asset-tree-flow-remove {
+    width: 22px !important;
+    min-width: 22px !important;
+    height: 22px !important;
+    min-height: 22px !important;
+    margin: 0 0 0 auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 6px;
+    background: transparent !important;
+    color: inherit !important;
+    font-size: 16px;
+    line-height: 20px;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+#asset-tree-app button.asset-tree-flow-remove:hover {
+    background: rgba(255, 255, 255, 0.22) !important;
+}
+
+#asset-tree-app .asset-tree-flow-node.is-status button.asset-tree-flow-remove:hover {
+    background: rgba(9, 30, 66, 0.12) !important;
 }
 
 #asset-tree-app .asset-tree-flow-body {
-    padding: 0 10px 12px;
+    padding: 10px 12px 14px;
+}
+
+#asset-tree-app .asset-tree-flow-label {
+    display: block;
+    margin: 0 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b778c;
 }
 
 #asset-tree-app .asset-tree-flow-body select {
     width: 100%;
+    height: 32px;
+    border-radius: 6px;
 }
 
-#asset-tree-app .asset-tree-flow-port {
+#asset-tree-app button.asset-tree-flow-port {
     position: absolute;
     top: 50%;
-    width: 14px;
-    height: 14px;
-    margin-top: -7px;
-    padding: 0;
+    width: 16px !important;
+    height: 16px !important;
+    min-width: 16px !important;
+    min-height: 16px !important;
+    margin: -8px 0 0 !important;
+    padding: 0 !important;
     border-radius: 50%;
-    background: #fff;
-    border: 2px solid #0052cc;
+    background: #fff !important;
+    border: 2px solid #0052cc !important;
+    box-shadow: 0 1px 3px rgba(9, 30, 66, 0.28);
     cursor: crosshair;
     z-index: 2;
 }
 
-#asset-tree-app .asset-tree-flow-port.is-out {
+#asset-tree-app button.asset-tree-flow-port.is-out {
     right: -8px;
 }
 
-#asset-tree-app .asset-tree-flow-port.is-in {
+#asset-tree-app button.asset-tree-flow-port.is-in {
     left: -8px;
-    border-color: #ffab00;
     cursor: default;
 }
 
-#asset-tree-app .asset-tree-flow-cut {
+#asset-tree-app .asset-tree-flow-node.is-issue button.asset-tree-flow-port {
+    border-color: #6554c0 !important;
+}
+
+#asset-tree-app .asset-tree-flow-node.is-status button.asset-tree-flow-port.is-in {
+    border-color: #ff991f !important;
+}
+
+#asset-tree-app button.asset-tree-flow-cut {
     position: absolute;
     z-index: 3;
-    width: 22px;
-    min-height: 22px;
-    margin: -11px 0 0 -11px;
-    padding: 0;
-    border-radius: 50%;
-    line-height: 20px;
+    width: 22px !important;
+    height: 22px !important;
+    min-width: 22px !important;
+    min-height: 22px !important;
+    margin: -11px 0 0 -11px !important;
+    padding: 0 !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 11px;
+    background: #fff !important;
+    color: #6b778c !important;
+    box-shadow: 0 2px 6px rgba(9, 30, 66, 0.16);
+    line-height: 18px;
     font-size: 14px;
+}
+
+#asset-tree-app button.asset-tree-flow-cut:hover {
+    color: #de350b !important;
+    border-color: #ffbdad !important;
 }

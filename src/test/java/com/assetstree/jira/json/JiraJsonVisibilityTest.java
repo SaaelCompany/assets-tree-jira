@@ -123,12 +123,14 @@ public class JiraJsonVisibilityTest {
         assertEquals("repair", flow.getStatusKey());
 
         FlowGraphDto graph = mapper.readValue(
-                "{\"nodes\":[{\"id\":\"req1\",\"kind\":\"request\",\"x\":48,\"y\":36,\"issueTypeId\":\"10001\"}],"
-                        + "\"links\":[{\"from\":\"req1\",\"to\":\"sta1\"}]}",
+                "{\"nodes\":[{\"id\":\"req1\",\"kind\":\"request\",\"x\":48,\"y\":36,\"issueTypeId\":\"10001\"},"
+                        + "{\"id\":\"iss1\",\"kind\":\"issue\",\"x\":340,\"y\":36,\"issueStatusId\":\"5\"}],"
+                        + "\"links\":[{\"from\":\"req1\",\"to\":\"iss1\"}]}",
                 FlowGraphDto.class);
         assertEquals("req1", graph.getNodes().get(0).getId());
         assertEquals(48, graph.getNodes().get(0).getX());
-        assertEquals("sta1", graph.getLinks().get(0).getTo());
+        assertEquals("5", graph.getNodes().get(1).getIssueStatusId());
+        assertEquals("iss1", graph.getLinks().get(0).getTo());
 
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",

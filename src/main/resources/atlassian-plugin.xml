@@ -117,6 +117,10 @@
         <resource type="download" name="asset-field.js" location="js/asset-field.js"/>
     </web-resource>
 
+    <listener key="asset-tree-flow-listener" name="Asset Tree Flow Listener" class="com.assetstree.jira.event.AssetFlowListener">
+        <description>Moves linked equipment when a request changes status.</description>
+    </listener>
+
     <servlet-filter name="Asset Tree Portal Field" key="asset-tree-portal-filter" class="com.assetstree.jira.servlet.PortalPageFilter" location="before-decoration" weight="50">
         <description>Adds the asset dropdown to the customer portal create form.</description>
         <url-pattern>/servicedesk/customer/*</url-pattern>

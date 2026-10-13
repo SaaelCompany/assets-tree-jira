@@ -8,10 +8,14 @@ import com.atlassian.crowd.embedded.api.UserWithAttributes;
 import com.atlassian.jira.bc.user.search.UserSearchParams;
 import com.atlassian.jira.bc.user.search.UserSearchService;
 import com.atlassian.jira.component.ComponentAccessor;
+import com.atlassian.jira.config.ConstantsManager;
 import com.atlassian.jira.config.properties.APKeys;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
 import com.atlassian.jira.issue.issuetype.IssueType;
+import com.atlassian.jira.issue.status.Status;
+import com.atlassian.jira.workflow.JiraWorkflow;
+import com.atlassian.jira.workflow.WorkflowManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
 import com.atlassian.jira.permission.ProjectPermissions;
 import com.atlassian.jira.project.Project;
@@ -1751,6 +1755,11 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public List<IssueTypeDto> listIssueStatuses(ApplicationUser user, String projectKey) {
+        return issueStatusesOf(issueStatusNames(requireConfigurableProject(user, projectKey)));
+    }
+
+    @Override
     public List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey) {
         final Project project = requireConfigurableProject(user, projectKey);
         final Map<String, String> names = issueTypeNames(project);
@@ -1828,6 +1837,7 @@ public class AssetServiceImpl implements AssetService {
     public FlowGraphDto flowGraph(ApplicationUser user, String projectKey) {
         final Project project = requireConfigurableProject(user, projectKey);
         final Map<String, String> names = issueTypeNames(project);
+        final Map<String, String> issueStatuses = issueStatusNames(project);
         return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
             @Override
             public FlowGraphDto doInTransaction() {
@@ -1838,7 +1848,7 @@ public class AssetServiceImpl implements AssetService {
                 } else {
                     graph = FlowGraph.fromRules(flowRules(project.getKey(), names));
                 }
-                nameFlowNodes(graph, names);
+                nameFlowNodes(graph, names, issueStatuses);
                 return graph;
             }
         });
@@ -1848,11 +1858,16 @@ public class AssetServiceImpl implements AssetService {
     public FlowGraphDto saveFlowGraph(ApplicationUser user, String projectKey, FlowGraphDto draft) {
         final Project project = requireConfigurableProject(user, projectKey);
         final Map<String, String> names = issueTypeNames(project);
+        final Map<String, String> issueStatuses = issueStatusNames(project);
         final FlowGraphDto graph = FlowGraph.normalize(draft);
         for (FlowNodeDto node : graph.getNodes()) {
             if (FlowGraph.REQUEST.equals(node.getKind()) && node.getIssueTypeId() != null
                     && !node.getIssueTypeId().isEmpty() && !names.containsKey(node.getIssueTypeId())) {
                 throw new AssetException(400, "asset-tree.error.flow.type");
+            }
+            if (FlowGraph.ISSUE.equals(node.getKind()) && node.getIssueStatusId() != null
+                    && !node.getIssueStatusId().isEmpty() && !issueStatuses.containsKey(node.getIssueStatusId())) {
+                throw new AssetException(400, "asset-tree.error.flow.issue");
             }
         }
         return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
@@ -1890,7 +1905,7 @@ public class AssetServiceImpl implements AssetService {
                             new DBParam("ISSUE_TYPE_NAME", typeName),
                             new DBParam("STATUS_KEY", pair.getStatusKey()));
                 }
-                nameFlowNodes(graph, names);
+                nameFlowNodes(graph, names, issueStatuses);
                 return graph;
             }
         });
@@ -2145,19 +2160,94 @@ public class AssetServiceImpl implements AssetService {
         return found == null || found.length == 0 ? null : found[0];
     }
 
-    private void nameFlowNodes(FlowGraphDto graph, Map<String, String> names) {
-        if (graph == null || graph.getNodes() == null || names == null) {
+    private void nameFlowNodes(FlowGraphDto graph, Map<String, String> names, Map<String, String> issueStatuses) {
+        if (graph == null || graph.getNodes() == null) {
             return;
         }
         for (FlowNodeDto node : graph.getNodes()) {
-            if (node == null || !FlowGraph.REQUEST.equals(node.getKind())) {
+            if (node == null) {
                 continue;
             }
-            String live = names.get(node.getIssueTypeId());
-            if (live != null) {
-                node.setIssueTypeName(live);
+            if (FlowGraph.REQUEST.equals(node.getKind()) && names != null) {
+                String live = names.get(node.getIssueTypeId());
+                if (live != null) {
+                    node.setIssueTypeName(live);
+                }
+            }
+            if (FlowGraph.ISSUE.equals(node.getKind()) && issueStatuses != null) {
+                String live = issueStatuses.get(node.getIssueStatusId());
+                if (live != null) {
+                    node.setIssueStatusName(live);
+                }
             }
         }
+    }
+
+    private List<IssueTypeDto> issueStatusesOf(Map<String, String> names) {
+        List<IssueTypeDto> result = new ArrayList<IssueTypeDto>();
+        if (names == null) {
+            return result;
+        }
+        for (Map.Entry<String, String> entry : names.entrySet()) {
+            IssueTypeDto dto = new IssueTypeDto();
+            dto.setId(entry.getKey());
+            dto.setName(entry.getValue());
+            result.add(dto);
+        }
+        Collections.sort(result, new Comparator<IssueTypeDto>() {
+            @Override
+            public int compare(IssueTypeDto left, IssueTypeDto right) {
+                String leftName = left.getName() == null ? "" : left.getName();
+                String rightName = right.getName() == null ? "" : right.getName();
+                return leftName.compareToIgnoreCase(rightName);
+            }
+        });
+        return result;
+    }
+
+    private Map<String, String> issueStatusNames(Project project) {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        try {
+            WorkflowManager workflows = ComponentAccessor.getWorkflowManager();
+            if (workflows != null && project != null && project.getIssueTypes() != null) {
+                for (IssueType type : project.getIssueTypes()) {
+                    if (type == null || type.isSubTask() || type.getId() == null || type.getId().trim().isEmpty()) {
+                        continue;
+                    }
+                    JiraWorkflow workflow = workflows.getWorkflow(project.getId(), type.getId());
+                    if (workflow == null || workflow.getLinkedStatusObjects() == null) {
+                        continue;
+                    }
+                    for (Status status : workflow.getLinkedStatusObjects()) {
+                        rememberStatus(names, status);
+                    }
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Workflow statuses were not loaded for {}", project == null ? "" : project.getKey(), ex);
+        }
+        if (!names.isEmpty()) {
+            return names;
+        }
+        try {
+            ConstantsManager constants = ComponentAccessor.getConstantsManager();
+            if (constants != null && constants.getStatuses() != null) {
+                for (Status status : constants.getStatuses()) {
+                    rememberStatus(names, status);
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Issue statuses were not loaded", ex);
+        }
+        return names;
+    }
+
+    private void rememberStatus(Map<String, String> names, Status status) {
+        if (status == null || status.getId() == null || status.getId().trim().isEmpty()) {
+            return;
+        }
+        String name = status.getName() == null || status.getName().trim().isEmpty() ? status.getId().trim() : status.getName().trim();
+        names.put(status.getId().trim(), name);
     }
 
     private void applyRequestFlow(ApplicationUser user, final int assetId, Issue issue) {
@@ -2177,44 +2267,73 @@ public class AssetServiceImpl implements AssetService {
                 if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
                     return null;
                 }
-                ensureStatuses(projectKey);
-                Set<String> known = new HashSet<String>();
-                ProjectStatusEntity[] statuses = projectStatuses(projectKey);
-                if (statuses != null) {
-                    for (ProjectStatusEntity status : statuses) {
-                        if (status.getStatusKey() != null) {
-                            known.add(status.getStatusKey());
-                        }
-                    }
-                }
-                FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class,
-                        Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", projectKey, wanted));
-                if (rows == null || rows.length == 0) {
+                String resolved = equipmentStatusFor(projectKey, wanted, null, false);
+                if (resolved == null) {
                     return null;
                 }
-                Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
-                    @Override
-                    public int compare(FlowRuleEntity left, FlowRuleEntity right) {
-                        return left.getID() - right.getID();
-                    }
-                });
-                List<FlowRuleDto> rules = new ArrayList<FlowRuleDto>();
-                for (FlowRuleEntity row : rows) {
-                    rules.add(toFlow(row));
-                }
-                String next = FlowRules.statusToApply(rules, wanted, true, Statuses.canonical(asset.getStatus()), known);
+                FlowRuleDto rule = new FlowRuleDto();
+                rule.setIssueTypeId(wanted);
+                rule.setStatusKey(resolved);
+                String next = FlowRules.statusToApply(Collections.singletonList(rule), wanted, true,
+                        Statuses.canonical(asset.getStatus()), knownStatusKeys(projectKey));
                 if (next == null) {
                     return null;
                 }
-                String oldStatus = Statuses.canonical(asset.getStatus());
-                asset.setStatus(next);
-                asset.setUpdated(new Date());
-                asset.setUpdatedBy(user == null ? "" : user.getKey());
-                asset.save();
-                logActivity(assetId, user == null ? "" : user.getKey(), "status", "", oldStatus, next);
+                assignFlowStatus(user, asset, next);
                 return null;
             }
         });
+    }
+
+    private String equipmentStatusFor(String projectKey, String issueTypeId, String issueStatusId, boolean onTransition) {
+        FlowGraphEntity stored = findFlowGraph(projectKey);
+        if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
+            return FlowGraph.equipmentStatus(FlowGraph.read(stored.getBody()), issueTypeId, issueStatusId, onTransition);
+        }
+        if (onTransition || issueTypeId == null || issueTypeId.trim().isEmpty()) {
+            return null;
+        }
+        FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class,
+                Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", projectKey, issueTypeId.trim()));
+        if (rows == null || rows.length == 0) {
+            return null;
+        }
+        Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
+            @Override
+            public int compare(FlowRuleEntity left, FlowRuleEntity right) {
+                return left.getID() - right.getID();
+            }
+        });
+        String found = null;
+        for (FlowRuleEntity row : rows) {
+            if (row.getStatusKey() != null && !row.getStatusKey().trim().isEmpty()) {
+                found = row.getStatusKey().trim();
+            }
+        }
+        return found;
+    }
+
+    private Set<String> knownStatusKeys(String projectKey) {
+        ensureStatuses(projectKey);
+        Set<String> known = new HashSet<String>();
+        ProjectStatusEntity[] statuses = projectStatuses(projectKey);
+        if (statuses != null) {
+            for (ProjectStatusEntity status : statuses) {
+                if (status.getStatusKey() != null) {
+                    known.add(status.getStatusKey());
+                }
+            }
+        }
+        return known;
+    }
+
+    private void assignFlowStatus(ApplicationUser user, AssetEntity asset, String next) {
+        String oldStatus = Statuses.canonical(asset.getStatus());
+        asset.setStatus(next);
+        asset.setUpdated(new Date());
+        asset.setUpdatedBy(user == null ? "" : user.getKey());
+        asset.save();
+        logActivity(asset.getID(), user == null ? "" : user.getKey(), "status", "", oldStatus, next);
     }
 
     private String portalPath(AssetEntity entity) {
@@ -2345,6 +2464,57 @@ public class AssetServiceImpl implements AssetService {
             applyRequestFlow(user, next.intValue(), issue);
         } catch (RuntimeException ex) {
             log.warn("Could not apply the equipment flow for {}", next, ex);
+        }
+    }
+
+    @Override
+    public void syncRequestStatus(ApplicationUser user, Issue issue) {
+        if (issue == null || issue.getId() == null || issue.getProjectObject() == null || issue.getStatus() == null) {
+            return;
+        }
+        final String projectKey = issue.getProjectObject().getKey();
+        final String typeId = issue.getIssueType() == null || issue.getIssueType().getId() == null
+                ? "" : issue.getIssueType().getId().trim();
+        final String issueStatusId = issue.getStatus().getId() == null ? "" : issue.getStatus().getId().trim();
+        if (projectKey == null || projectKey.trim().isEmpty() || issueStatusId.isEmpty()) {
+            return;
+        }
+        final long issueId = issue.getId().longValue();
+        try {
+            ao().executeInTransaction(new TransactionCallback<Void>() {
+                @Override
+                public Void doInTransaction() {
+                    String resolved = equipmentStatusFor(projectKey, typeId, issueStatusId, true);
+                    if (resolved == null || resolved.isEmpty()) {
+                        return null;
+                    }
+                    Set<String> known = knownStatusKeys(projectKey);
+                    String matchType = typeId.isEmpty() ? "*" : typeId;
+                    FlowRuleDto rule = new FlowRuleDto();
+                    rule.setIssueTypeId(matchType);
+                    rule.setStatusKey(resolved);
+                    AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class,
+                            Query.select().where("ISSUE_ID = ?", issueId));
+                    if (links == null) {
+                        return null;
+                    }
+                    for (AssetIssueLinkEntity link : links) {
+                        AssetEntity asset = ao().get(AssetEntity.class, link.getAssetId());
+                        if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
+                            continue;
+                        }
+                        String next = FlowRules.statusToApply(Collections.singletonList(rule), matchType, true,
+                                Statuses.canonical(asset.getStatus()), known);
+                        if (next == null) {
+                            continue;
+                        }
+                        assignFlowStatus(user, asset, next);
+                    }
+                    return null;
+                }
+            });
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for issue {}", issue.getKey(), ex);
         }
     }
 

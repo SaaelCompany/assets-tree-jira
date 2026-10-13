@@ -601,6 +601,17 @@ public class AssetResource {
     }
 
     @GET
+    @Path("projects/{projectKey}/issue-statuses")
+    public Response issueStatuses(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listIssueStatuses(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
     @Path("projects/{projectKey}/issue-types")
     public Response issueTypes(@PathParam("projectKey") final String projectKey) {
         return invoke(new Callable<Response>() {

@@ -14,14 +14,17 @@ import java.util.regex.Pattern;
 
 /**
  * A project process is a few nodes and the lines between them.
- * A request node joined to a status node is the rule: equipment added on that
- * request type takes that status. A node with no line does not change anything.
+ * A request node joined straight to an equipment status fires when equipment
+ * is added on that request. A request status between them fires when that
+ * request later moves to the chosen status. A node with no line does nothing.
  */
 public final class FlowGraph {
     public static final String REQUEST = "request";
+    public static final String ISSUE = "issue";
     public static final String STATUS = "status";
     private static final Pattern ID = Pattern.compile("[a-z0-9]{4,16}");
     private static final int MAX_NODES = 40;
+    private static final int MAX_LINKS = 80;
 
     private FlowGraph() {
     }
@@ -41,32 +44,69 @@ public final class FlowGraph {
                 }
             }
         }
-        Map<String, FlowLinkDto> outgoing = new LinkedHashMap<String, FlowLinkDto>();
+        List<FlowLinkDto> links = new ArrayList<FlowLinkDto>();
+        Map<String, Boolean> seen = new LinkedHashMap<String, Boolean>();
         if (raw != null && raw.getLinks() != null) {
             for (FlowLinkDto link : raw.getLinks()) {
                 if (link == null || link.getFrom() == null || link.getTo() == null) {
                     continue;
                 }
-                FlowNodeDto source = nodes.get(link.getFrom().trim());
-                FlowNodeDto target = nodes.get(link.getTo().trim());
-                if (source == null || target == null) {
+                FlowNodeDto source = nodes.get(link.getFrom().trim().toLowerCase(Locale.ROOT));
+                FlowNodeDto target = nodes.get(link.getTo().trim().toLowerCase(Locale.ROOT));
+                if (source == null || target == null || source.getId().equals(target.getId()) || !allowed(source, target)) {
                     continue;
                 }
-                if (!REQUEST.equals(source.getKind()) || !STATUS.equals(target.getKind())) {
+                String key = source.getId() + "\n" + target.getId();
+                if (seen.containsKey(key)) {
                     continue;
                 }
+                seen.put(key, Boolean.TRUE);
                 FlowLinkDto clean = new FlowLinkDto();
                 clean.setFrom(source.getId());
                 clean.setTo(target.getId());
-                outgoing.put(source.getId(), clean);
-                if (outgoing.size() >= MAX_NODES) {
+                links.add(clean);
+                if (links.size() >= MAX_LINKS) {
                     break;
                 }
             }
         }
         graph.setNodes(new ArrayList<FlowNodeDto>(nodes.values()));
-        graph.setLinks(new ArrayList<FlowLinkDto>(outgoing.values()));
+        graph.setLinks(links);
         return graph;
+    }
+
+    /**
+     * Equipment status for one request event. Create follows a direct line from
+     * the request type to an equipment status. A later transition follows a
+     * request-status node with that Jira status id, then its line to equipment.
+     * When that node has incoming request lines, one of them must be this type.
+     * A request-status node with no incoming request line applies to every type.
+     * The last matching line wins.
+     */
+    public static String equipmentStatus(FlowGraphDto graph, String issueTypeId, String issueStatusId, boolean onTransition) {
+        FlowGraphDto clean = normalize(graph);
+        Map<String, FlowNodeDto> nodes = index(clean);
+        String found = null;
+        for (FlowLinkDto link : clean.getLinks()) {
+            FlowNodeDto source = nodes.get(link.getFrom());
+            FlowNodeDto target = nodes.get(link.getTo());
+            if (source == null || target == null || !STATUS.equals(target.getKind()) || blank(target.getStatusKey())) {
+                continue;
+            }
+            if (!onTransition) {
+                if (REQUEST.equals(source.getKind()) && same(source.getIssueTypeId(), issueTypeId)) {
+                    found = target.getStatusKey().trim();
+                }
+                continue;
+            }
+            if (!ISSUE.equals(source.getKind()) || !same(source.getIssueStatusId(), issueStatusId)) {
+                continue;
+            }
+            if (applies(clean, nodes, source, issueTypeId)) {
+                found = target.getStatusKey().trim();
+            }
+        }
+        return blank(found) ? null : found;
     }
 
     public static FlowGraphDto fromRules(List<FlowRuleDto> rules) {
@@ -118,7 +158,10 @@ public final class FlowGraph {
         for (FlowLinkDto link : clean.getLinks()) {
             FlowNodeDto source = nodes.get(link.getFrom());
             FlowNodeDto target = nodes.get(link.getTo());
-            if (source == null || target == null || blank(source.getIssueTypeId()) || blank(target.getStatusKey())) {
+            if (source == null || target == null || !REQUEST.equals(source.getKind()) || !STATUS.equals(target.getKind())) {
+                continue;
+            }
+            if (blank(source.getIssueTypeId()) || blank(target.getStatusKey())) {
                 continue;
             }
             statusByType.put(source.getIssueTypeId().trim(), target.getStatusKey().trim());
@@ -202,6 +245,8 @@ public final class FlowGraph {
         out.append(",\"y\":").append(node.getY());
         out.append(",\"issueTypeId\":");
         quote(out, node.getIssueTypeId() == null ? "" : node.getIssueTypeId());
+        out.append(",\"issueStatusId\":");
+        quote(out, node.getIssueStatusId() == null ? "" : node.getIssueStatusId());
         out.append(",\"statusKey\":");
         quote(out, node.getStatusKey() == null ? "" : node.getStatusKey());
         out.append('}');
@@ -214,6 +259,7 @@ public final class FlowGraph {
         node.setX(coord(map.get("x")));
         node.setY(coord(map.get("y")));
         node.setIssueTypeId(text(map.get("issueTypeId")));
+        node.setIssueStatusId(text(map.get("issueStatusId")));
         node.setStatusKey(text(map.get("statusKey")));
         return node;
     }
@@ -227,7 +273,7 @@ public final class FlowGraph {
             return null;
         }
         String kind = node.getKind() == null ? "" : node.getKind().trim();
-        if (!REQUEST.equals(kind) && !STATUS.equals(kind)) {
+        if (!REQUEST.equals(kind) && !ISSUE.equals(kind) && !STATUS.equals(kind)) {
             return null;
         }
         FlowNodeDto clean = new FlowNodeDto();
@@ -238,10 +284,54 @@ public final class FlowGraph {
         if (REQUEST.equals(kind)) {
             clean.setIssueTypeId(clip(node.getIssueTypeId(), 60));
             clean.setIssueTypeName(clip(node.getIssueTypeName(), 255));
+        } else if (ISSUE.equals(kind)) {
+            clean.setIssueStatusId(clip(node.getIssueStatusId(), 60));
+            clean.setIssueStatusName(clip(node.getIssueStatusName(), 255));
         } else {
             clean.setStatusKey(clip(node.getStatusKey(), 40));
         }
         return clean;
+    }
+
+    private static boolean allowed(FlowNodeDto source, FlowNodeDto target) {
+        if (REQUEST.equals(source.getKind())) {
+            return ISSUE.equals(target.getKind()) || STATUS.equals(target.getKind());
+        }
+        return ISSUE.equals(source.getKind()) && STATUS.equals(target.getKind());
+    }
+
+    private static boolean applies(FlowGraphDto graph, Map<String, FlowNodeDto> nodes, FlowNodeDto issue, String issueTypeId) {
+        boolean gated = false;
+        boolean match = false;
+        for (FlowLinkDto link : graph.getLinks()) {
+            if (!issue.getId().equals(link.getTo())) {
+                continue;
+            }
+            FlowNodeDto from = nodes.get(link.getFrom());
+            if (from == null || !REQUEST.equals(from.getKind())) {
+                continue;
+            }
+            gated = true;
+            if (same(from.getIssueTypeId(), issueTypeId)) {
+                match = true;
+            }
+        }
+        return !gated || match;
+    }
+
+    private static Map<String, FlowNodeDto> index(FlowGraphDto graph) {
+        Map<String, FlowNodeDto> nodes = new LinkedHashMap<String, FlowNodeDto>();
+        for (FlowNodeDto node : graph.getNodes()) {
+            nodes.put(node.getId(), node);
+        }
+        return nodes;
+    }
+
+    private static boolean same(String stored, String wanted) {
+        if (blank(stored) || blank(wanted)) {
+            return false;
+        }
+        return stored.trim().equals(wanted.trim());
     }
 
     private static String nodeId(String prefix, int seed) {
