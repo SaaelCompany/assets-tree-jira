@@ -11,6 +11,7 @@ import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.config.properties.APKeys;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
+import com.atlassian.jira.issue.issuetype.IssueType;
 import com.atlassian.jira.permission.GlobalPermissionKey;
 import com.atlassian.jira.permission.ProjectPermissions;
 import com.atlassian.jira.project.Project;
@@ -36,6 +37,7 @@ import com.assetstree.jira.ao.CardTemplateEntity;
 import com.assetstree.jira.ao.AssetCounterEntity;
 import com.assetstree.jira.ao.AssetEntity;
 import com.assetstree.jira.ao.AssetFieldEntity;
+import com.assetstree.jira.ao.FlowRuleEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
 import com.assetstree.jira.ao.InventoryMarkEntity;
@@ -54,6 +56,8 @@ import com.assetstree.jira.dto.BulkIssueDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
+import com.assetstree.jira.dto.FlowRuleDto;
+import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
 import com.assetstree.jira.dto.ImportIssueDto;
@@ -90,6 +94,8 @@ import com.assetstree.jira.model.WorkbookSheet;
 import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.FlowRuleDraft;
+import com.assetstree.jira.model.FlowRules;
 import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
@@ -1736,6 +1742,85 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey) {
+        return issueTypesOf(requireConfigurableProject(user, projectKey));
+    }
+
+    @Override
+    public List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        return ao().executeInTransaction(new TransactionCallback<List<FlowRuleDto>>() {
+            @Override
+            public List<FlowRuleDto> doInTransaction() {
+                return flowRules(project.getKey(), names);
+            }
+        });
+    }
+
+    @Override
+    public FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, final FlowRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getIssueTypeId() == null || draft.getIssueTypeId().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.flow.type");
+        }
+        if (draft.getStatusKey() == null || draft.getStatusKey().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.flow.status");
+        }
+        final String typeId = draft.getIssueTypeId().trim();
+        final String typeName = issueTypeNames(project).get(typeId);
+        if (typeName == null) {
+            throw new AssetException(400, "asset-tree.error.flow.type");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FlowRuleDto>() {
+            @Override
+            public FlowRuleDto doInTransaction() {
+                String status;
+                try {
+                    status = resolveStatus(project.getKey(), draft.getStatusKey());
+                } catch (AssetException ex) {
+                    throw new AssetException(400, "asset-tree.error.flow.status");
+                }
+                FlowRuleEntity[] existing = ao().find(FlowRuleEntity.class,
+                        Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", project.getKey(), typeId));
+                FlowRuleEntity row;
+                if (existing != null && existing.length > 0) {
+                    row = existing[0];
+                    row.setIssueTypeName(typeName);
+                    row.setStatusKey(status);
+                    row.save();
+                    for (int i = 1; i < existing.length; i++) {
+                        ao().delete(existing[i]);
+                    }
+                } else {
+                    row = ao().create(FlowRuleEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ISSUE_TYPE_ID", typeId),
+                            new DBParam("ISSUE_TYPE_NAME", typeName),
+                            new DBParam("STATUS_KEY", status));
+                }
+                return toFlow(row);
+            }
+        });
+    }
+
+    @Override
+    public void deleteFlowRule(ApplicationUser user, String projectKey, final int ruleId) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                FlowRuleEntity rule = ao().get(FlowRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.flow.missing");
+                }
+                ao().delete(rule);
+                return null;
+            }
+        });
+    }
+
+    @Override
     public CardLayout cardLayout(ApplicationUser user, String projectKey) {
         Project project = requireReadableProject(user, projectKey);
         return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
@@ -1906,6 +1991,136 @@ public class AssetServiceImpl implements AssetService {
         return dto;
     }
 
+    private List<IssueTypeDto> issueTypesOf(Project project) {
+        List<IssueTypeDto> result = new ArrayList<IssueTypeDto>();
+        Map<String, String> names = issueTypeNames(project);
+        for (Map.Entry<String, String> entry : names.entrySet()) {
+            IssueTypeDto dto = new IssueTypeDto();
+            dto.setId(entry.getKey());
+            dto.setName(entry.getValue());
+            result.add(dto);
+        }
+        Collections.sort(result, new Comparator<IssueTypeDto>() {
+            @Override
+            public int compare(IssueTypeDto left, IssueTypeDto right) {
+                String leftName = left.getName() == null ? "" : left.getName();
+                String rightName = right.getName() == null ? "" : right.getName();
+                return leftName.compareToIgnoreCase(rightName);
+            }
+        });
+        return result;
+    }
+
+    private Map<String, String> issueTypeNames(Project project) {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        if (project == null || project.getIssueTypes() == null) {
+            return names;
+        }
+        for (IssueType type : project.getIssueTypes()) {
+            if (type == null || type.isSubTask() || type.getId() == null || type.getId().trim().isEmpty()) {
+                continue;
+            }
+            String name = type.getName() == null || type.getName().trim().isEmpty() ? type.getId().trim() : type.getName().trim();
+            names.put(type.getId().trim(), name);
+        }
+        return names;
+    }
+
+    private List<FlowRuleDto> flowRules(String projectKey, Map<String, String> names) {
+        FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (rows == null) {
+            return new ArrayList<FlowRuleDto>();
+        }
+        Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
+            @Override
+            public int compare(FlowRuleEntity left, FlowRuleEntity right) {
+                String leftName = left.getIssueTypeName() == null ? "" : left.getIssueTypeName();
+                String rightName = right.getIssueTypeName() == null ? "" : right.getIssueTypeName();
+                int byName = leftName.compareToIgnoreCase(rightName);
+                if (byName != 0) {
+                    return byName;
+                }
+                return left.getID() - right.getID();
+            }
+        });
+        List<FlowRuleDto> result = new ArrayList<FlowRuleDto>();
+        for (FlowRuleEntity row : rows) {
+            FlowRuleDto dto = toFlow(row);
+            String live = names == null ? null : names.get(dto.getIssueTypeId());
+            if (live != null) {
+                dto.setIssueTypeName(live);
+            }
+            result.add(dto);
+        }
+        return result;
+    }
+
+    private FlowRuleDto toFlow(FlowRuleEntity rule) {
+        FlowRuleDto dto = new FlowRuleDto();
+        dto.setId(rule.getID());
+        dto.setIssueTypeId(rule.getIssueTypeId());
+        dto.setIssueTypeName(rule.getIssueTypeName());
+        dto.setStatusKey(rule.getStatusKey());
+        return dto;
+    }
+
+    private void applyRequestFlow(ApplicationUser user, final int assetId, Issue issue) {
+        if (issue == null || issue.getIssueType() == null || issue.getProjectObject() == null) {
+            return;
+        }
+        final String typeId = issue.getIssueType().getId();
+        if (typeId == null || typeId.trim().isEmpty()) {
+            return;
+        }
+        final String projectKey = issue.getProjectObject().getKey();
+        final String wanted = typeId.trim();
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity asset = ao().get(AssetEntity.class, assetId);
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
+                    return null;
+                }
+                ensureStatuses(projectKey);
+                Set<String> known = new HashSet<String>();
+                ProjectStatusEntity[] statuses = projectStatuses(projectKey);
+                if (statuses != null) {
+                    for (ProjectStatusEntity status : statuses) {
+                        if (status.getStatusKey() != null) {
+                            known.add(status.getStatusKey());
+                        }
+                    }
+                }
+                FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class,
+                        Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", projectKey, wanted));
+                if (rows == null || rows.length == 0) {
+                    return null;
+                }
+                Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
+                    @Override
+                    public int compare(FlowRuleEntity left, FlowRuleEntity right) {
+                        return left.getID() - right.getID();
+                    }
+                });
+                List<FlowRuleDto> rules = new ArrayList<FlowRuleDto>();
+                for (FlowRuleEntity row : rows) {
+                    rules.add(toFlow(row));
+                }
+                String next = FlowRules.statusToApply(rules, wanted, true, Statuses.canonical(asset.getStatus()), known);
+                if (next == null) {
+                    return null;
+                }
+                String oldStatus = Statuses.canonical(asset.getStatus());
+                asset.setStatus(next);
+                asset.setUpdated(new Date());
+                asset.setUpdatedBy(user == null ? "" : user.getKey());
+                asset.save();
+                logActivity(assetId, user == null ? "" : user.getKey(), "status", "", oldStatus, next);
+                return null;
+            }
+        });
+    }
+
     private String portalPath(AssetEntity entity) {
         List<String> names = new ArrayList<String>();
         AssetEntity cursor = entity;
@@ -2018,12 +2233,22 @@ public class AssetServiceImpl implements AssetService {
         if (next == null) {
             return;
         }
+        boolean fresh = previous == null || previous.intValue() != next.intValue();
         try {
             link(user, next.intValue(), issue, false);
         } catch (AssetException ex) {
             if (ex.getStatus() != 409) {
                 log.warn("Could not link asset {} to {}", next, issue.getKey());
             }
+            return;
+        }
+        if (!fresh) {
+            return;
+        }
+        try {
+            applyRequestFlow(user, next.intValue(), issue);
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for {}", next, ex);
         }
     }
 

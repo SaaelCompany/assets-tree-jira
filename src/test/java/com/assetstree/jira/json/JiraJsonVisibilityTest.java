@@ -6,6 +6,7 @@ import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.TypeDraft;
 import org.codehaus.jackson.map.AnnotationIntrospector;
@@ -113,6 +114,12 @@ public class JiraJsonVisibilityTest {
         assertEquals(2, portal.getConditions().size());
         assertEquals("Площадка", portal.getConditions().get(0).getField());
         assertEquals("Пункт А", portal.getConditions().get(1).getOption());
+
+        FlowRuleDraft flow = mapper.readValue(
+                "{\"issueTypeId\":\"10001\",\"statusKey\":\"repair\"}",
+                FlowRuleDraft.class);
+        assertEquals("10001", flow.getIssueTypeId());
+        assertEquals("repair", flow.getStatusKey());
 
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",

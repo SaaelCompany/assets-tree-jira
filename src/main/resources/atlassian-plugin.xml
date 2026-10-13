@@ -26,6 +26,7 @@
         <entity>com.assetstree.jira.ao.ProjectGrantEntity</entity>
         <entity>com.assetstree.jira.ao.PortalRuleEntity</entity>
         <entity>com.assetstree.jira.ao.PortalRuleConditionEntity</entity>
+        <entity>com.assetstree.jira.ao.FlowRuleEntity</entity>
         <entity>com.assetstree.jira.ao.ServicePlanEntity</entity>
         <entity>com.assetstree.jira.ao.CardTemplateEntity</entity>
     </ao>

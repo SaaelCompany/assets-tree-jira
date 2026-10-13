@@ -91,6 +91,8 @@
         statuses: [],
         grants: null,
         portalRules: null,
+        flowRules: null,
+        issueTypes: null,
         selectedId: null,
         dirty: false,
         expanded: {},
@@ -4720,12 +4722,10 @@
         var extra = [];
         if (mayEdit(asset) && !isFolder(asset)) {
             var current = state.detail && state.detail.id === asset.id ? state.detail : asset;
-            extra.push({
-                label: current.cardImage ? t('cardQrReplace') : t('cardQrUpload'),
-                onClick: function () { pickCardImage(current); }
-            });
             if (current.cardImage) {
                 extra.push({ label: t('cardQrRemove'), onClick: function () { deleteCardImage(current); } });
+            } else {
+                extra.push({ label: t('cardQrUpload'), onClick: function () { pickCardImage(current); } });
             }
         }
         if (mayEdit(asset)) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
@@ -6629,6 +6629,8 @@
         applyRights(match);
         state.grants = null;
         state.portalRules = null;
+        state.flowRules = null;
+        state.issueTypes = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -6664,6 +6666,8 @@
         applyRights(project);
         state.grants = null;
         state.portalRules = null;
+        state.flowRules = null;
+        state.issueTypes = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -8624,6 +8628,7 @@
             sections.push(['types', t('typesSection'), state.types.length]);
             sections.push(['card', t('cardSection'), null]);
             sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
+            sections.push(['flow', t('flowSection'), state.flowRules ? state.flowRules.length : null]);
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
@@ -8666,6 +8671,8 @@
             renderExchangeSettings(panel);
         } else if (state.schemaTab === 'portal') {
             renderPortalSettings(panel);
+        } else if (state.schemaTab === 'flow') {
+            renderFlowSettings(panel);
         } else if (state.schemaTab === 'access') {
             renderAccessSettings(panel);
         } else {
@@ -8802,6 +8809,108 @@
             guard++;
         }
         return names.join(' / ');
+    }
+
+    function renderFlowSettings(panel) {
+        var block = el('div', 'asset-tree-settings-block');
+        block.appendChild(el('p', 'asset-tree-hint', t('flowSectionHint')));
+        if (state.flowRules === null || state.issueTypes === null) {
+            if (state.flowRules === null) state.flowRules = [];
+            if (state.issueTypes === null) state.issueTypes = [];
+            block.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            panel.appendChild(block);
+            var projectKey = state.projectKey;
+            var pending = 2;
+            function finish() {
+                pending--;
+                if (pending > 0) return;
+                if (state.view !== 'settings' || state.projectKey !== projectKey || state.schemaTab !== 'flow') return;
+                renderFrame();
+            }
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flows', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                if (status === 200) state.flowRules = payload || [];
+                else {
+                    state.flowRules = [];
+                    notify((payload && payload.message) || t('errorTitle'));
+                }
+                finish();
+            });
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/issue-types', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                state.issueTypes = status === 200 ? (payload || []) : [];
+                finish();
+            });
+            return;
+        }
+        var list = el('div', 'asset-tree-portal-list');
+        if (!state.flowRules.length) {
+            list.appendChild(el('p', 'asset-tree-hint', t('flowEmpty')));
+        }
+        state.flowRules.forEach(function (rule) {
+            var row = el('div', 'asset-tree-portal-rule');
+            row.appendChild(el('span', 'asset-tree-portal-when', rule.issueTypeName || rule.issueTypeId || ''));
+            row.appendChild(lozenge(rule.statusKey));
+            row.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
+                ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/flows/' + rule.id, null, function (status, payload) {
+                    if (status >= 200 && status < 300) {
+                        state.flowRules = null;
+                        renderFrame();
+                    } else {
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            }));
+            list.appendChild(row);
+        });
+        block.appendChild(list);
+
+        var typeSelect = el('select');
+        var emptyType = el('option', null, '—');
+        emptyType.value = '';
+        typeSelect.appendChild(emptyType);
+        (state.issueTypes || []).forEach(function (item) {
+            var option = el('option', null, item.name || item.id);
+            option.value = item.id;
+            typeSelect.appendChild(option);
+        });
+        var statusSelect = el('select');
+        var emptyStatus = el('option', null, '—');
+        emptyStatus.value = '';
+        statusSelect.appendChild(emptyStatus);
+        statusChoices().forEach(function (item) {
+            var option = el('option', null, item.label);
+            option.value = item.value;
+            statusSelect.appendChild(option);
+        });
+        var error = el('div', 'asset-tree-form-error');
+        error.hidden = true;
+        var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(field(t('flowIssueType'), typeSelect, true));
+        form.appendChild(field(t('flowStatus'), statusSelect, true));
+        form.appendChild(error);
+        form.appendChild(button(t('flowAdd'), 'asset-tree-btn primary', function () {
+            if (!typeSelect.value || !statusSelect.value) {
+                error.hidden = false;
+                error.textContent = t('flowRequired');
+                return;
+            }
+            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/flows', {
+                issueTypeId: typeSelect.value,
+                statusKey: statusSelect.value
+            }, function (status, payload) {
+                if (status >= 200 && status < 300) {
+                    state.flowRules = null;
+                    renderFrame();
+                } else {
+                    error.hidden = false;
+                    error.textContent = (payload && payload.message) || t('errorTitle');
+                }
+            });
+        }));
+        form.addEventListener('submit', function (event) { event.preventDefault(); });
+        block.appendChild(form);
+        panel.appendChild(block);
     }
 
     function renderPortalSettings(panel) {

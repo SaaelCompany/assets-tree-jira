@@ -26,9 +26,12 @@ import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.dto.FlowRuleDto;
+import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.model.ServicePlanDraft;
@@ -127,6 +130,14 @@ public interface AssetService {
     PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
 
     void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
+
+    List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey);
+
+    List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey);
+
+    FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, FlowRuleDraft draft);
+
+    void deleteFlowRule(ApplicationUser user, String projectKey, int ruleId);
 
     CardLayout cardLayout(ApplicationUser user, String projectKey);
 

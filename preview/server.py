@@ -171,6 +171,10 @@ CAP_ORDER = ["view", "places", "types", "object", "assets", "admin"]
 STATUS_KEY = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 
 PROJECTS = [{"key": "TEST", "name": "test"}, {"key": "STP", "name": "STP"}]
+ISSUE_TYPES = [
+    {"id": "10001", "name": "Инцидент"},
+    {"id": "10002", "name": "Заявка на обслуживание"},
+]
 USERS = {
     "ivanov": {"userKey": "ivanov", "username": "ivanov", "displayName": "Иванов Сергей", "email": "ivanov@example.com", "phone": "+7 495 000-11-22", "department": "ИТ-поддержка", "title": "Инженер", "directory": "Active Directory", "active": True},
     "petrova": {"userKey": "petrova", "username": "petrova", "displayName": "Петрова Анна", "email": "petrova@example.com", "phone": "+7 495 000-33-44", "department": "Хирургия", "title": "Старшая медсестра", "directory": "Active Directory", "active": True},
@@ -194,6 +198,7 @@ LOCK = threading.Lock()
 STATE = {
     "seq": 1, "assets": {}, "types": {}, "links": [], "checks": {},
     "portal_rules": [], "portal_seq": 1, "portal_demo": False,
+    "flows": {}, "flow_seq": 1,
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
@@ -2437,7 +2442,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.94",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.95",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2515,6 +2520,64 @@ setTimeout(function () {
             layout = normalize_card(self.read_json() or {})
             STATE["cards"][match.group(1)] = layout
             return 200, layout
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-types", path)
+        if match and method == "GET":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return 200, [{"id": item["id"], "name": item["name"]} for item in ISSUE_TYPES]
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows/(\d+)", path)
+        if match and method == "DELETE":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            rule_id = int(match.group(2))
+            bucket = STATE["flows"].setdefault(project_key, [])
+            kept = [rule for rule in bucket if rule["id"] != rule_id]
+            if len(kept) == len(bucket):
+                return 404, {"message": text["asset-tree.error.flow.missing"]}
+            STATE["flows"][project_key] = kept
+            return 204, None
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows", path)
+        if match and method == "GET":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return 200, [dict(rule) for rule in STATE["flows"].get(project_key, [])]
+        if match and method == "POST":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            body = self.read_json() or {}
+            type_id = (body.get("issueTypeId") or "").strip()
+            found = None
+            for item in ISSUE_TYPES:
+                if item["id"] == type_id:
+                    found = item
+            if not found:
+                return 400, {"message": text["asset-tree.error.flow.type"]}
+            raw_status = (body.get("statusKey") or "").strip()
+            if not raw_status:
+                return 400, {"message": text["asset-tree.error.flow.status"]}
+            ensure_statuses(project_key, text)
+            status = canonical(raw_status)
+            known = {row["statusKey"] for row in STATE["statuses"].get(project_key, [])}
+            if status not in known:
+                return 400, {"message": text["asset-tree.error.flow.status"]}
+            bucket = STATE["flows"].setdefault(project_key, [])
+            for rule in bucket:
+                if rule["issueTypeId"] == type_id:
+                    rule["statusKey"] = status
+                    rule["issueTypeName"] = found["name"]
+                    return 201, dict(rule)
+            rule = {
+                "id": STATE["flow_seq"],
+                "issueTypeId": type_id,
+                "issueTypeName": found["name"],
+                "statusKey": status,
+            }
+            STATE["flow_seq"] += 1
+            bucket.append(rule)
+            return 201, dict(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "DELETE":
             ensure_portal_demo()

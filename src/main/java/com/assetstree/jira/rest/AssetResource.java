@@ -18,6 +18,7 @@ import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
@@ -593,6 +594,53 @@ public class AssetResource {
             @Override
             public Response call() {
                 assetService.deletePortalRule(user(), projectKey, ruleId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/issue-types")
+    public Response issueTypes(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listIssueTypes(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/flows")
+    public Response flowRules(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listFlowRules(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/flows")
+    public Response saveFlowRule(@PathParam("projectKey") final String projectKey, final FlowRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED)
+                        .entity(assetService.saveFlowRule(user(), projectKey, draft))
+                        .build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/flows/{ruleId}")
+    public Response deleteFlowRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteFlowRule(user(), projectKey, ruleId);
                 return Response.noContent().build();
             }
         });
