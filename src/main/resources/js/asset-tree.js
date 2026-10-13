@@ -126,7 +126,9 @@
         pickScope: '',
         bulkErrors: [],
         baseUrl: '',
-        cardDraft: null
+        cardDraft: null,
+        cardDrag: '',
+        cardSuppressClick: false
     };
     var idIndex = null;
     var childIndex = null;
@@ -4050,7 +4052,7 @@
         if (token === 'custodian') return t('custodian');
         if (token === 'project') return t('project');
         if (token === 'description') return t('description');
-        if (token === 'scan') return t('cardScan');
+        if (token === 'scan') return t('cardScanName');
         if (token.indexOf('attr:') === 0) {
             var key = token.substring(5);
             var found = null;
@@ -4135,8 +4137,9 @@
             + '.asset-tree-card-preview .asset-tree-card.is-none .asset-tree-card-text{padding:4mm}'
             + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-text{padding:2.5mm 2.5mm 2mm 1mm}'
             + '.asset-tree-card-preview .asset-tree-card-line{font-size:9pt;line-height:1.2;color:#44546f;overflow:hidden}'
+            + '.asset-tree-card-preview .asset-tree-card-line + .asset-tree-card-line{margin-top:.6mm}'
             + '.asset-tree-card-preview .asset-tree-card-line.is-name{font-size:13pt;font-weight:700;line-height:1.15;color:#172b4d;max-height:2.4em}'
-            + '.asset-tree-card-preview .asset-tree-card-line.is-key{margin-top:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12pt;letter-spacing:.04em;color:#172b4d}'
+            + '.asset-tree-card-preview .asset-tree-card-line.is-key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12pt;letter-spacing:.04em;color:#172b4d}'
             + '.asset-tree-card-preview .asset-tree-card-line.is-scan{font-size:8pt;color:#6b778c}'
             + '.asset-tree-card-preview .asset-tree-card-line.is-desc{max-height:3.6em}'
             + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line{font-size:7.5pt}'
@@ -4154,6 +4157,14 @@
         document.head.appendChild(style);
     }
 
+    function lineKind(token) {
+        if (token === 'name') return 'name';
+        if (token === 'key') return 'key';
+        if (token === 'scan') return 'scan';
+        if (token === 'description') return 'desc';
+        return 'meta';
+    }
+
     function cardArticle(asset, layout, preview) {
         var card = normalizeClientCard(layout);
         var code = '';
@@ -4167,12 +4178,7 @@
         card.lines.forEach(function (token) {
             var text = cardLineText(asset, token);
             if (!text) return;
-            var kind = 'meta';
-            if (token === 'name') kind = 'name';
-            else if (token === 'key') kind = 'key';
-            else if (token === 'scan') kind = 'scan';
-            else if (token === 'description') kind = 'desc';
-            lines.push('<div class="asset-tree-card-line is-' + kind + '">' + htmlEscape(text) + '</div>');
+            lines.push('<div class="asset-tree-card-line is-' + lineKind(token) + '">' + htmlEscape(text) + '</div>');
         });
         if (!lines.length && card.qr === 'none') return '';
         var qrHtml = card.qr === 'none' ? '' : '<div class="asset-tree-card-qr">' + code + '</div>';
@@ -7516,52 +7522,204 @@
         });
     }
 
-    function toggleCardLine(token, checked) {
+    function insertCardLine(token, index) {
+        if (!token || token === 'qr') return;
         var lines = cardDraft().lines;
-        var at = lines.indexOf(token);
-        if (checked) {
-            if (at < 0 && lines.length < 12) lines.push(token);
-        } else if (at >= 0) {
-            lines.splice(at, 1);
+        var from = lines.indexOf(token);
+        if (from < 0 && lines.length >= 12) return;
+        if (from >= 0) {
+            lines.splice(from, 1);
+            if (from < index) index -= 1;
         }
+        if (index < 0) index = 0;
+        if (index > lines.length) index = lines.length;
+        lines.splice(index, 0, token);
         renderFrame();
     }
 
-    function moveCardLine(token, delta) {
+    function removeCardLine(token) {
         var lines = cardDraft().lines;
         var at = lines.indexOf(token);
-        var next = at + delta;
-        if (at < 0 || next < 0 || next >= lines.length) return;
-        lines[at] = lines[next];
-        lines[next] = token;
+        if (at < 0) return;
+        lines.splice(at, 1);
         renderFrame();
     }
 
-    function cardLineRow(token) {
-        var draft = cardDraft();
-        var index = draft.lines.indexOf(token);
-        var on = index >= 0;
-        var row = el('div', 'asset-tree-card-line-row');
-        var label = el('label', 'asset-tree-check');
-        var box = document.createElement('input');
-        box.type = 'checkbox';
-        box.checked = on;
-        if (!on && draft.lines.length >= 12) box.disabled = true;
-        box.addEventListener('change', function () {
-            toggleCardLine(token, box.checked);
+    function cardSheetNode() {
+        return document.querySelector('#asset-tree-app .asset-tree-card-sheet');
+    }
+
+    function clearCardDragMarks() {
+        var marked = document.querySelectorAll('.is-moving-qr, .asset-tree-card-gap.is-over, .asset-tree-card-edge.is-over');
+        for (var i = 0; i < marked.length; i++) {
+            marked[i].classList.remove('is-moving-qr');
+            marked[i].classList.remove('is-over');
+        }
+        var ghost = document.getElementById('asset-tree-card-ghost');
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    }
+
+    function pointerOverSheet(x, y) {
+        var sheet = cardSheetNode();
+        if (!sheet) return false;
+        var rect = sheet.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }
+
+    function cardInsertIndex(clientY) {
+        var lines = document.querySelectorAll('#asset-tree-app .asset-tree-card-edit .asset-tree-card-line');
+        if (!lines.length) return 0;
+        for (var i = 0; i < lines.length; i++) {
+            var rect = lines[i].getBoundingClientRect();
+            if (clientY < rect.top + rect.height / 2) return i;
+        }
+        return lines.length;
+    }
+
+    function cardEdgeAt(x, y) {
+        var node = document.elementFromPoint(x, y);
+        while (node) {
+            if (node.classList && node.classList.contains('asset-tree-card-edge')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    }
+
+    function markCardDrop(x, y, token) {
+        var marked = document.querySelectorAll('.asset-tree-card-gap.is-over, .asset-tree-card-edge.is-over');
+        for (var i = 0; i < marked.length; i++) marked[i].classList.remove('is-over');
+        if (token === 'qr') {
+            var edge = cardEdgeAt(x, y);
+            if (edge) edge.classList.add('is-over');
+            return;
+        }
+        if (!pointerOverSheet(x, y)) return;
+        var gaps = document.querySelectorAll('#asset-tree-app .asset-tree-card-edit .asset-tree-card-gap');
+        var gap = gaps[cardInsertIndex(y)];
+        if (gap) gap.classList.add('is-over');
+    }
+
+    function bindCardPointer(node, token) {
+        node.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
+            var target = event.target;
+            if (target && target.classList && target.classList.contains('asset-tree-card-x')) return;
+            if (node.tagName !== 'BUTTON') event.preventDefault();
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var moved = false;
+            function move(ev) {
+                if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 5) return;
+                if (!moved) {
+                    moved = true;
+                    state.cardDrag = token;
+                    node.classList.add('is-dragging');
+                    var ghost = el('div', 'asset-tree-card-ghost', token === 'qr' ? t('cardQr') : blockLabel(token));
+                    ghost.id = 'asset-tree-card-ghost';
+                    document.body.appendChild(ghost);
+                    if (token === 'qr') {
+                        var sheet = cardSheetNode();
+                        if (sheet) sheet.classList.add('is-moving-qr');
+                    }
+                }
+                var ghostNode = document.getElementById('asset-tree-card-ghost');
+                if (ghostNode) {
+                    ghostNode.style.left = (ev.clientX + 12) + 'px';
+                    ghostNode.style.top = (ev.clientY + 12) + 'px';
+                }
+                markCardDrop(ev.clientX, ev.clientY, token);
+            }
+            function up(ev) {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                if (!moved) return;
+                state.cardSuppressClick = true;
+                var edge = token === 'qr' ? cardEdgeAt(ev.clientX, ev.clientY) : null;
+                var index = token === 'qr' ? -1 : (pointerOverSheet(ev.clientX, ev.clientY) ? cardInsertIndex(ev.clientY) : -1);
+                clearCardDragMarks();
+                node.classList.remove('is-dragging');
+                state.cardDrag = '';
+                if (token === 'qr') {
+                    if (edge) {
+                        cardDraft().qr = edge.getAttribute('data-place') || 'left';
+                        renderFrame();
+                    }
+                    return;
+                }
+                if (index >= 0) insertCardLine(token, index);
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
         });
-        label.appendChild(box);
-        label.appendChild(document.createTextNode(blockLabel(token)));
-        row.appendChild(label);
-        if (on) {
-            var up = button(t('cardMoveUp'), 'asset-tree-btn', function () { moveCardLine(token, -1); });
-            var down = button(t('cardMoveDown'), 'asset-tree-btn', function () { moveCardLine(token, 1); });
-            if (index === 0) up.disabled = true;
-            if (index === draft.lines.length - 1) down.disabled = true;
-            row.appendChild(up);
-            row.appendChild(down);
-        }
+    }
+
+    function cardRemoveButton(onClick) {
+        var remove = el('button', 'asset-tree-card-x', '\u00d7');
+        remove.type = 'button';
+        remove.title = t('cardRemove');
+        remove.setAttribute('aria-label', t('cardRemove'));
+        remove.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick();
+        });
+        return remove;
+    }
+
+    function cardGap(index, empty) {
+        var gap = el('div', 'asset-tree-card-gap' + (empty ? ' is-empty' : ''));
+        if (empty) gap.appendChild(document.createTextNode(t('cardDropHere')));
+        return gap;
+    }
+
+    function cardEdge(place) {
+        var label = t('cardQrTop');
+        if (place === 'left') label = t('cardQrLeft');
+        if (place === 'right') label = t('cardQrRight');
+        var edge = el('div', 'asset-tree-card-edge is-' + place, label);
+        edge.setAttribute('data-place', place);
+        return edge;
+    }
+
+    function editorLine(token, sample) {
+        var row = el('div', 'asset-tree-card-line is-' + lineKind(token));
+        row.title = blockLabel(token);
+        row.appendChild(document.createTextNode(cardLineText(sample, token) || blockLabel(token)));
+        row.appendChild(cardRemoveButton(function () { removeCardLine(token); }));
+        bindCardPointer(row, token);
         return row;
+    }
+
+    function editorQr(sample) {
+        var box = el('div', 'asset-tree-card-qr');
+        box.title = t('cardQr');
+        var code = '';
+        if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+            code = window.AssetTreeQr.svg(cardLink(sample)) || '';
+        }
+        if (code) box.innerHTML = code;
+        box.appendChild(cardRemoveButton(function () {
+            cardDraft().qr = 'none';
+            renderFrame();
+        }));
+        bindCardPointer(box, 'qr');
+        return box;
+    }
+
+    function cardChip(token) {
+        var chip = button(blockLabel(token), 'asset-tree-card-chip', function () {
+            if (state.cardSuppressClick) {
+                state.cardSuppressClick = false;
+                return;
+            }
+            insertCardLine(token, cardDraft().lines.length);
+        });
+        if (cardDraft().lines.length >= 12) {
+            chip.disabled = true;
+            return chip;
+        }
+        bindCardPointer(chip, token);
+        return chip;
     }
 
     function saveCardDraft() {
@@ -7588,10 +7746,41 @@
     function renderCardSettings(panel) {
         ensureCardCss();
         var draft = cardDraft();
+        var sample = sampleCardAsset();
         var block = el('div', 'asset-tree-settings-block asset-tree-card-builder');
         block.appendChild(el('p', 'asset-tree-hint', t('cardHint')));
-        var form = el('div', 'asset-tree-card-form');
-        var controls = el('div', 'asset-tree-card-controls');
+
+        var palette = el('div', 'asset-tree-card-palette');
+        palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardOff')));
+        var unused = [];
+        CARD_BLOCKS.forEach(function (token) {
+            if (draft.lines.indexOf(token) < 0) unused.push(token);
+        });
+        customFields().forEach(function (fieldDef) {
+            var token = 'attr:' + fieldDef.fieldKey;
+            if (draft.lines.indexOf(token) < 0) unused.push(token);
+        });
+        if (draft.qr === 'none') {
+            var qrChip = button(t('cardQr'), 'asset-tree-card-chip', function () {
+                if (state.cardSuppressClick) {
+                    state.cardSuppressClick = false;
+                    return;
+                }
+                cardDraft().qr = 'left';
+                renderFrame();
+            });
+            bindCardPointer(qrChip, 'qr');
+            palette.appendChild(qrChip);
+        }
+        if (!unused.length && draft.qr !== 'none') {
+            palette.appendChild(el('p', 'asset-tree-hint', t('cardPaletteEmpty')));
+        }
+        unused.forEach(function (token) {
+            palette.appendChild(cardChip(token));
+        });
+        block.appendChild(palette);
+
+        var stage = el('div', 'asset-tree-card-stage');
         var size = selectBox('asset-tree-card-size', [
             { value: 'card', label: t('cardSizeCard') },
             { value: 'wide', label: t('cardSizeWide') },
@@ -7601,54 +7790,35 @@
             cardDraft().size = size.value;
             renderFrame();
         });
-        controls.appendChild(field(t('cardSize'), size));
-        var qr = selectBox('asset-tree-card-qr', [
-            { value: 'left', label: t('cardQrLeft') },
-            { value: 'right', label: t('cardQrRight') },
-            { value: 'top', label: t('cardQrTop') },
-            { value: 'none', label: t('cardQrNone') }
-        ], draft.qr);
-        qr.addEventListener('change', function () {
-            cardDraft().qr = qr.value;
-            renderFrame();
-        });
-        controls.appendChild(field(t('cardQr'), qr));
-        form.appendChild(controls);
-        form.appendChild(el('h3', 'asset-tree-settings-title', t('cardFields')));
-        var selected = draft.lines.slice();
-        var mainTokens = selected.slice();
-        CARD_BLOCKS.forEach(function (token) {
-            if (selected.indexOf(token) < 0) mainTokens.push(token);
-        });
-        var list = el('div', 'asset-tree-card-lines');
-        mainTokens.forEach(function (token) {
-            list.appendChild(cardLineRow(token));
-        });
-        form.appendChild(list);
-        var extras = customFields().filter(function (fieldDef) {
-            return selected.indexOf('attr:' + fieldDef.fieldKey) < 0;
-        });
-        if (extras.length) {
-            form.appendChild(el('h3', 'asset-tree-settings-title', t('cardCustom')));
-            var extraList = el('div', 'asset-tree-card-lines');
-            extras.forEach(function (fieldDef) {
-                extraList.appendChild(cardLineRow('attr:' + fieldDef.fieldKey));
+        stage.appendChild(field(t('cardSize'), size));
+
+        var sheet = el('div', 'asset-tree-card-sheet');
+        var preview = el('div', 'asset-tree-card-preview asset-tree-card-edit');
+        var article = el('article', 'asset-tree-card is-' + draft.size + ' is-' + draft.qr);
+        if (draft.qr !== 'none') article.appendChild(editorQr(sample));
+        var text = el('div', 'asset-tree-card-text');
+        if (!draft.lines.length) {
+            text.appendChild(cardGap(0, true));
+        } else {
+            draft.lines.forEach(function (token, index) {
+                text.appendChild(cardGap(index, false));
+                text.appendChild(editorLine(token, sample));
             });
-            form.appendChild(extraList);
+            text.appendChild(cardGap(draft.lines.length, false));
         }
-        if (!selected.length && draft.qr === 'none') {
-            form.appendChild(el('p', 'asset-tree-hint', t('cardEmpty')));
+        article.appendChild(text);
+        preview.appendChild(article);
+        sheet.appendChild(preview);
+        sheet.appendChild(cardEdge('top'));
+        sheet.appendChild(cardEdge('left'));
+        sheet.appendChild(cardEdge('right'));
+        stage.appendChild(sheet);
+        if (!draft.lines.length && draft.qr === 'none') {
+            stage.appendChild(el('p', 'asset-tree-hint', t('cardEmpty')));
         }
         var actions = el('div', 'asset-tree-inline-actions');
         actions.appendChild(button(t('save'), 'asset-tree-btn primary', saveCardDraft));
-        form.appendChild(actions);
-        block.appendChild(form);
-        var stage = el('div', 'asset-tree-card-stage');
-        stage.appendChild(el('h3', 'asset-tree-settings-title', t('cardPreview')));
-        var preview = el('div', 'asset-tree-card-preview');
-        var markup = cardArticle(sampleCardAsset(), draft, true);
-        if (markup) preview.innerHTML = markup;
-        stage.appendChild(preview);
+        stage.appendChild(actions);
         block.appendChild(stage);
         panel.appendChild(block);
     }
