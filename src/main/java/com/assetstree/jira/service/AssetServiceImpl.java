@@ -1650,6 +1650,9 @@ public class AssetServiceImpl implements AssetService {
                     row = ao().create(CardTemplateEntity.class, new DBParam("PROJECT_KEY", project.getKey()));
                 }
                 row.setCardSize(layout.getSize());
+                row.setWidthMm(layout.getWidth());
+                row.setHeightMm(layout.getHeight());
+                row.setGridMm(layout.getGrid());
                 row.setQrPlace(layout.getQr());
                 row.setLines(CardLayout.join(layout.getLines()));
                 row.setCanvas(layout.getElements() == null ? null : CardCanvas.write(layout.getElements()));
@@ -1696,6 +1699,9 @@ public class AssetServiceImpl implements AssetService {
         }
         CardLayout raw = new CardLayout();
         raw.setSize(row.getCardSize());
+        raw.setWidth(row.getWidthMm());
+        raw.setHeight(row.getHeightMm());
+        raw.setGrid(row.getGridMm());
         raw.setQr(row.getQrPlace());
         raw.setLines(CardLayout.split(row.getLines()));
         String canvas = row.getCanvas();

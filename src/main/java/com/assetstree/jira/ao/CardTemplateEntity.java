@@ -22,6 +22,18 @@ public interface CardTemplateEntity extends Entity {
 
     void setCardSize(String cardSize);
 
+    Double getWidthMm();
+
+    void setWidthMm(Double widthMm);
+
+    Double getHeightMm();
+
+    void setHeightMm(Double heightMm);
+
+    Integer getGridMm();
+
+    void setGridMm(Integer gridMm);
+
     @StringLength(8)
     String getQrPlace();
 

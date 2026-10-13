@@ -3061,6 +3061,11 @@
                         return item.asset || assetByAnyId(parseInt(item.key, 10));
                     }));
                 }));
+                bar.appendChild(button(t('printQrSheet'), 'asset-tree-btn', function () {
+                    printQrSheet(items.map(function (item) {
+                        return item.asset || assetByAnyId(parseInt(item.key, 10));
+                    }));
+                }));
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
             }
             if (assetsOnly) {
@@ -3982,13 +3987,36 @@
     var CARD_ELEMENT_ID = /^[a-z0-9]{4,16}$/;
 
     function defaultCard() {
-        return { size: 'card', qr: 'left', lines: ['name', 'type', 'place', 'key', 'scan'] };
+        return { size: 'card', qr: 'left', lines: ['name', 'type', 'place', 'key', 'scan'], width: 86, height: 54, grid: 2 };
     }
 
-    function cardSheet(size) {
+    function cardEdge(value, max, fallback) {
+        var number = Number(value);
+        if (!isFinite(number)) return fallback;
+        if (number < 15) return 15;
+        if (number > max) return max;
+        return cardRound(number);
+    }
+
+    function cardSheet(layout) {
+        var size = layout;
+        var width = 0;
+        var height = 0;
+        if (layout && typeof layout === 'object') {
+            size = layout.size;
+            width = layout.width;
+            height = layout.height;
+        }
+        if (size === 'custom') return { w: cardEdge(width, 210, 86), h: cardEdge(height, 297, 54) };
         if (size === 'wide') return { w: 100, h: 64 };
         if (size === 'label') return { w: 58, h: 36 };
         return { w: 86, h: 54 };
+    }
+
+    function cardSnap(value, step) {
+        var number = cardRound(value);
+        if (!step) return number;
+        return cardRound(Math.round(number / step) * step);
     }
 
     function cardFieldToken(raw) {
@@ -4052,8 +4080,8 @@
         return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     }
 
-    function cleanElements(raw, size) {
-        var sheet = cardSheet(size);
+    function cleanElements(raw, layout) {
+        var sheet = cardSheet(layout);
         var elements = [];
         var ids = {};
         var fields = {};
@@ -4070,17 +4098,10 @@
                 kept.token = token;
             } else if (kind === 'qr') {
                 var mode = String(item.token || '').toLowerCase();
-                if (mode !== 'asset' && mode !== 'custom') mode = cardCleanText(item.text) ? 'custom' : 'asset';
-                if (mode === 'asset') {
-                    if (assetCode) return;
-                    assetCode = true;
-                    kept.token = 'asset';
-                } else {
-                    var payload = cardCleanText(item.text);
-                    if (!payload) return;
-                    kept.token = 'custom';
-                    kept.text = payload;
-                }
+                if (mode && mode !== 'asset') return;
+                if (assetCode) return;
+                assetCode = true;
+                kept.token = 'asset';
             } else if (kind === 'logo') {
                 var src = String(item.src || '').replace(/^\s+|\s+$/g, '');
                 if (src.length > 90000 || !CARD_SRC.test(src)) return;
@@ -4126,7 +4147,7 @@
 
     function elementsFromLegacy(layout) {
         var size = layout.size;
-        var sheet = cardSheet(size);
+        var sheet = cardSheet(layout);
         var place = layout.qr;
         var qr = null;
         if (place === 'top') {
@@ -4163,12 +4184,12 @@
             });
             y += style.h + 0.6;
         });
-        return cleanElements(items, size);
+        return cleanElements(items, layout);
     }
 
     function normalizeClientCard(layout) {
         var source = layout || {};
-        var size = CARD_SIZES[source.size] ? source.size : 'card';
+        var size = source.size === 'custom' || CARD_SIZES[source.size] ? source.size : 'card';
         var qr = CARD_QRS[source.qr] ? source.qr : 'left';
         var lines = [];
         var seen = {};
@@ -4178,8 +4199,19 @@
             seen[token] = true;
             lines.push(token);
         });
-        var card = { size: size, qr: qr, lines: lines };
-        if (source.elements) card.elements = cleanElements(source.elements, size);
+        var card = { size: size, qr: qr, lines: lines, grid: 2 };
+        var grid = parseInt(source.grid, 10);
+        if (grid === 0 || grid === 1 || grid === 2 || grid === 5) card.grid = grid;
+        var sheet = cardSheet(card.size === 'custom' ? { size: 'custom', width: source.width, height: source.height } : card.size);
+        card.width = sheet.w;
+        card.height = sheet.h;
+        card.size = card.size === 'custom' ? 'custom' : (sheet.w === 100 ? 'wide' : (sheet.w === 58 ? 'label' : (card.size === 'card' || card.size === 'wide' || card.size === 'label' ? card.size : 'card')));
+        if (card.size !== 'custom') {
+            if (card.size === 'wide') { card.width = 100; card.height = 64; }
+            else if (card.size === 'label') { card.width = 58; card.height = 36; }
+            else { card.size = 'card'; card.width = 86; card.height = 54; }
+        }
+        if (source.elements) card.elements = cleanElements(source.elements, card);
         return card;
     }
 
@@ -4402,7 +4434,7 @@
                 if (html) parts.push(html);
             });
             if (!parts.length && !preview) return '';
-            return '<article class="asset-tree-card is-free is-' + card.size + '">' + parts.join('') + '</article>';
+            return '<article class="asset-tree-card is-free" style="' + cardFrameStyle(card) + '">' + parts.join('') + '</article>';
         }
         var code = '';
         if (card.qr !== 'none') {
@@ -4419,8 +4451,13 @@
         });
         if (!lines.length && card.qr === 'none') return '';
         var qrHtml = card.qr === 'none' ? '' : '<div class="asset-tree-card-qr">' + code + '</div>';
-        return '<article class="asset-tree-card is-' + card.size + ' is-' + card.qr + '">' + qrHtml
+        return '<article class="asset-tree-card is-' + card.size + ' is-' + card.qr + '" style="' + cardFrameStyle(card) + '">' + qrHtml
             + '<div class="asset-tree-card-text">' + lines.join('') + '</div></article>';
+    }
+
+    function cardFrameStyle(layout) {
+        var sheet = cardSheet(layout);
+        return 'width:' + sheet.w + 'mm;height:' + sheet.h + 'mm;';
     }
 
     function printCards(assets) {
@@ -4459,11 +4496,66 @@
             return;
         }
         if (qrSkipped) notify(t('printQrSkipped'));
+        var label = cardSheet(cardLayoutFor(cards[0].projectKey));
         sheet.document.open();
-        sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>body{margin:0}' + cardCss() + '@page{size:A4;margin:8mm}</style></head><body>'
-            + '<div class="asset-tree-card-preview"><div class="bar"><p>' + htmlEscape(t('printHint')) + '</p><button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
+        sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>body{margin:0}' + cardCss()
+            + '@page{size:A4;margin:8mm}@page label{size:' + label.w + 'mm ' + label.h + 'mm;margin:1mm}'
+            + '.asset-tree-card-preview.is-labels .asset-tree-card{page:label;break-after:page}</style></head><body>'
+            + '<div class="asset-tree-card-preview"><div class="bar"><p>' + htmlEscape(t('printHint')) + '</p>'
+            + '<button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button>'
+            + '<button type="button" onclick="this.parentNode.parentNode.classList.add(\'is-labels\');window.print()">' + htmlEscape(t('printLabels')) + '</button></div>'
             + '<div class="sheet">' + body + '</div></div></body></html>');
         sheet.document.close();
+    }
+
+    function printQrSheet(assets) {
+        var cards = (assets || []).filter(function (asset) {
+            return asset && !isFolder(asset) && asset.objectKey;
+        });
+        if (!cards.length) {
+            notify(t('printEmpty'));
+            return;
+        }
+        if (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function') {
+            notify(t('errorTitle'));
+            return;
+        }
+        var skipped = 0;
+        var cells = [];
+        cards.forEach(function (asset) {
+            var code = window.AssetTreeQr.svg(cardLink(asset)) || '';
+            if (!code) {
+                skipped++;
+                return;
+            }
+            cells.push('<div class="qr-cell"><div class="qr-mark">' + code + '</div><p>' + htmlEscape(asset.objectKey || '') + '</p><p class="qr-name">' + htmlEscape(asset.name || '') + '</p></div>');
+        });
+        if (!cells.length) {
+            notify(t('printQrSkipped'));
+            return;
+        }
+        if (skipped) notify(t('printQrSkipped'));
+        var popup = window.open('', '_blank');
+        if (!popup) {
+            notify(t('printBlocked'));
+            return;
+        }
+        var css = '.qr-preview{color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
+            + '.qr-preview .bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
+            + '.qr-preview .bar p{margin:0;flex:1}'
+            + '.qr-preview .bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
+            + '.qr-sheet{display:flex;flex-wrap:wrap;align-content:flex-start;gap:2mm;padding:0}'
+            + '.qr-cell{width:32mm;height:40mm;box-sizing:border-box;page-break-inside:avoid;text-align:center;overflow:hidden}'
+            + '.qr-mark{width:26mm;height:26mm;margin:0 auto}'
+            + '.qr-mark svg{width:100%;height:100%;display:block}'
+            + '.qr-cell p{margin:0;font:7pt ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.15;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}'
+            + '.qr-cell p.qr-name{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:6.5pt;color:#44546f}'
+            + '@media print{.qr-preview .bar{display:none}}';
+        popup.document.open();
+        popup.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printQrSheet')) + '</title><style>body{margin:0}' + css + '@page{size:A4;margin:8mm}</style></head><body>'
+            + '<div class="qr-preview"><div class="bar"><p>' + htmlEscape(t('printQrHint')) + '</p><button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
+            + '<div class="qr-sheet">' + cells.join('') + '</div></div></body></html>');
+        popup.document.close();
     }
 
     function showDetailView(asset, issuesLoading, section) {
@@ -4489,6 +4581,9 @@
         if (!isFolder(asset)) {
             ops.appendChild(toolButton(t('printCard'), 'print', function () {
                 printCards([state.detail && state.detail.id === asset.id ? state.detail : asset]);
+            }));
+            ops.appendChild(toolButton(t('printQrSheet'), 'print', function () {
+                printQrSheet([state.detail && state.detail.id === asset.id ? state.detail : asset]);
             }));
         }
         var extra = [];
@@ -7791,7 +7886,7 @@
         if (!article) return null;
         var rect = article.getBoundingClientRect();
         if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
-        var sheet = cardSheet(cardDraft().size);
+        var sheet = cardSheet(cardDraft());
         return {
             x: (clientX - rect.left) / rect.width * sheet.w,
             y: (clientY - rect.top) / rect.height * sheet.h
@@ -7818,7 +7913,7 @@
                 body.innerHTML = code;
                 return;
             }
-            body.appendChild(document.createTextNode(item.token === 'asset' ? t('cardQrAsset') : t('cardQrCustom')));
+            body.appendChild(document.createTextNode(t('cardQrAsset')));
             return;
         }
         var text = item.kind === 'text' ? item.text : (cardLineText(sample, item.token) || blockLabel(item.token));
@@ -7867,11 +7962,15 @@
             bold: spec.bold != null ? !!spec.bold : spec.kind === 'text',
             align: 'left'
         };
+        var step = draft.grid || 0;
         if (x != null && y != null) {
-            item.x = x - item.w / 2;
-            item.y = y - item.h / 2;
+            item.x = cardSnap(x - item.w / 2, step);
+            item.y = cardSnap(y - item.h / 2, step);
+        } else {
+            item.x = cardSnap(item.x, step);
+            item.y = cardSnap(item.y, step);
         }
-        var cleaned = cleanElements(draft.elements.concat([item]), draft.size);
+        var cleaned = cleanElements(draft.elements.concat([item]), draft);
         if (cleaned.length !== draft.elements.length + 1) return;
         draft.elements = cleaned;
         state.cardSelected = cleaned[cleaned.length - 1].id;
@@ -7950,12 +8049,13 @@
             var originH = item.h;
             function ratio() {
                 var rect = node.parentNode.getBoundingClientRect();
-                var sheet = cardSheet(cardDraft().size);
+                var sheet = cardSheet(cardDraft());
                 return { x: sheet.w / rect.width, y: sheet.h / rect.height, sheet: sheet };
             }
             function move(ev) {
                 if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
                 var scale = ratio();
+                var step = cardDraft().grid || 0;
                 if (resize) {
                     var nextW = originW + (ev.clientX - startX) * scale.x;
                     var nextH = originH + (ev.clientY - startY) * scale.y;
@@ -7966,11 +8066,11 @@
                     } else if (item.kind === 'logo' && originW > 0) {
                         nextH = nextW * (originH / originW);
                     }
-                    item.w = Math.max(4, Math.min(scale.sheet.w, cardRound(nextW)));
-                    item.h = Math.max(4, Math.min(scale.sheet.h, cardRound(nextH)));
+                    item.w = Math.max(4, Math.min(scale.sheet.w, cardSnap(nextW, step)));
+                    item.h = Math.max(4, Math.min(scale.sheet.h, cardSnap(nextH, step)));
                 } else {
-                    item.x = Math.max(0, Math.min(scale.sheet.w - 4, cardRound(originX + (ev.clientX - startX) * scale.x)));
-                    item.y = Math.max(0, Math.min(scale.sheet.h - 4, cardRound(originY + (ev.clientY - startY) * scale.y)));
+                    item.x = Math.max(0, Math.min(scale.sheet.w - 4, cardSnap(originX + (ev.clientX - startX) * scale.x, step)));
+                    item.y = Math.max(0, Math.min(scale.sheet.h - 4, cardSnap(originY + (ev.clientY - startY) * scale.y, step)));
                 }
                 applyItemStyle(node, item);
             }
@@ -8149,7 +8249,7 @@
                 renderFrame();
             }));
         });
-        if (item.kind === 'text' || (item.kind === 'qr' && item.token === 'custom')) {
+        if (item.kind === 'text') {
             var area = el('textarea');
             area.id = 'asset-tree-card-caption';
             area.rows = 2;
@@ -8158,7 +8258,7 @@
                 item.text = area.value;
                 paintSelectedItem();
             });
-            tools.appendChild(field(item.kind === 'text' ? t('cardCaption') : t('cardQrText'), area));
+            tools.appendChild(field(t('cardCaption'), area));
         }
         if (item.kind === 'logo') {
             tools.appendChild(button(t('cardReplaceLogo'), 'asset-tree-btn', function () {
@@ -8176,6 +8276,9 @@
         setBusy(true);
         ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/card', {
             size: draft.size,
+            width: draft.width,
+            height: draft.height,
+            grid: draft.grid,
             qr: draft.qr,
             lines: (draft.lines || []).slice(),
             elements: (draft.elements || []).map(function (item) {
@@ -8229,7 +8332,7 @@
                         entry.w = w;
                         entry.h = h;
                     });
-                    cardDraft().elements = cleanElements(cardDraft().elements, cardDraft().size);
+                    cardDraft().elements = cleanElements(cardDraft().elements, cardDraft());
                     renderFrame();
                     return;
                 }
@@ -8244,7 +8347,6 @@
         if (!cardHas('qr', 'asset')) {
             palette.appendChild(paletteButton(t('cardQrAsset'), { kind: 'qr', token: 'asset', w: 28, h: 28 }));
         }
-        palette.appendChild(paletteButton(t('cardQrCustom'), { kind: 'qr', token: 'custom', text: t('cardQrCustom'), w: 28, h: 28 }));
         palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardOff')));
         var unused = [];
         CARD_BLOCKS.forEach(function (token) {
@@ -8265,23 +8367,75 @@
         block.appendChild(palette);
 
         var stage = el('div', 'asset-tree-card-stage');
+        var measures = el('div', 'asset-tree-card-measures');
         var size = selectBox('asset-tree-card-size', [
             { value: 'card', label: t('cardSizeCard') },
             { value: 'wide', label: t('cardSizeWide') },
-            { value: 'label', label: t('cardSizeLabel') }
+            { value: 'label', label: t('cardSizeLabel') },
+            { value: 'custom', label: t('cardSizeCustom') }
         ], draft.size);
         size.addEventListener('change', function () {
             var current = cardDraft();
+            if (size.value === 'custom' && current.size !== 'custom') {
+                var sheetNow = cardSheet(current);
+                current.width = sheetNow.w;
+                current.height = sheetNow.h;
+            }
             current.size = size.value;
-            current.elements = cleanElements(current.elements, current.size);
+            var nextSheet = cardSheet(current);
+            current.width = nextSheet.w;
+            current.height = nextSheet.h;
+            current.elements = cleanElements(current.elements, current);
             renderFrame();
         });
-        stage.appendChild(field(t('cardSize'), size));
+        measures.appendChild(field(t('cardSize'), size));
+        if (draft.size === 'custom') {
+            var widthInput = input('asset-tree-card-width', String(draft.width));
+            widthInput.type = 'number';
+            widthInput.min = '15';
+            widthInput.max = '210';
+            widthInput.step = '1';
+            widthInput.addEventListener('change', function () {
+                var current = cardDraft();
+                current.width = cardEdge(widthInput.value, 210, current.width);
+                current.elements = cleanElements(current.elements, current);
+                renderFrame();
+            });
+            var heightInput = input('asset-tree-card-height', String(draft.height));
+            heightInput.type = 'number';
+            heightInput.min = '15';
+            heightInput.max = '297';
+            heightInput.step = '1';
+            heightInput.addEventListener('change', function () {
+                var current = cardDraft();
+                current.height = cardEdge(heightInput.value, 297, current.height);
+                current.elements = cleanElements(current.elements, current);
+                renderFrame();
+            });
+            measures.appendChild(field(t('cardWidth'), widthInput));
+            measures.appendChild(field(t('cardHeight'), heightInput));
+        }
+        var grid = selectBox('asset-tree-card-grid', [
+            { value: '0', label: t('cardGridOff') },
+            { value: '1', label: '1 ' + t('cardMm') },
+            { value: '2', label: '2 ' + t('cardMm') },
+            { value: '5', label: '5 ' + t('cardMm') }
+        ], String(draft.grid));
+        grid.addEventListener('change', function () {
+            cardDraft().grid = parseInt(grid.value, 10) || 0;
+            renderFrame();
+        });
+        measures.appendChild(field(t('cardGrid'), grid));
+        stage.appendChild(measures);
         renderCardTools(stage);
 
         var sheet = el('div', 'asset-tree-card-sheet');
         var preview = el('div', 'asset-tree-card-preview asset-tree-card-edit');
-        var article = el('article', 'asset-tree-card is-free is-' + draft.size);
+        var article = el('article', 'asset-tree-card is-free' + (draft.grid ? ' is-grid' : ''));
+        var sheetMm = cardSheet(draft);
+        article.style.width = sheetMm.w + 'mm';
+        article.style.height = sheetMm.h + 'mm';
+        if (draft.grid) article.style.backgroundSize = draft.grid + 'mm ' + draft.grid + 'mm';
         (draft.elements || []).forEach(function (item) {
             article.appendChild(editorItem(item, sample));
         });

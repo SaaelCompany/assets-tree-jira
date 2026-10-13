@@ -25,6 +25,10 @@ public class CardLayout {
     public static final String SIZE_CARD = "card";
     public static final String SIZE_WIDE = "wide";
     public static final String SIZE_LABEL = "label";
+    public static final String SIZE_CUSTOM = "custom";
+    public static final double MIN_EDGE = 15;
+    public static final double MAX_WIDTH = 210;
+    public static final double MAX_HEIGHT = 297;
     public static final String QR_LEFT = "left";
     public static final String QR_RIGHT = "right";
     public static final String QR_TOP = "top";
@@ -38,7 +42,6 @@ public class CardLayout {
     private static final Pattern ID = Pattern.compile("^[a-z0-9]{4,16}$");
     private static final Pattern COLOR = Pattern.compile("^#[0-9a-fA-F]{6}$");
     private static final Pattern SRC = Pattern.compile("^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+=*$");
-    private static final Set<String> SIZES = new HashSet<String>(Arrays.asList(SIZE_CARD, SIZE_WIDE, SIZE_LABEL));
     private static final Set<String> QRS = new HashSet<String>(Arrays.asList(QR_LEFT, QR_RIGHT, QR_TOP, QR_NONE));
     private static final Set<String> KINDS = new HashSet<String>(Arrays.asList(KIND_TEXT, KIND_FIELD, KIND_QR, KIND_LOGO));
     private static final Set<String> FONTS = new HashSet<String>(Arrays.asList("sans", "serif", "mono"));
@@ -50,12 +53,18 @@ public class CardLayout {
     private String qr;
     private List<String> lines;
     private List<CardElement> elements;
+    private Double width;
+    private Double height;
+    private Integer grid;
 
     public static CardLayout defaults() {
         CardLayout layout = new CardLayout();
         layout.size = SIZE_CARD;
         layout.qr = QR_LEFT;
         layout.lines = new ArrayList<String>(Arrays.asList("name", "type", "place", "key", "scan"));
+        layout.width = Double.valueOf(86);
+        layout.height = Double.valueOf(54);
+        layout.grid = Integer.valueOf(2);
         return layout;
     }
 
@@ -64,10 +73,8 @@ public class CardLayout {
         if (raw == null) {
             return layout;
         }
-        String size = token(raw.size);
-        if (SIZES.contains(size)) {
-            layout.size = size;
-        }
+        applySize(layout, token(raw.size), raw.width, raw.height);
+        applyGrid(layout, raw.grid);
         String qr = token(raw.qr);
         if (QRS.contains(qr)) {
             layout.qr = qr;
@@ -76,7 +83,7 @@ public class CardLayout {
             layout.lines = fieldLines(raw.lines);
         }
         if (raw.elements != null) {
-            layout.elements = cleanElements(raw.elements, layout.size);
+            layout.elements = cleanElements(raw.elements, layout.width.doubleValue(), layout.height.doubleValue());
             layout.lines = new ArrayList<String>();
             boolean assetCode = false;
             for (CardElement element : layout.elements) {
@@ -102,6 +109,38 @@ public class CardLayout {
             return token;
         }
         return "";
+    }
+
+    private static void applySize(CardLayout layout, String size, Double width, Double height) {
+        if (SIZE_CUSTOM.equals(size)) {
+            layout.size = SIZE_CUSTOM;
+            layout.width = Double.valueOf(clamp(roundMm(width == null ? 86 : width.doubleValue()), MIN_EDGE, MAX_WIDTH));
+            layout.height = Double.valueOf(clamp(roundMm(height == null ? 54 : height.doubleValue()), MIN_EDGE, MAX_HEIGHT));
+            return;
+        }
+        if (SIZE_WIDE.equals(size)) {
+            layout.size = SIZE_WIDE;
+            layout.width = Double.valueOf(100);
+            layout.height = Double.valueOf(64);
+            return;
+        }
+        if (SIZE_LABEL.equals(size)) {
+            layout.size = SIZE_LABEL;
+            layout.width = Double.valueOf(58);
+            layout.height = Double.valueOf(36);
+            return;
+        }
+        layout.size = SIZE_CARD;
+        layout.width = Double.valueOf(86);
+        layout.height = Double.valueOf(54);
+    }
+
+    private static void applyGrid(CardLayout layout, Integer grid) {
+        if (grid != null && (grid.intValue() == 0 || grid.intValue() == 1 || grid.intValue() == 2 || grid.intValue() == 5)) {
+            layout.grid = grid;
+            return;
+        }
+        layout.grid = Integer.valueOf(2);
     }
 
     public static double widthOf(String size) {
@@ -140,13 +179,11 @@ public class CardLayout {
         return next;
     }
 
-    private static List<CardElement> cleanElements(List<CardElement> raw, String size) {
+    private static List<CardElement> cleanElements(List<CardElement> raw, double width, double height) {
         List<CardElement> next = new ArrayList<CardElement>();
         Set<String> ids = new HashSet<String>();
         Set<String> fields = new HashSet<String>();
         boolean assetCode = false;
-        double width = widthOf(size);
-        double height = heightOf(size);
         int serial = 0;
         for (CardElement item : raw) {
             if (item == null || next.size() >= MAX_ELEMENTS) {
@@ -169,23 +206,14 @@ public class CardLayout {
                 kept.setToken(token);
             } else if (KIND_QR.equals(kind)) {
                 String mode = token(item.getToken());
-                if (!"asset".equals(mode) && !"custom".equals(mode)) {
-                    mode = item.getText() == null || item.getText().trim().isEmpty() ? "asset" : "custom";
+                if (!mode.isEmpty() && !"asset".equals(mode)) {
+                    continue;
                 }
-                if ("asset".equals(mode)) {
-                    if (assetCode) {
-                        continue;
-                    }
-                    assetCode = true;
-                    kept.setToken("asset");
-                } else {
-                    String payload = cleanText(item.getText());
-                    if (payload.isEmpty()) {
-                        continue;
-                    }
-                    kept.setToken("custom");
-                    kept.setText(payload);
+                if (assetCode) {
+                    continue;
                 }
+                assetCode = true;
+                kept.setToken("asset");
             } else if (KIND_LOGO.equals(kind)) {
                 String src = item.getSrc() == null ? "" : item.getSrc().trim();
                 if (src.length() > MAX_SRC || !SRC.matcher(src).matches()) {
@@ -359,5 +387,29 @@ public class CardLayout {
 
     public void setElements(List<CardElement> elements) {
         this.elements = elements;
+    }
+
+    public Double getWidth() {
+        return width;
+    }
+
+    public void setWidth(Double width) {
+        this.width = width;
+    }
+
+    public Double getHeight() {
+        return height;
+    }
+
+    public void setHeight(Double height) {
+        this.height = height;
+    }
+
+    public Integer getGrid() {
+        return grid;
+    }
+
+    public void setGrid(Integer grid) {
+        this.grid = grid;
     }
 }

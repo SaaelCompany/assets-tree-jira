@@ -202,7 +202,7 @@ STATE = {
 
 
 CARD_BLOCKS = {"name", "key", "type", "place", "status", "custodian", "project", "description", "scan"}
-CARD_SIZES = {"card", "wide", "label"}
+CARD_SIZES = {"card", "wide", "label", "custom"}
 CARD_QRS = {"left", "right", "top", "none"}
 CARD_KINDS = {"text", "field", "qr", "logo"}
 CARD_FONTS = {"sans", "serif", "mono"}
@@ -214,7 +214,10 @@ CARD_SRC = re.compile(r"^data:image/(png|jpeg);base64,[A-Za-z0-9+/]+=*$")
 
 
 def default_card():
-    return {"size": "card", "qr": "left", "lines": ["name", "type", "place", "key", "scan"]}
+    return {
+        "size": "card", "qr": "left", "lines": ["name", "type", "place", "key", "scan"],
+        "width": 86.0, "height": 54.0, "grid": 2,
+    }
 
 
 def card_field_token(raw):
@@ -228,12 +231,44 @@ def card_field_token(raw):
     return ""
 
 
-def card_sheet(size):
+def card_edge(value, limit, fallback):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(fallback)
+    if number < 15:
+        return 15.0
+    if number > limit:
+        return float(limit)
+    return round(number, 2)
+
+
+def apply_sheet(layout, size, width, height):
+    if size == "custom":
+        layout["size"] = "custom"
+        layout["width"] = card_edge(width, 210, 86)
+        layout["height"] = card_edge(height, 297, 54)
+        return
     if size == "wide":
-        return 100.0, 64.0
+        layout["size"] = "wide"
+        layout["width"], layout["height"] = 100.0, 64.0
+        return
     if size == "label":
-        return 58.0, 36.0
-    return 86.0, 54.0
+        layout["size"] = "label"
+        layout["width"], layout["height"] = 58.0, 36.0
+        return
+    layout["size"] = "card"
+    layout["width"], layout["height"] = 86.0, 54.0
+
+
+def apply_grid(raw):
+    try:
+        grid = int(raw)
+    except (TypeError, ValueError):
+        return 2
+    if grid in (0, 1, 2, 5):
+        return grid
+    return 2
 
 
 def card_text(raw):
@@ -264,8 +299,7 @@ def card_text(raw):
     return "".join(out).strip()
 
 
-def normalize_elements(raw, size):
-    width, height = card_sheet(size)
+def normalize_elements(raw, width, height):
     elements = []
     ids = set()
     fields = set()
@@ -289,19 +323,12 @@ def normalize_elements(raw, size):
             kept["token"] = token
         elif kind == "qr":
             mode = str(item.get("token") or "").strip().lower()
-            if mode not in ("asset", "custom"):
-                mode = "custom" if card_text(item.get("text")) else "asset"
-            if mode == "asset":
-                if asset_code:
-                    continue
-                asset_code = True
-                kept["token"] = "asset"
-            else:
-                payload = card_text(item.get("text"))
-                if not payload:
-                    continue
-                kept["token"] = "custom"
-                kept["text"] = payload
+            if mode and mode != "asset":
+                continue
+            if asset_code:
+                continue
+            asset_code = True
+            kept["token"] = "asset"
         elif kind == "logo":
             src = str(item.get("src") or "").strip()
             if len(src) > 90000 or not CARD_SRC.match(src):
@@ -362,8 +389,10 @@ def normalize_card(raw):
         return layout
     size = str(raw.get("size") or "").strip().lower()
     qr = str(raw.get("qr") or "").strip().lower()
-    if size in CARD_SIZES:
-        layout["size"] = size
+    if size not in CARD_SIZES:
+        size = "card"
+    apply_sheet(layout, size, raw.get("width"), raw.get("height"))
+    layout["grid"] = apply_grid(raw.get("grid"))
     if qr in CARD_QRS:
         layout["qr"] = qr
     if raw.get("lines") is not None:
@@ -379,7 +408,7 @@ def normalize_card(raw):
                 break
         layout["lines"] = lines
     if raw.get("elements") is not None:
-        layout["elements"] = normalize_elements(raw.get("elements"), layout["size"])
+        layout["elements"] = normalize_elements(raw.get("elements"), layout["width"], layout["height"])
         layout["lines"] = [item["token"] for item in layout["elements"] if item["kind"] == "field"]
         layout["qr"] = "left" if any(item["kind"] == "qr" and item["token"] == "asset" for item in layout["elements"]) else "none"
     return layout
@@ -2378,7 +2407,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.91",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.92",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

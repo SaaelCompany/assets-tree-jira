@@ -3152,6 +3152,25 @@ a.asset-tree-url {
     margin-bottom: 12px;
 }
 
+#asset-tree-app .asset-tree-card-measures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    align-items: flex-end;
+    margin-bottom: 4px;
+}
+
+#asset-tree-app .asset-tree-card-measures .asset-tree-field {
+    margin: 0 0 8px;
+    max-width: 180px;
+}
+
+#asset-tree-app .asset-tree-card-edit .asset-tree-card.is-grid {
+    background-image:
+        linear-gradient(to right, rgba(9, 30, 66, 0.18) 0.2mm, transparent 0.2mm),
+        linear-gradient(to bottom, rgba(9, 30, 66, 0.18) 0.2mm, transparent 0.2mm);
+}
+
 #asset-tree-app .asset-tree-card-sheet {
     position: relative;
     display: inline-block;

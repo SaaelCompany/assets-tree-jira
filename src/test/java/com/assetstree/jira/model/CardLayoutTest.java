@@ -107,7 +107,7 @@ public class CardLayoutTest {
         again.setElements(CardCanvas.read(stored));
         again = CardLayout.normalize(again);
 
-        assertEquals(5, again.getElements().size());
+        assertEquals(4, again.getElements().size());
         CardElement keptCaption = again.getElements().get(0);
         assertEquals("text", keptCaption.getKind());
         assertEquals("\u041c\u041e\u041b:\n\"\u0418\u0432\u0430\u043d\u043e\u0432\"", keptCaption.getText());
@@ -118,8 +118,7 @@ public class CardLayoutTest {
         assertEquals("center", keptCaption.getAlign());
         assertEquals("attr:serial", again.getElements().get(1).getToken());
         assertEquals("logo", again.getElements().get(2).getKind());
-        assertEquals("custom", again.getElements().get(3).getToken());
-        assertEquals("asset", again.getElements().get(4).getToken());
+        assertEquals("asset", again.getElements().get(3).getToken());
         assertEquals(Arrays.asList("attr:serial"), again.getLines());
         assertEquals(CardLayout.QR_LEFT, again.getQr());
         assertNull(CardCanvas.read("{"));
@@ -135,6 +134,29 @@ public class CardLayoutTest {
 
         assertNull(layout.getElements());
         assertEquals(Arrays.asList("name", "key"), layout.getLines());
+        assertEquals(Integer.valueOf(2), layout.getGrid());
+        assertEquals(Double.valueOf(86), layout.getWidth());
+    }
+
+    @Test
+    public void customSizeAndGridStayInsideTheSheet() {
+        CardLayout raw = new CardLayout();
+        raw.setSize("custom");
+        raw.setWidth(Double.valueOf(12));
+        raw.setHeight(Double.valueOf(400));
+        raw.setGrid(Integer.valueOf(5));
+
+        CardLayout layout = CardLayout.normalize(raw);
+
+        assertEquals(CardLayout.SIZE_CUSTOM, layout.getSize());
+        assertEquals(Double.valueOf(15), layout.getWidth());
+        assertEquals(Double.valueOf(297), layout.getHeight());
+        assertEquals(Integer.valueOf(5), layout.getGrid());
+
+        raw.setGrid(Integer.valueOf(3));
+        assertEquals(Integer.valueOf(2), CardLayout.normalize(raw).getGrid());
+        raw.setGrid(Integer.valueOf(0));
+        assertEquals(Integer.valueOf(0), CardLayout.normalize(raw).getGrid());
     }
 
     private static CardElement block(String kind) {
