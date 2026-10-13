@@ -1542,7 +1542,96 @@
             return;
         }
         frame.appendChild(renderSide());
+        frame.appendChild(panelSplit('side'));
         frame.appendChild(renderDetail());
+        applyPanels();
+    }
+
+    function panelStore() {
+        if (state.panels) return state.panels;
+        var saved = {};
+        try {
+            saved = JSON.parse(localStorage.getItem('asset-tree.panels') || '{}') || {};
+        } catch (error) {
+            saved = {};
+        }
+        state.panels = {
+            side: panelClamp(saved.side, 180, 640, 272),
+            aside: panelClamp(saved.aside, 200, 560, 280)
+        };
+        return state.panels;
+    }
+
+    function panelClamp(value, min, max, fallback) {
+        var number = Number(value);
+        if (!isFinite(number)) return fallback;
+        return Math.max(min, Math.min(max, Math.round(number)));
+    }
+
+    function rememberPanels() {
+        try {
+            localStorage.setItem('asset-tree.panels', JSON.stringify(panelStore()));
+        } catch (error) {
+            return;
+        }
+    }
+
+    function applyPanels(form) {
+        var widths = panelStore();
+        var frame = document.getElementById('asset-tree-frame');
+        if (frame) frame.style.setProperty('--asset-side', widths.side + 'px');
+        var requests = form ? [form] : document.querySelectorAll('#asset-tree-app .asset-tree-request');
+        for (var i = 0; i < requests.length; i++) {
+            requests[i].style.setProperty('--asset-aside', widths.aside + 'px');
+        }
+    }
+
+    function panelSplit(kind) {
+        var handle = el('div', 'asset-tree-split');
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'vertical');
+        handle.tabIndex = 0;
+        handle.title = t('panelResize');
+        var limits = kind === 'aside' ? [200, 560] : [180, 640];
+        function setWidth(next) {
+            panelStore()[kind] = panelClamp(next, limits[0], limits[1], panelStore()[kind]);
+            applyPanels();
+        }
+        handle.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            var startX = event.clientX;
+            var start = panelStore()[kind];
+            handle.classList.add('is-active');
+            function move(ev) {
+                var delta = ev.clientX - startX;
+                setWidth(kind === 'aside' ? start - delta : start + delta);
+            }
+            function up() {
+                handle.classList.remove('is-active');
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                rememberPanels();
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+        handle.addEventListener('keydown', function (event) {
+            var step = event.shiftKey ? 40 : 16;
+            var sign = event.key === 'ArrowRight' ? 1 : (event.key === 'ArrowLeft' ? -1 : 0);
+            if (!sign) return;
+            event.preventDefault();
+            var delta = kind === 'aside' ? -sign * step : sign * step;
+            setWidth(panelStore()[kind] + delta);
+            rememberPanels();
+        });
+        return handle;
+    }
+
+    function attachAside(form, aside) {
+        form.appendChild(panelSplit('aside'));
+        form.appendChild(aside);
+        applyPanels(form);
     }
 
     function renderSide() {
@@ -2638,7 +2727,7 @@
         aside.appendChild(moduleBlock(t('dates'), datesBody(full)));
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         section.appendChild(form);
         return section;
     }
@@ -3956,57 +4045,41 @@
         xhr.send(data);
     }
 
-    function cardImageBlock(asset) {
-        var body = el('div', 'asset-tree-card-photo');
-        body.appendChild(el('p', 'asset-tree-hint', t('cardPictureHint')));
-        if (asset.cardImage) {
-            var img = el('img', 'asset-tree-card-photo-preview');
-            img.alt = '';
-            img.src = cardImageUrl(asset);
-            body.appendChild(img);
-        } else {
-            body.appendChild(el('p', 'asset-tree-hint', t('cardPictureEmpty')));
-        }
-        var error = el('p', 'asset-tree-form-error');
-        error.id = 'asset-tree-card-image-error';
-        error.hidden = true;
-        body.appendChild(error);
-        if (mayEdit(asset)) {
-            var actions = el('div', 'asset-tree-card-photo-actions');
-            var input = el('input');
+    function pickCardImage(asset) {
+        var input = document.getElementById('asset-tree-card-image-file');
+        if (!input) {
+            input = el('input');
+            input.id = 'asset-tree-card-image-file';
             input.type = 'file';
             input.accept = 'image/png,image/jpeg';
             input.className = 'asset-tree-import-file';
-            var label = el('label', 'asset-tree-btn');
-            label.appendChild(document.createTextNode(asset.cardImage ? t('cardPictureReplace') : t('cardPictureAdd')));
-            label.appendChild(input);
-            input.addEventListener('change', function () {
-                var chosen = input.files && input.files[0];
-                input.value = '';
-                if (chosen) uploadCardImage(asset, chosen);
-            });
-            actions.appendChild(label);
-            if (asset.cardImage) {
-                actions.appendChild(button(t('cardPictureRemove'), 'asset-tree-linkish', function () {
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('DELETE', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
-                    xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
-                    xhr.setRequestHeader('Accept', 'application/json');
-                    xhr.onreadystatechange = function () {
-                        if (xhr.readyState !== 4) return;
-                        if (xhr.status >= 200 && xhr.status < 300) selectAsset(asset.id, true);
-                        else {
-                            var payload = null;
-                            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
-                            showCardImageError((payload && payload.message) || t('errorTitle'));
-                        }
-                    };
-                    xhr.send();
-                }));
-            }
-            body.appendChild(actions);
+            document.body.appendChild(input);
         }
-        return moduleBlock(t('cardPicture'), body);
+        input.onchange = function () {
+            var chosen = input.files && input.files[0];
+            input.value = '';
+            if (chosen) uploadCardImage(asset, chosen);
+        };
+        input.click();
+    }
+
+    function deleteCardImage(asset) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('DELETE', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
+        xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                notify(t('saved'));
+                selectAsset(asset.id, true);
+                return;
+            }
+            var payload = null;
+            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
+            showCardImageError((payload && payload.message) || t('errorTitle'));
+        };
+        xhr.send();
     }
 
     function uploadFile(asset, file) {
@@ -4645,6 +4718,16 @@
             }));
         }
         var extra = [];
+        if (mayEdit(asset) && !isFolder(asset)) {
+            var current = state.detail && state.detail.id === asset.id ? state.detail : asset;
+            extra.push({
+                label: current.cardImage ? t('cardQrReplace') : t('cardQrUpload'),
+                onClick: function () { pickCardImage(current); }
+            });
+            if (current.cardImage) {
+                extra.push({ label: t('cardQrRemove'), onClick: function () { deleteCardImage(current); } });
+            }
+        }
         if (mayEdit(asset)) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
         if (childrenOf(asset.id).length || !showsInTree(asset)) {
             extra.push({
@@ -4675,7 +4758,6 @@
         var service = serviceBlock(asset);
         if (service) main.appendChild(service);
         main.appendChild(descriptionModule(asset, true));
-        if (!isFolder(asset)) main.appendChild(cardImageBlock(asset));
         main.appendChild(fileBlock(asset));
 
         var issues = el('div');
@@ -4713,7 +4795,7 @@
         aside.appendChild(moduleBlock(t('dates'), datesBody(asset)));
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         section.appendChild(form);
     }
 
@@ -4879,7 +4961,7 @@
         aside.appendChild(meta);
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         form.addEventListener('submit', function (event) {
             event.preventDefault();
             saveDetail();

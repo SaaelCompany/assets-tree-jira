@@ -347,7 +347,7 @@
     height: calc(100vh - 196px);
     min-height: 420px;
     display: grid;
-    grid-template-columns: 272px minmax(0, 1fr);
+    grid-template-columns: var(--asset-side, 272px) 6px minmax(0, 1fr);
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -1658,6 +1658,10 @@ a.asset-tree-url {
         grid-template-columns: 1fr;
     }
 
+    #asset-tree-app .asset-tree-split {
+        display: none;
+    }
+
     .asset-tree-dash {
         grid-template-columns: 1fr;
     }
@@ -2291,7 +2295,7 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-request {
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) 280px !important;
+    grid-template-columns: minmax(0, 1fr) 6px var(--asset-aside, 280px) !important;
     flex: 1;
     min-height: 0;
     margin: 0;
@@ -2389,7 +2393,7 @@ a.asset-tree-url {
 
 @media (max-width: 860px) {
     #asset-tree-app .asset-tree-request {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
     }
 
     #asset-tree-app .asset-tree-request-aside {
@@ -3253,26 +3257,27 @@ a.asset-tree-url {
     padding: 1mm;
 }
 
-#asset-tree-app .asset-tree-card-photo-preview {
-    display: block;
-    width: 96px;
-    height: 96px;
-    object-fit: contain;
-    border: 1px solid #dfe1e6;
-    background: #fff;
-    margin: 8px 0;
+#asset-tree-app .asset-tree-split {
+    cursor: col-resize;
+    touch-action: none;
+    position: relative;
+    z-index: 3;
 }
 
-#asset-tree-app .asset-tree-card-photo-actions {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-top: 8px;
+#asset-tree-app .asset-tree-split::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: transparent;
 }
 
-#asset-tree-app label.asset-tree-btn {
-    display: inline-flex;
-    align-items: center;
+#asset-tree-app .asset-tree-split:hover::after,
+#asset-tree-app .asset-tree-split.is-active::after,
+#asset-tree-app .asset-tree-split:focus-visible::after {
+    background: #4c9aff;
 }
 
 #asset-tree-app .asset-tree-card-body img,
