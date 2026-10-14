@@ -18,6 +18,7 @@ public class AssetTypeDto {
     private boolean showInTree;
     private boolean service;
     private String placeCaption;
+    private String parentTypeKey;
     private int assetCount;
     private List<FieldDto> fields = new ArrayList<FieldDto>();
 
@@ -107,6 +108,14 @@ public class AssetTypeDto {
 
     public void setPlaceCaption(String placeCaption) {
         this.placeCaption = placeCaption;
+    }
+
+    public String getParentTypeKey() {
+        return parentTypeKey;
+    }
+
+    public void setParentTypeKey(String parentTypeKey) {
+        this.parentTypeKey = parentTypeKey;
     }
 
     public List<FieldDto> getFields() {

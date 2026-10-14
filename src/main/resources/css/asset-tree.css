@@ -2029,6 +2029,54 @@ a.asset-tree-url {
     opacity: 1;
 }
 
+#asset-tree-app button.asset-tree-subtype {
+    display: inline-flex !important;
+    visibility: visible !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    height: 22px !important;
+    min-height: 22px !important;
+    margin: 0;
+    border-radius: 3px;
+    background: #ffffff !important;
+    border: 1px solid #dfe1e6 !important;
+    color: #0052cc !important;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+#asset-tree-app .asset-tree-row button.asset-tree-subtype {
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    border-width: 0 !important;
+    overflow: hidden;
+    opacity: 0;
+}
+
+#asset-tree-app .asset-tree-row:hover button.asset-tree-subtype,
+#asset-tree-app .asset-tree-row.is-selected button.asset-tree-subtype,
+#asset-tree-app .asset-tree-row:focus-within button.asset-tree-subtype {
+    width: auto !important;
+    min-width: 0 !important;
+    padding: 0 6px !important;
+    border-width: 1px !important;
+    opacity: 1;
+}
+
+#asset-tree-app .asset-tree-issue.is-nested {
+    margin-left: 28px;
+}
+
+#asset-tree-app .asset-tree-type-row.is-subtype,
+.asset-tree-backdrop .asset-tree-type-row.is-subtype {
+    margin-left: 18px;
+}
+
 #asset-tree-app input.asset-tree-search {
     width: 240px;
     max-width: 100%;

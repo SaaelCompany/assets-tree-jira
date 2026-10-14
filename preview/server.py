@@ -877,6 +877,7 @@ def type_dto(row, text, rows):
         "systemType": row["systemType"], "location": row["location"],
         "placeCaption": (row.get("placeCaption") or "") if row.get("location") else "",
         "showInTree": bool(row.get("location") or row.get("showInTree")),
+        "parentTypeKey": (row.get("parentTypeKey") or ""),
         "service": bool(row.get("service")) and not row.get("location"), "assetCount": count,
         "fields": [{
             "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
@@ -884,6 +885,28 @@ def type_dto(row, text, rows):
             "options": field.get("options") or [],
         } for field in row["fields"]],
     }
+
+
+def parent_key(row):
+    return ((row or {}).get("parentTypeKey") or "").strip()
+
+
+def child_types(type_key):
+    return [row for row in STATE["types"].values() if parent_key(row) == type_key]
+
+
+def resolve_parent(project_key, own_key, requested, location):
+    parent = (requested or "").strip()
+    if not parent:
+        return ""
+    if location or (own_key and own_key == parent):
+        return None
+    row = STATE["types"].get(parent)
+    if not row or row.get("location") or row.get("projectKey") != project_key:
+        return None
+    if parent_key(row) or (own_key and child_types(own_key)):
+        return None
+    return row["typeKey"]
 
 
 def asset_dto(asset, text, with_issues):
@@ -1953,6 +1976,9 @@ def bulk_types(project_key, action, keys, text):
         if any(asset["typeKey"] == key for asset in STATE["assets"].values()):
             errors.append({"label": label, "message": text.get("asset-tree.error.type.inUse", "Used")})
             continue
+        if child_types(key):
+            errors.append({"label": label, "message": text.get("asset-tree.error.type.hasSubtypes", "Subtypes")})
+            continue
         del STATE["types"][key]
         done += 1
     return 200, {"done": done, "errors": errors}
@@ -2548,7 +2574,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.98",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.99",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2868,6 +2894,8 @@ setTimeout(function () {
                 return 400, {"message": text["asset-tree.error.type.system"]}
             if any(asset["typeKey"] == row["typeKey"] for asset in STATE["assets"].values()):
                 return 409, {"message": text["asset-tree.error.type.inUse"]}
+            if child_types(row["typeKey"]):
+                return 409, {"message": text.get("asset-tree.error.type.hasSubtypes", "Subtypes")}
             del STATE["types"][row["typeKey"]]
             return 204, None
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/statuses", path)
@@ -3295,12 +3323,16 @@ setTimeout(function () {
                 return 400, {"message": text.get("asset-tree.error.caption.length", "Caption")}
         taken = set(STATE["types"])
         key = unique_key(slug(label) or "type", taken)
+        parent = resolve_parent(project_key, None, (body or {}).get("parentTypeKey"), location)
+        if parent is None:
+            return 400, {"message": text.get("asset-tree.error.type.parent", "Parent")}
         order = max([item["sortOrder"] for item in self.project_types(project_key)] or [-1]) + 1
         STATE["types"][key] = {
             "typeKey": key, "projectKey": project_key, "baseKey": "", "label": label, "color": color, "icon": icon,
             "systemType": False, "location": location, "placeCaption": caption,
             "showInTree": location or bool((body or {}).get("showInTree")),
             "service": (not location) and bool((body or {}).get("service")),
+            "parentTypeKey": parent,
             "sortOrder": order, "fields": [],
         }
         return 201, type_dto(STATE["types"][key], text, project_assets(project_key))
@@ -3329,6 +3361,11 @@ setTimeout(function () {
             if len(caption) > 80:
                 return 400, {"message": text.get("asset-tree.error.caption.length", "Caption")}
             row["placeCaption"] = caption
+        if "parentTypeKey" in body:
+            parent = resolve_parent(row["projectKey"], type_key, body.get("parentTypeKey"), bool(row.get("location")))
+            if parent is None:
+                return 400, {"message": text.get("asset-tree.error.type.parent", "Parent")}
+            row["parentTypeKey"] = parent
         return 200, type_dto(row, text, project_assets(row["projectKey"]))
 
     def add_field(self, type_key, body, text):

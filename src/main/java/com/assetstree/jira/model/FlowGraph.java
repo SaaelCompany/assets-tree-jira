@@ -15,8 +15,10 @@ import java.util.regex.Pattern;
 /**
  * A project process is a few nodes and the lines between them.
  * A request node joined straight to an equipment status fires when equipment
- * is added on that request. A request status between them fires when that
- * request later moves to the chosen status. A node with no line does nothing.
+ * is added on that request, at creation or any time later. A request status
+ * between them fires when that request moves to the chosen status, and also
+ * when equipment is added to a request that is already in that status.
+ * A node with no line does nothing.
  */
 public final class FlowGraph {
     public static final String REQUEST = "request";
@@ -76,9 +78,10 @@ public final class FlowGraph {
     }
 
     /**
-     * Equipment status for one request event. Create follows a direct line from
-     * the request type to an equipment status. A later transition follows a
-     * request-status node with that Jira status id, then its line to equipment.
+     * Equipment status for one request event. Adding equipment follows a direct
+     * line from the request type to an equipment status. A transition, or equipment
+     * added while the request is already in a status, follows a request-status
+     * node with that Jira status id, then its line to equipment.
      * When that node has incoming request lines, one of them must be this type.
      * A request-status node with no incoming request line applies to every type.
      * The last matching line wins.

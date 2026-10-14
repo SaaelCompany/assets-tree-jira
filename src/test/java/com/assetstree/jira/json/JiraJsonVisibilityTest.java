@@ -91,6 +91,10 @@ public class JiraJsonVisibilityTest {
         assertNull(partial.getShowInTree());
         assertNull(partial.getColor());
         assertNull(partial.getPlaceCaption());
+        assertNull(partial.getParentTypeKey());
+
+        TypeDraft child = mapper.readValue("{\"parentTypeKey\":\"hardware\"}", TypeDraft.class);
+        assertEquals("hardware", child.getParentTypeKey());
 
         TypeDraft captioned = mapper.readValue("{\"placeCaption\":\"Кабинет\"}", TypeDraft.class);
         assertEquals("Кабинет", captioned.getPlaceCaption());
@@ -102,11 +106,13 @@ public class JiraJsonVisibilityTest {
         stored.setShowInTree(false);
         stored.setIcon("desktop");
         stored.setPlaceCaption("Филиал");
+        stored.setParentTypeKey("hardware");
         String typeJson = mapper.writeValueAsString(stored);
         assertTrue(typeJson.contains("\"showInTree\":false"));
         assertTrue(typeJson.contains("\"location\":true"));
         assertTrue(typeJson.contains("\"placeCaption\":\"Филиал\""));
         assertTrue(typeJson.contains("\"icon\":\"desktop\""));
+        assertTrue(typeJson.contains("\"parentTypeKey\":\"hardware\""));
 
         PortalRuleDraft portal = mapper.readValue(
                 "{\"assetId\":4,\"conditions\":[{\"field\":\"Площадка\",\"option\":\"Пункт А\"},{\"field\":\"Отделение\",\"option\":\"Пункт А\"}]}",

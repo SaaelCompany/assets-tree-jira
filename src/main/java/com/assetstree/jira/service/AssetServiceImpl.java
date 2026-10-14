@@ -925,6 +925,7 @@ public class AssetServiceImpl implements AssetService {
                 if (!AssetValidator.isTypeKey(key)) {
                     throw new AssetException(400, "asset-tree.error.type.duplicate");
                 }
+                String parentKey = parentTypeKey(project.getKey(), null, draft.getParentTypeKey(), draft.isLocation());
                 AssetTypeEntity created = ao().create(AssetTypeEntity.class,
                         new DBParam("TYPE_KEY", key),
                         new DBParam("LABEL", draft.getLabel().trim()),
@@ -937,7 +938,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LOCATION", Boolean.valueOf(draft.isLocation())),
                         new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))),
                         new DBParam("SERVICE", Boolean.valueOf(!draft.isLocation() && Boolean.TRUE.equals(draft.getService()))),
-                        new DBParam("PLACE_CAPTION", chosenCaption));
+                        new DBParam("PLACE_CAPTION", chosenCaption),
+                        new DBParam("PARENT_TYPE_KEY", parentKey));
                 return toTypeDto(created, i18n(), 0);
             }
         });
@@ -979,6 +981,10 @@ public class AssetServiceImpl implements AssetService {
                     }
                     type.setPlaceCaption(draft.getPlaceCaption().trim());
                 }
+                if (draft.getParentTypeKey() != null) {
+                    type.setParentTypeKey(parentTypeKey(type.getProjectKey(), type.getTypeKey(),
+                            draft.getParentTypeKey(), type.isLocation()));
+                }
                 type.save();
                 int count = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 return toTypeDto(type, i18n(), count);
@@ -1002,6 +1008,9 @@ public class AssetServiceImpl implements AssetService {
                 int used = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 if (used > 0) {
                     throw new AssetException(409, "asset-tree.error.type.inUse");
+                }
+                if (hasChildTypes(type.getTypeKey())) {
+                    throw new AssetException(409, "asset-tree.error.type.hasSubtypes");
                 }
                 ao().deleteWithSQL(AssetFieldEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 ao().delete(type);
@@ -1316,7 +1325,9 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public IssueRefDto linkIssue(ApplicationUser user, int assetId, String issueKey) {
         Issue issue = requireIssue(user, issueKey);
-        return link(user, assetId, issue, true);
+        IssueRefDto linked = link(user, assetId, issue, true);
+        applyLinkedFlow(user, assetId, issue);
+        return linked;
     }
 
     @Override
@@ -1329,6 +1340,7 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(403, "asset-tree.error.forbidden");
         }
         link(user, assetId, issue, false);
+        applyLinkedFlow(user, assetId, issue);
         return getAsset(user, assetId);
     }
 
@@ -2250,6 +2262,14 @@ public class AssetServiceImpl implements AssetService {
         names.put(status.getId().trim(), name);
     }
 
+    private void applyLinkedFlow(ApplicationUser user, int assetId, Issue issue) {
+        try {
+            applyRequestFlow(user, assetId, issue);
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for {}", assetId, ex);
+        }
+    }
+
     private void applyRequestFlow(ApplicationUser user, final int assetId, Issue issue) {
         if (issue == null || issue.getIssueType() == null || issue.getProjectObject() == null) {
             return;
@@ -2260,6 +2280,8 @@ public class AssetServiceImpl implements AssetService {
         }
         final String projectKey = issue.getProjectObject().getKey();
         final String wanted = typeId.trim();
+        final String issueStatusId = issue.getStatus() == null || issue.getStatus().getId() == null
+                ? "" : issue.getStatus().getId().trim();
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
@@ -2267,22 +2289,28 @@ public class AssetServiceImpl implements AssetService {
                 if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
                     return null;
                 }
-                String resolved = equipmentStatusFor(projectKey, wanted, null, false);
-                if (resolved == null) {
-                    return null;
+                applyResolvedStatus(user, asset, wanted, equipmentStatusFor(projectKey, wanted, null, false));
+                if (!issueStatusId.isEmpty()) {
+                    applyResolvedStatus(user, asset, wanted, equipmentStatusFor(projectKey, wanted, issueStatusId, true));
                 }
-                FlowRuleDto rule = new FlowRuleDto();
-                rule.setIssueTypeId(wanted);
-                rule.setStatusKey(resolved);
-                String next = FlowRules.statusToApply(Collections.singletonList(rule), wanted, true,
-                        Statuses.canonical(asset.getStatus()), knownStatusKeys(projectKey));
-                if (next == null) {
-                    return null;
-                }
-                assignFlowStatus(user, asset, next);
                 return null;
             }
         });
+    }
+
+    private void applyResolvedStatus(ApplicationUser user, AssetEntity asset, String issueTypeId, String resolved) {
+        if (resolved == null || resolved.isEmpty()) {
+            return;
+        }
+        FlowRuleDto rule = new FlowRuleDto();
+        rule.setIssueTypeId(issueTypeId);
+        rule.setStatusKey(resolved);
+        String next = FlowRules.statusToApply(Collections.singletonList(rule), issueTypeId, true,
+                Statuses.canonical(asset.getStatus()), knownStatusKeys(asset.getProjectKey()));
+        if (next == null) {
+            return;
+        }
+        assignFlowStatus(user, asset, next);
     }
 
     private String equipmentStatusFor(String projectKey, String issueTypeId, String issueStatusId, boolean onTransition) {
@@ -3592,6 +3620,33 @@ public class AssetServiceImpl implements AssetService {
         return type;
     }
 
+    private String parentTypeKey(String projectKey, String ownKey, String requested, boolean location) {
+        String parent = requested == null ? "" : requested.trim();
+        if (parent.isEmpty()) {
+            return "";
+        }
+        if (location || (ownKey != null && ownKey.equals(parent))) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        AssetTypeEntity parentType = findType(parent);
+        if (parentType == null || parentType.isLocation() || !ProjectKeys.same(parentType.getProjectKey(), projectKey)) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        String grandparent = parentType.getParentTypeKey();
+        if (grandparent != null && !grandparent.trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        if (ownKey != null && hasChildTypes(ownKey)) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        return parentType.getTypeKey();
+    }
+
+    private boolean hasChildTypes(String typeKey) {
+        AssetTypeEntity[] children = ao().find(AssetTypeEntity.class, Query.select().where("PARENT_TYPE_KEY = ?", typeKey));
+        return children != null && children.length > 0;
+    }
+
     private AssetTypeEntity findType(String typeKey) {
         if (typeKey == null || typeKey.trim().isEmpty()) {
             return null;
@@ -3839,6 +3894,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setShowInTree(type.isLocation() || type.isShowInTree());
         dto.setService(!type.isLocation() && type.isService());
         dto.setPlaceCaption(type.getPlaceCaption() == null ? "" : type.getPlaceCaption());
+        dto.setParentTypeKey(type.getParentTypeKey() == null ? "" : type.getParentTypeKey());
         dto.setAssetCount(assetCount);
         if (type.isSystemType() && type.getBaseKey() != null && !type.getBaseKey().isEmpty()) {
             String key = "asset-tree.type." + type.getBaseKey();

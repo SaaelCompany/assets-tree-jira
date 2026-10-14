@@ -71,4 +71,11 @@ public interface AssetTypeEntity extends Entity {
     String getPlaceCaption();
 
     void setPlaceCaption(String placeCaption);
+
+    /** Empty for a root type. A subtype names one equipment type and cannot itself be a parent. */
+    @Indexed
+    @StringLength(64)
+    String getParentTypeKey();
+
+    void setParentTypeKey(String parentTypeKey);
 }

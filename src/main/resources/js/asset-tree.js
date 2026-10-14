@@ -1085,17 +1085,70 @@
         return countIndex[assetId] || 0;
     }
 
+    function pinsAt(placeId) {
+        var place = byId()[placeId];
+        var used = {};
+        var offered = {};
+        if (!place) return { used: used, offered: offered };
+        equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
+        (place.offeredTypes || []).forEach(function (key) { offered[key] = true; });
+        return { used: used, offered: offered };
+    }
+
+    function pinned(pins, typeKey) {
+        return !!(pins.used[typeKey] || pins.offered[typeKey]);
+    }
+
+    function parentKeyOf(type) {
+        return type && type.parentTypeKey ? String(type.parentTypeKey) : '';
+    }
+
+    function subtypesOf(parentKey) {
+        return state.types.filter(function (type) {
+            return !type.location && parentKeyOf(type) === parentKey;
+        });
+    }
+
     function typeGroupsFor(placeId) {
         var place = byId()[placeId];
         if (!place || !isFolder(place)) return [];
-        var used = {};
-        equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
-        var offered = {};
-        (place.offeredTypes || []).forEach(function (key) { offered[key] = true; });
+        var pins = pinsAt(placeId);
         return state.types.filter(function (type) {
-            if (type.location) return false;
-            return !!used[type.typeKey] || !!offered[type.typeKey];
+            if (type.location || parentKeyOf(type)) return false;
+            if (pinned(pins, type.typeKey)) return true;
+            var kids = subtypesOf(type.typeKey);
+            for (var i = 0; i < kids.length; i++) {
+                if (pinned(pins, kids[i].typeKey)) return true;
+            }
+            return false;
         });
+    }
+
+    function subtypesAt(placeId, parentKey) {
+        var pins = pinsAt(placeId);
+        return subtypesOf(parentKey).filter(function (type) {
+            return pinned(pins, type.typeKey);
+        });
+    }
+
+    function typeExpandKey(placeId, typeKey) {
+        return 'type:' + placeId + ':' + typeKey;
+    }
+
+    function typeBranchOpen(placeId, typeKey) {
+        var key = typeExpandKey(placeId, typeKey);
+        if (Object.prototype.hasOwnProperty.call(state.expanded, key)) return !!state.expanded[key];
+        return true;
+    }
+
+    function typeFolderCount(placeId, type) {
+        var count = equipmentIn(placeId, type.typeKey).length;
+        if (!parentKeyOf(type)) {
+            subtypesAt(placeId, type.typeKey).forEach(function (child) {
+                count += equipmentIn(placeId, child.typeKey).length;
+            });
+        }
+        return count;
     }
 
     function ensureExpandedDefaults() {
@@ -1853,21 +1906,42 @@
     }
 
     function typeGroupRow(placeId, type) {
+        var kids = parentKeyOf(type) ? [] : subtypesAt(placeId, type.typeKey);
+        var open = kids.length > 0 && typeBranchOpen(placeId, type.typeKey);
         var branch = el('div', 'asset-tree-branch');
-        var row = el('div', 'asset-tree-row is-type');
+        var row = el('div', 'asset-tree-row is-type' + (parentKeyOf(type) ? ' is-subtype' : ''));
         row.setAttribute('role', 'treeitem');
         row.setAttribute('data-place-id', String(placeId));
+        row.setAttribute('data-type-key', type.typeKey);
         var selected = state.typeGroup && state.typeGroup.placeId === placeId && state.typeGroup.typeKey === type.typeKey;
         if (selected) row.classList.add('is-selected');
-        var chevron = el('button', 'asset-tree-chevron', '');
+        var chevron = el('button', 'asset-tree-chevron', kids.length ? (open ? '▾' : '▸') : '');
         chevron.type = 'button';
-        chevron.disabled = true;
+        chevron.disabled = !kids.length;
+        chevron.setAttribute('aria-label', open ? t('collapse') : t('expand'));
+        chevron.addEventListener('click', function (event) {
+            event.stopPropagation();
+            state.expanded[typeExpandKey(placeId, type.typeKey)] = !typeBranchOpen(placeId, type.typeKey);
+            rememberExpanded();
+            renderNodes();
+        });
         row.appendChild(chevron);
         var name = el('span', 'asset-tree-name', type.label);
         name.insertBefore(typeTile(type, 'sm'), name.firstChild);
         row.appendChild(name);
-        var count = equipmentIn(placeId, type.typeKey).length;
+        var count = typeFolderCount(placeId, type);
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
+        if (state.canConfigure && !parentKeyOf(type)) {
+            var sub = el('button', 'asset-tree-subtype', t('addSubtype'));
+            sub.type = 'button';
+            sub.title = t('addSubtype');
+            sub.setAttribute('aria-label', sub.title);
+            sub.addEventListener('click', function (event) {
+                event.stopPropagation();
+                openSubtype(placeId, type.typeKey);
+            });
+            row.appendChild(sub);
+        }
         if (state.canObjects) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
@@ -1883,6 +1957,13 @@
             selectTypeGroup(placeId, type.typeKey);
         });
         branch.appendChild(row);
+        if (open) {
+            var nested = el('div', 'asset-tree-children');
+            kids.forEach(function (child) {
+                nested.appendChild(typeGroupRow(placeId, child));
+            });
+            branch.appendChild(nested);
+        }
         return branch;
     }
 
@@ -1922,10 +2003,83 @@
         });
     }
 
+    function openSubtype(placeId, parentKey) {
+        var parent = typeByKey(parentKey);
+        var place = byId()[placeId];
+        if (!parent || !place || parentKeyOf(parent) || !state.canConfigure) return;
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('subtypeTitle')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('subtypeHint', parent.label || parent.typeKey)));
+            dialog.appendChild(el('p', 'asset-tree-crumb', crumbs(place) + '  /  ' + (parent.label || parent.typeKey)));
+            var form = el('form');
+            var name = input('subtype-name', '', false);
+            name.maxLength = 255;
+            form.appendChild(field(t('typeLabel'), name, true));
+            var error = el('div', 'asset-tree-form-error');
+            error.hidden = true;
+            form.appendChild(error);
+            var busy = false;
+            var save = button(t('addSubtype'), 'asset-tree-btn primary', function () {
+                var label = name.value.trim();
+                if (!label) {
+                    error.hidden = false;
+                    error.textContent = t('typeNameRequired');
+                    return;
+                }
+                if (busy) return;
+                busy = true;
+                save.disabled = true;
+                ajax('POST', '/types', {
+                    label: label,
+                    color: parent.color,
+                    icon: iconKeyOf(parent),
+                    projectKey: state.projectKey,
+                    location: false,
+                    showInTree: false,
+                    parentTypeKey: parent.typeKey
+                }, function (status, payload) {
+                    if (status < 200 || status >= 300 || !payload || !payload.typeKey) {
+                        busy = false;
+                        save.disabled = false;
+                        error.hidden = false;
+                        error.textContent = (payload && payload.message) || t('errorTitle');
+                        return;
+                    }
+                    ajax('POST', '/assets/' + placeId + '/types', { typeKeys: [payload.typeKey] }, function (offerStatus, offerPayload) {
+                        if (offerStatus < 200 || offerStatus >= 300) {
+                            busy = false;
+                            save.disabled = false;
+                            error.hidden = false;
+                            error.textContent = (offerPayload && offerPayload.message) || t('errorTitle');
+                            return;
+                        }
+                        closeModal();
+                        reloadTree(function () {
+                            state.expanded[placeId] = true;
+                            state.expanded[typeExpandKey(placeId, parent.typeKey)] = true;
+                            rememberExpanded();
+                            selectTypeGroup(placeId, payload.typeKey);
+                        });
+                    });
+                });
+            });
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(save);
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            form.appendChild(actions);
+            form.addEventListener('submit', function (event) {
+                event.preventDefault();
+                save.click();
+            });
+            dialog.appendChild(form);
+        });
+    }
+
     function openOfferType(placeId) {
-        var present = {};
-        typeGroupsFor(placeId).forEach(function (type) { present[type.typeKey] = true; });
-        var available = state.types.filter(function (type) { return !type.location && !present[type.typeKey]; });
+        var pins = pinsAt(placeId);
+        var available = state.types.filter(function (type) {
+            return !type.location && !pinned(pins, type.typeKey);
+        });
         openModal(function (dialog) {
             dialog.appendChild(el('h2', null, t('offerTypeTitle')));
             dialog.appendChild(el('p', 'asset-tree-hint', t('offerTypeHint')));
@@ -1946,7 +2100,8 @@
                     });
                     row.appendChild(box);
                     row.appendChild(typeTile(type, 'sm'));
-                    row.appendChild(el('span', null, type.label));
+                    var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+                    row.appendChild(el('span', null, parent ? (parent.label + ' / ' + type.label) : type.label));
                     list.appendChild(row);
                 });
                 dialog.appendChild(list);
@@ -2331,6 +2486,11 @@
                 openCreate(group.placeId, 'object', group.typeKey);
             }));
         }
+        if (state.canConfigure && !parentKeyOf(type)) {
+            tools.appendChild(button(t('addSubtype'), 'asset-tree-btn', function () {
+                openSubtype(group.placeId, group.typeKey);
+            }));
+        }
         if (state.canConfigure) {
             tools.appendChild(button(t('typeFields'), 'asset-tree-btn', function () {
                 openFieldModal(type);
@@ -2636,9 +2796,12 @@
         var seen = {};
         var types = [];
         function addType(type) {
-            if (!type || type.location || !type.typeKey || seen[type.typeKey]) return;
-            seen[type.typeKey] = true;
-            types.push(type);
+            if (!type || type.location || !type.typeKey) return;
+            var root = type;
+            if (parentKeyOf(type)) root = typeByKey(parentKeyOf(type)) || type;
+            if (!root.typeKey || seen[root.typeKey] || parentKeyOf(root)) return;
+            seen[root.typeKey] = true;
+            types.push(root);
         }
         typeGroupsFor(asset.id).forEach(addType);
         gear.forEach(function (item) { addType(typeOf(item.typeKey)); });
@@ -2698,11 +2861,37 @@
             typeBlock.appendChild(el('p', 'asset-tree-hint', t('placeEmptyInside')));
         } else {
             types.forEach(function (type) {
-                var count = 0;
-                gear.forEach(function (item) { if (item.typeKey === type.typeKey) count++; });
-                typeBlock.appendChild(linkLine(type.label, t('childCount', count), function () {
-                    selectTypeGroup(asset.id, type.typeKey, count ? 'under' : 'direct');
+                var own = 0;
+                gear.forEach(function (item) { if (item.typeKey === type.typeKey) own++; });
+                var children = [];
+                var childSeen = {};
+                subtypesAt(asset.id, type.typeKey).forEach(function (child) {
+                    childSeen[child.typeKey] = true;
+                    children.push(child);
+                });
+                gear.forEach(function (item) {
+                    var child = typeOf(item.typeKey);
+                    if (parentKeyOf(child) === type.typeKey && !childSeen[child.typeKey]) {
+                        childSeen[child.typeKey] = true;
+                        children.push(child);
+                    }
+                });
+                var total = own;
+                children.forEach(function (child) {
+                    gear.forEach(function (item) { if (item.typeKey === child.typeKey) total++; });
+                });
+                typeBlock.appendChild(linkLine(type.label, t('childCount', total), function () {
+                    selectTypeGroup(asset.id, type.typeKey, own ? 'under' : 'direct');
                 }, type.color, type));
+                children.forEach(function (child) {
+                    var nestedCount = 0;
+                    gear.forEach(function (item) { if (item.typeKey === child.typeKey) nestedCount++; });
+                    var line = linkLine(child.label, t('childCount', nestedCount), function () {
+                        selectTypeGroup(asset.id, child.typeKey, nestedCount ? 'under' : 'direct');
+                    }, child.color, child);
+                    line.classList.add('is-nested');
+                    typeBlock.appendChild(line);
+                });
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
@@ -5657,7 +5846,9 @@
                 state.types.forEach(function (type) {
                     if (kind === 'place' && !type.location) return;
                     if (kind === 'object' && type.location) return;
-                    options.push({ value: type.typeKey, label: type.label });
+                    var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+                    var label = parent ? (parent.label + ' / ' + type.label) : type.label;
+                    options.push({ value: type.typeKey, label: label });
                 });
                 if (kind !== 'object') {
                     options.push({ value: '__new__', label: t('newType') });
@@ -6192,9 +6383,24 @@
     }
 
     function sortedTypes() {
-        return state.types.slice().sort(function (left, right) {
+        function byLabel(left, right) {
             return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
+        }
+        var roots = state.types.filter(function (type) { return !parentKeyOf(type); }).sort(byLabel);
+        var listed = {};
+        var result = [];
+        roots.forEach(function (type) {
+            listed[type.typeKey] = true;
+            result.push(type);
+            subtypesOf(type.typeKey).sort(byLabel).forEach(function (child) {
+                listed[child.typeKey] = true;
+                result.push(child);
+            });
         });
+        state.types.filter(function (type) { return !listed[type.typeKey]; }).sort(byLabel).forEach(function (type) {
+            result.push(type);
+        });
+        return result;
     }
 
     function appendConstructor(container, modal) {
@@ -6245,15 +6451,21 @@
                 state.fieldQuery = '';
                 repaintSchema();
             });
-            pick.setAttribute('data-name', type.label || '');
+            var parentType = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+            pick.setAttribute('data-name', (parentType ? parentType.label + ' ' : '') + (type.label || ''));
             pick.appendChild(typeTile(type, 'sm'));
             pick.appendChild(el('span', 'asset-tree-type-name', type.label || ''));
+            if (parentType) {
+                var mark = el('span', 'asset-tree-key', parentType.label || '');
+                mark.title = t('subtypeOf', parentType.label || '');
+                pick.appendChild(mark);
+            }
             var count = el('span', 'asset-tree-key', String((type.fields || []).length));
             count.title = t('schemaFieldCount', (type.fields || []).length);
             pick.appendChild(count);
             if (state.canConfigure) {
-                var line = el('div', 'asset-tree-type-row');
-                line.setAttribute('data-name', type.label || '');
+                var line = el('div', 'asset-tree-type-row' + (parentType ? ' is-subtype' : ''));
+                line.setAttribute('data-name', (parentType ? parentType.label + ' ' : '') + (type.label || ''));
                 line.appendChild(pickBox(typeRows[index], refreshPick));
                 line.appendChild(pick);
                 list.appendChild(line);
@@ -6289,6 +6501,7 @@
         title.appendChild(typeTile(type, 'lg'));
         title.appendChild(el('h3', null, type.label || ''));
         head.appendChild(title);
+        var parentType = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
         var meta = type.systemType ? t('systemType') : t('schemaFieldCount', (type.fields || []).length);
         if (!type.systemType && type.assetCount) meta += ' · ' + type.assetCount;
         head.appendChild(el('span', 'asset-tree-key', meta));
@@ -6304,6 +6517,7 @@
             }));
         }
         wrap.appendChild(head);
+        if (parentType) wrap.appendChild(el('p', 'asset-tree-hint', t('subtypeOf', parentType.label || parentType.typeKey)));
         if (state.canConfigure) {
             var look = el('div', 'asset-tree-appearance');
             var saveLook = function (patch) {
@@ -6322,6 +6536,23 @@
             look.appendChild(field(t('color'), colors, true));
             look.appendChild(field(t('icon'), icons, true));
             look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+            if (!type.location && !subtypesOf(type.typeKey).length) {
+                var parentSelect = el('select');
+                var none = el('option', null, t('parentTypeNone'));
+                none.value = '';
+                parentSelect.appendChild(none);
+                state.types.forEach(function (item) {
+                    if (item.location || parentKeyOf(item) || item.typeKey === type.typeKey) return;
+                    var option = el('option', null, item.label || item.typeKey);
+                    option.value = item.typeKey;
+                    if (option.value === parentKeyOf(type)) option.selected = true;
+                    parentSelect.appendChild(option);
+                });
+                parentSelect.addEventListener('change', function () {
+                    saveLook({ parentTypeKey: parentSelect.value });
+                });
+                look.appendChild(field(t('parentType'), parentSelect, true));
+            }
             if (type.location) {
                 var caption = input('', type.placeCaption || '', false);
                 caption.maxLength = 80;
@@ -6421,6 +6652,19 @@
     function typeCreateForm() {
         var form = el('form', 'asset-tree-type-create');
         form.appendChild(field(t('typeLabel'), input('type-label', '', false), true));
+        var parentSelect = el('select');
+        parentSelect.id = 'type-parent';
+        var noneParent = el('option', null, t('parentTypeNone'));
+        noneParent.value = '';
+        parentSelect.appendChild(noneParent);
+        state.types.forEach(function (item) {
+            if (item.location || parentKeyOf(item)) return;
+            var option = el('option', null, item.label || item.typeKey);
+            option.value = item.typeKey;
+            parentSelect.appendChild(option);
+        });
+        var parentField = field(t('parentType'), parentSelect, true);
+        form.appendChild(parentField);
         var locationToggle = el('label', 'asset-tree-check');
         var locationInput = el('input');
         locationInput.type = 'checkbox';
@@ -6463,6 +6707,8 @@
             if (serviceHint) serviceHint.hidden = locationInput.checked;
             captionField.hidden = !locationInput.checked;
             captionHint.hidden = !locationInput.checked;
+            parentField.hidden = locationInput.checked;
+            if (locationInput.checked) parentSelect.value = '';
         });
         var chosen = PALETTE[0];
         var chosenIcon = '';
@@ -6503,7 +6749,8 @@
                 location: place,
                 showInTree: place || treeInput.checked,
                 service: !place && serviceInput.checked,
-                placeCaption: place ? captionInput.value.trim() : ''
+                placeCaption: place ? captionInput.value.trim() : '',
+                parentTypeKey: place ? '' : parentSelect.value
             }, function (status, payload) {
                 if (status >= 200 && status < 300) {
                     state.schemaAdding = false;
