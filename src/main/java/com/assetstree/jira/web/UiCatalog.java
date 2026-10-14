@@ -259,6 +259,7 @@ public final class UiCatalog {
             "addInsidePlace",
             "addTypeHere",
             "addSubtype",
+            "addUnderTypeHint",
             "subtypeTitle",
             "subtypeHint",
             "parentType",
