@@ -1992,23 +1992,36 @@
         });
     }
 
-    function openSubtype(placeId, parentKey) {
+    function openNestedType(placeId, parentKey) {
         var parent = typeByKey(parentKey);
         var place = byId()[placeId];
         if (!parent || !place || parentKeyOf(parent) || !state.canConfigure) return;
         openModal(function (dialog) {
-            dialog.appendChild(el('h2', null, t('subtypeTitle')));
-            dialog.appendChild(el('p', 'asset-tree-hint', t('subtypeHint', parent.label || parent.typeKey)));
+            dialog.appendChild(el('h2', null, t('offerTypeNew')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('nestedTypeHint', parent.label || parent.typeKey)));
             dialog.appendChild(el('p', 'asset-tree-crumb', crumbs(place) + '  /  ' + (parent.label || parent.typeKey)));
             var form = el('form');
-            var name = input('subtype-name', '', false);
+            var name = input('type-label', '', false);
             name.maxLength = 255;
             form.appendChild(field(t('typeLabel'), name, true));
+            var chosenColor = parent.color || PALETTE[0];
+            var chosenIcon = '';
+            var icons = iconPicker(iconKeyOf(parent), chosenColor, function (key) {
+                chosenIcon = key;
+            });
+            var colors = colorSwatches(chosenColor, function (color) {
+                chosenColor = color;
+                icons.paint(color);
+            });
+            var look = el('div', 'asset-tree-appearance');
+            look.appendChild(field(t('color'), colors, true));
+            look.appendChild(field(t('icon'), icons, true));
+            form.appendChild(look);
             var error = el('div', 'asset-tree-form-error');
             error.hidden = true;
             form.appendChild(error);
             var busy = false;
-            var save = button(t('addSubtype'), 'asset-tree-btn primary', function () {
+            var save = button(t('addType'), 'asset-tree-btn primary', function () {
                 var label = name.value.trim();
                 if (!label) {
                     error.hidden = false;
@@ -2020,8 +2033,8 @@
                 save.disabled = true;
                 ajax('POST', '/types', {
                     label: label,
-                    color: parent.color,
-                    icon: iconKeyOf(parent),
+                    color: chosenColor,
+                    icon: chosenIcon || iconKeyOf(parent),
                     projectKey: state.projectKey,
                     location: false,
                     showInTree: false,
@@ -2066,10 +2079,10 @@
 
     function openTypeAdd(placeId, typeKey) {
         var type = typeOf(typeKey);
-        var subtype = !!(state.canConfigure && type && !parentKeyOf(type));
+        var inner = !!(state.canConfigure && type && !parentKeyOf(type));
         var object = !!state.canObjects;
-        if (!subtype && !object) return;
-        if (subtype && object) {
+        if (!inner && !object) return;
+        if (inner && object) {
             openModal(function (dialog) {
                 dialog.appendChild(el('h2', null, t('growTitle')));
                 dialog.appendChild(el('p', 'asset-tree-hint', t('addUnderTypeHint', type.label || type.typeKey)));
@@ -2078,9 +2091,9 @@
                     closeModal();
                     openCreate(placeId, 'object', typeKey);
                 }));
-                choose.appendChild(button(t('addSubtype'), 'asset-tree-btn', function () {
+                choose.appendChild(button(t('addTypeHere'), 'asset-tree-btn', function () {
                     closeModal();
-                    openSubtype(placeId, typeKey);
+                    openOfferType(placeId, type.typeKey);
                 }));
                 choose.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
                 dialog.appendChild(choose);
@@ -2088,21 +2101,26 @@
             return;
         }
         if (object) openCreate(placeId, 'object', typeKey);
-        else openSubtype(placeId, typeKey);
+        else openOfferType(placeId, type.typeKey);
     }
 
-    function openOfferType(placeId) {
+    function openOfferType(placeId, parentKey) {
         var pins = pinsAt(placeId);
+        var parent = parentKey ? typeByKey(parentKey) : null;
         var available = state.types.filter(function (type) {
-            return !type.location && !pinned(pins, type.typeKey);
+            if (type.location || pinned(pins, type.typeKey)) return false;
+            if (parent) return parentKeyOf(type) === parent.typeKey;
+            return true;
         });
         openModal(function (dialog) {
             dialog.appendChild(el('h2', null, t('offerTypeTitle')));
-            dialog.appendChild(el('p', 'asset-tree-hint', t('offerTypeHint')));
+            dialog.appendChild(el('p', 'asset-tree-hint', parent
+                ? t('nestedTypeHint', parent.label || parent.typeKey)
+                : t('offerTypeHint')));
             var picked = {};
             var add = null;
             if (!available.length) {
-                dialog.appendChild(el('p', null, t('offerTypeEmpty')));
+                if (!parent) dialog.appendChild(el('p', null, t('offerTypeEmpty')));
             } else {
                 var list = el('div', 'asset-tree-offer-list');
                 available.forEach(function (type) {
@@ -2134,9 +2152,10 @@
                 actions.appendChild(add);
             }
             if (state.canConfigure) {
-                actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn', function () {
+                actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn' + (available.length ? '' : ' primary'), function () {
                     closeModal();
-                    openTypes();
+                    if (parent) openNestedType(placeId, parent.typeKey);
+                    else openTypes();
                 }));
             }
             actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
@@ -3647,25 +3666,12 @@
         return options;
     }
 
-    function attributesForType(asset, typeKey) {
-        var source = state.detail && state.detail.id === asset.id && state.detail.attributes ? state.detail : asset;
-        var byKey = {};
-        (source.attributes || []).forEach(function (item) {
-            if (item && item.fieldKey) byKey[item.fieldKey] = item.value || '';
-        });
-        return fieldsOf(typeKey).map(function (field) {
-            return { fieldKey: field.fieldKey, value: byKey[field.fieldKey] || '' };
-        });
-    }
-
-    function typeNeedsValues(typeKey, attributes) {
-        var byKey = {};
-        (attributes || []).forEach(function (item) {
-            if (item && item.fieldKey) byKey[item.fieldKey] = item.value || '';
-        });
-        return fieldsOf(typeKey).some(function (field) {
-            return field.required && !String(byKey[field.fieldKey] || '').trim();
-        });
+    function typePathLabel(asset) {
+        var type = typeFor(asset);
+        var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+        var label = (asset && (asset.typeLabel || type.label)) || '';
+        if (parent && parent.label) return parent.label + ' / ' + (type.label || label);
+        return label;
     }
 
     function revealEquipmentType(asset) {
@@ -3676,40 +3682,6 @@
         state.expanded[typeExpandKey(asset.parentId, rootKey)] = true;
         rememberExpanded();
         state.typeGroup = { placeId: asset.parentId, typeKey: asset.typeKey, scope: 'direct' };
-    }
-
-    function typePicker(asset) {
-        var type = typeFor(asset);
-        var label = asset.typeLabel || typeOf(asset.typeKey).label || '';
-        if (!mayEdit(asset) || isFolder(asset)) return typeBadge(type, label);
-        var box = el('div', 'asset-tree-type-pick');
-        box.appendChild(typeTile(type, 'sm'));
-        var select = selectBox('asset-field-type-inline', equipmentTypeOptions(asset.typeKey), asset.typeKey, false);
-        select.title = t('type');
-        select.addEventListener('change', function () {
-            if (select.value === asset.typeKey) return;
-            changeAssetType(asset, select.value);
-        });
-        box.appendChild(select);
-        return box;
-    }
-
-    function changeAssetType(asset, typeKey) {
-        if (!asset || !typeKey || typeKey === asset.typeKey) return;
-        var kept = attributesForType(asset, typeKey);
-        if (typeNeedsValues(typeKey, kept)) {
-            state.pendingTypeKey = typeKey;
-            state.editing = true;
-            showDetail(state.detail && state.detail.id === asset.id ? state.detail : asset, false);
-            return;
-        }
-        persistAsset(asset, {
-            typeKey: typeKey,
-            attributes: kept,
-            onError: function () {
-                showDetail(state.detail && state.detail.id === asset.id ? state.detail : asset, false);
-            }
-        });
     }
 
     function statusPicker(asset) {
@@ -5039,7 +5011,7 @@
         main.appendChild(ops);
         if (crumbs(asset)) main.appendChild(el('p', 'asset-tree-crumb', crumbs(asset)));
 
-        var items = [detailItem(t('type'), typePicker(asset))];
+        var items = [detailItem(t('type'), typeBadge(typeFor(asset), typePathLabel(asset)))];
         items.push(detailItem(t('status'), statusPicker(asset)));
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
         items.push(detailItem(parentCaption(asset), el('span', null, place)));
@@ -5189,11 +5161,9 @@
         }
         attributes.appendChild(fieldHead);
         attributes.appendChild(el('p', 'asset-tree-hint', t('attributesHint')));
-        var editingType = state.pendingTypeKey || asset.typeKey;
-        state.pendingTypeKey = '';
         var attrList = el('div');
         attrList.id = 'asset-tree-attrs';
-        paintAssetFields(attrList, editingType, asset.attributes || []);
+        paintAssetFields(attrList, asset.typeKey, asset.attributes || []);
         attributes.appendChild(attrList);
         main.appendChild(attributes);
 
@@ -5234,7 +5204,7 @@
         aside.appendChild(el('h3', null, t('details')));
         aside.appendChild(field(t('type'), selectBox('asset-field-type', placePage
             ? state.types.map(function (type) { return { value: type.typeKey, label: type.label }; })
-            : equipmentTypeOptions(editingType), editingType, !state.canEdit)));
+            : equipmentTypeOptions(asset.typeKey), asset.typeKey, !state.canEdit)));
         if (!placePage) {
             aside.appendChild(field(t('status'), selectBox('asset-field-status', statusChoices(), asset.status, !state.canEdit)));
         }

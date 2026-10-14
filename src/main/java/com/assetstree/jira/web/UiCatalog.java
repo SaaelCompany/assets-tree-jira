@@ -260,6 +260,7 @@ public final class UiCatalog {
             "addTypeHere",
             "addSubtype",
             "addUnderTypeHint",
+            "nestedTypeHint",
             "subtypeTitle",
             "subtypeHint",
             "parentType",

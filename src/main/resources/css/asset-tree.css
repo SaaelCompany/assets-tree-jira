@@ -2029,28 +2029,6 @@ a.asset-tree-url {
     opacity: 1;
 }
 
-#asset-tree-app .asset-tree-type-pick {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-#asset-tree-app .asset-tree-type-pick select {
-    flex: 1 1 auto;
-    width: 100%;
-    max-width: 280px;
-    min-width: 0;
-    min-height: 32px;
-    margin: 0;
-    padding: 4px 8px;
-    border: 1px solid #dfe1e6;
-    border-radius: 3px;
-    background: #fff;
-    color: #172b4d;
-    font: inherit;
-}
-
 #asset-tree-app .asset-tree-issue.is-nested {
     margin-left: 28px;
 }
