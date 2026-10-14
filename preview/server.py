@@ -891,6 +891,123 @@ def parent_key(row):
     return ((row or {}).get("parentTypeKey") or "").strip()
 
 
+def picker_nodes(rows, text):
+    ordered = sorted(rows, key=lambda item: (item["sortOrder"], item["id"]))
+    sources = []
+    for row in ordered:
+        typed = type_row(row["typeKey"])
+        if typed:
+            dto = type_dto(typed, text, ordered)
+            location = bool(dto.get("location"))
+            type_label = dto.get("label") or row["typeKey"]
+            parent_type_key = (dto.get("parentTypeKey") or "").strip()
+        else:
+            location = False
+            type_label = row["typeKey"]
+            parent_type_key = ""
+        parent_label = parent_type_key
+        if parent_type_key:
+            parent_type = type_row(parent_type_key)
+            if parent_type:
+                parent_label = type_dto(parent_type, text, ordered).get("label") or parent_type_key
+        sources.append({
+            "id": row["id"],
+            "parentId": normalize_parent(row["parentId"]),
+            "name": row["name"] or "",
+            "objectKey": row["objectKey"] or "",
+            "status": canonical(row["status"]),
+            "typeKey": row["typeKey"] or "",
+            "typeLabel": type_label or row["typeKey"] or "",
+            "parentTypeKey": parent_type_key,
+            "parentTypeLabel": parent_label,
+            "location": location,
+        })
+    return arrange_picker(sources)
+
+
+def arrange_picker(sources):
+    nodes = []
+    equipment_by_place = {}
+    for source in sources:
+        if source["location"] or source["parentId"] is None:
+            continue
+        equipment_by_place.setdefault(source["parentId"], []).append(source)
+    next_group = [-1]
+    placed = set()
+    for source in sources:
+        if not source["location"]:
+            continue
+        nodes.append(picker_asset(source, source["parentId"]))
+        gear = equipment_by_place.get(source["id"])
+        if not gear:
+            continue
+        append_picker_groups(nodes, source["id"], gear, next_group, placed)
+    for source in sources:
+        if source["location"] or source["id"] in placed:
+            continue
+        nodes.append(picker_asset(source, source["parentId"]))
+    return nodes
+
+
+def append_picker_groups(nodes, place_id, gear, next_group, placed):
+    by_root = {}
+    for item in gear:
+        root = item["typeKey"] if not item["parentTypeKey"] else item["parentTypeKey"]
+        by_root.setdefault(root, []).append(item)
+    for root_key, items in by_root.items():
+        root_id = next_group[0]
+        next_group[0] = root_id - 1
+        nodes.append(picker_group(root_id, place_id, picker_root_label(root_key, items)))
+        direct = []
+        by_subtype = {}
+        for item in items:
+            if not item["parentTypeKey"]:
+                direct.append(item)
+                continue
+            by_subtype.setdefault(item["typeKey"], []).append(item)
+        for item in direct:
+            nodes.append(picker_asset(item, root_id))
+            placed.add(item["id"])
+        for children in by_subtype.values():
+            subtype_id = next_group[0]
+            next_group[0] = subtype_id - 1
+            nodes.append(picker_group(subtype_id, root_id, children[0]["typeLabel"]))
+            for item in children:
+                nodes.append(picker_asset(item, subtype_id))
+                placed.add(item["id"])
+
+
+def picker_root_label(root_key, items):
+    for item in items:
+        if item["parentTypeKey"]:
+            return item["parentTypeLabel"] or root_key
+    return items[0]["typeLabel"] or root_key
+
+
+def picker_asset(source, parent_id):
+    return {
+        "id": source["id"],
+        "parentId": parent_id,
+        "name": source["name"],
+        "objectKey": source["objectKey"],
+        "status": source["status"],
+        "typeLabel": source["typeLabel"],
+        "group": False,
+    }
+
+
+def picker_group(group_id, parent_id, label):
+    return {
+        "id": group_id,
+        "parentId": parent_id,
+        "name": label,
+        "objectKey": "",
+        "status": "",
+        "typeLabel": label,
+        "group": True,
+    }
+
+
 def child_types(type_key):
     return [row for row in STATE["types"].values() if parent_key(row) == type_key]
 
@@ -2574,7 +2691,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.99",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.100",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2785,13 +2902,7 @@ setTimeout(function () {
             return 201, portal_rule_dto(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/picker", path)
         if match and method == "GET":
-            rows = project_assets(match.group(1))
-            rows.sort(key=lambda item: (item["sortOrder"], item["id"]))
-            return 200, [{
-                "id": row["id"], "parentId": normalize_parent(row["parentId"]), "name": row["name"],
-                "objectKey": row["objectKey"], "status": canonical(row["status"]),
-                "typeLabel": type_dto(type_row(row["typeKey"]), text, rows)["label"],
-            } for row in rows]
+            return 200, picker_nodes(project_assets(match.group(1)), text)
         if path == "/types" and method == "POST":
             return self.create_type(self.read_json(), text)
         match = re.fullmatch(r"/assets/(\d+)/types", path)

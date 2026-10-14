@@ -402,7 +402,27 @@
             items.sort(function (left, right) {
                 return (left.name || '').localeCompare(right.name || '');
             });
-            return items;
+            return items.filter(function (node) { return !node.group; });
+        }
+
+        function optionText(node) {
+            var chain = pathTo(byId, node.id);
+            var names = [];
+            chain.forEach(function (item) {
+                if (item.group) names.push(item.name);
+            });
+            names.push(node.name || '');
+            return names.join(' / ');
+        }
+
+        function anchorId(id) {
+            var cursor = byId[id];
+            var guard = 0;
+            while (cursor && cursor.group && guard < 40) {
+                cursor = cursor.parentId ? byId[cursor.parentId] : null;
+                guard++;
+            }
+            return cursor ? cursor.id : null;
         }
 
         function eachSelect(accept) {
@@ -663,7 +683,7 @@
             empty.value = '';
             select.appendChild(empty);
             options.forEach(function (node) {
-                var option = el('option', null, node.name || '');
+                var option = el('option', null, optionText(node));
                 option.value = String(node.id);
                 if (hidden.value === option.value) option.selected = true;
                 select.appendChild(option);
@@ -720,13 +740,12 @@
                 select.appendChild(option);
             });
             select.addEventListener('change', function () {
-                if (!select.value) {
-                    hidden.value = parent ? String(parent.id) : '';
-                } else {
-                    hidden.value = select.value;
-                }
+                var chosen = select.value ? byId[parseInt(select.value, 10)] : null;
+                var cursor = chosen || parent;
+                var stored = cursor ? anchorId(cursor.id) : null;
+                hidden.value = stored ? String(stored) : '';
                 var rootId = appliedLock ? appliedRoot : null;
-                draw(hidden.value ? parseInt(hidden.value, 10) : null, rootId);
+                draw(cursor ? cursor.id : null, rootId);
             });
             wrap.appendChild(select);
             return wrap;

@@ -102,6 +102,7 @@ import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FlowGraph;
+import com.assetstree.jira.model.PickerLayout;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.FlowRules;
 import com.assetstree.jira.model.FieldKinds;
@@ -1679,16 +1680,33 @@ public class AssetServiceImpl implements AssetService {
                 List<AssetEntity> ordered = new ArrayList<AssetEntity>();
                 Collections.addAll(ordered, rows);
                 Collections.sort(ordered, SIBLING_ORDER);
-                List<PickerNodeDto> nodes = new ArrayList<PickerNodeDto>();
+                List<PickerLayout.Source> sources = new ArrayList<PickerLayout.Source>();
                 for (AssetEntity row : ordered) {
-                    PickerNodeDto node = new PickerNodeDto();
-                    node.setId(row.getID());
-                    node.setParentId(TreeLogic.normalizeParent(row.getParentId()));
-                    node.setName(row.getName());
-                    node.setObjectKey(row.getObjectKey());
-                    node.setStatus(Statuses.canonical(row.getStatus()));
                     AssetTypeDto type = types.get(row.getTypeKey());
-                    node.setTypeLabel(type == null ? row.getTypeKey() : type.getLabel());
+                    String parentKey = type == null || type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+                    AssetTypeDto parentType = parentKey.isEmpty() ? null : types.get(parentKey);
+                    sources.add(new PickerLayout.Source(
+                            row.getID(),
+                            TreeLogic.normalizeParent(row.getParentId()),
+                            row.getName(),
+                            row.getObjectKey(),
+                            Statuses.canonical(row.getStatus()),
+                            row.getTypeKey(),
+                            type == null ? row.getTypeKey() : type.getLabel(),
+                            parentKey,
+                            parentType == null ? "" : parentType.getLabel(),
+                            type != null && type.isLocation()));
+                }
+                List<PickerNodeDto> nodes = new ArrayList<PickerNodeDto>();
+                for (PickerLayout.Node laid : PickerLayout.arrange(sources)) {
+                    PickerNodeDto node = new PickerNodeDto();
+                    node.setId(laid.getId());
+                    node.setParentId(laid.getParentId());
+                    node.setName(laid.getName());
+                    node.setObjectKey(laid.getObjectKey());
+                    node.setStatus(laid.getStatus());
+                    node.setTypeLabel(laid.getTypeLabel());
+                    node.setGroup(laid.isGroup());
                     nodes.add(node);
                 }
                 return nodes;
