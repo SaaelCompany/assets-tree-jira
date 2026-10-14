@@ -8643,7 +8643,6 @@
             sections.push(['types', t('typesSection'), state.types.length]);
             sections.push(['card', t('cardSection'), null]);
             sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
-            sections.push(['flow', t('flowSection'), state.flowReady && state.flowGraph && state.flowGraph.links ? state.flowGraph.links.length : null]);
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
@@ -8686,8 +8685,6 @@
             renderExchangeSettings(panel);
         } else if (state.schemaTab === 'portal') {
             renderPortalSettings(panel);
-        } else if (state.schemaTab === 'flow') {
-            renderFlowSettings(panel);
         } else if (state.schemaTab === 'access') {
             renderAccessSettings(panel);
         } else {
@@ -8863,6 +8860,7 @@
 
     function renderFlowSettings(panel) {
         var block = el('div', 'asset-tree-settings-block');
+        block.appendChild(el('h3', 'asset-tree-settings-title', t('flowSection')));
         block.appendChild(el('p', 'asset-tree-hint', t('flowSectionHint')));
         if (!state.flowReady || state.issueTypes === null || state.issueStatuses === null) {
             block.appendChild(el('p', 'asset-tree-hint', t('loading')));
@@ -8878,7 +8876,7 @@
                 state.flowReady = true;
                 state.flowLoading = false;
                 if (!state.flowDraft) state.flowDraft = cloneFlow(state.flowGraph);
-                if (state.view === 'settings' && state.schemaTab === 'flow') renderFrame();
+                if (state.view === 'settings' && state.schemaTab === 'portal') renderFrame();
             }
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flow-graph', null, function (status, payload) {
                 if (state.projectKey !== projectKey) return;
@@ -9237,6 +9235,7 @@
                 }
                 if (state.schemaTab === 'portal') renderFrame();
             });
+            renderFlowSettings(panel);
             return;
         }
         var list = el('div', 'asset-tree-portal-list');
@@ -9341,6 +9340,7 @@
         form.addEventListener('submit', function (event) { event.preventDefault(); });
         block.appendChild(form);
         panel.appendChild(block);
+        renderFlowSettings(panel);
     }
 
     function renderStatusSettings(panel) {
