@@ -20,6 +20,9 @@ public final class PlaceLayout {
     public static final String DOWN = "down";
     public static final String NEST = "nest";
     public static final String LIFT = "lift";
+    public static final String BEFORE = "before";
+    public static final String AFTER = "after";
+    public static final String INTO = "into";
 
     private PlaceLayout() {
     }
@@ -201,7 +204,16 @@ public final class PlaceLayout {
         if (key.isEmpty()) {
             return null;
         }
-        if (!UP.equals(step) && !DOWN.equals(step) && !NEST.equals(step) && !LIFT.equals(step)) {
+        String verb = step;
+        String targetKey = "";
+        int colon = step.indexOf(':');
+        if (colon > 0) {
+            verb = step.substring(0, colon);
+            targetKey = step.substring(colon + 1).trim();
+        }
+        boolean stepMove = UP.equals(verb) || DOWN.equals(verb) || NEST.equals(verb) || LIFT.equals(verb);
+        boolean placeMove = (BEFORE.equals(verb) || AFTER.equals(verb) || INTO.equals(verb)) && !targetKey.isEmpty();
+        if (!stepMove && !placeMove) {
             return null;
         }
         List<Slot> slots = layout(lines, pinned, schema);
@@ -225,21 +237,24 @@ public final class PlaceLayout {
         if (!parentOf.containsKey(key)) {
             return null;
         }
+        if (placeMove) {
+            return placeAt(roots, children, parentOf, key, verb, targetKey);
+        }
         String parent = parentOf.get(key);
-        if (UP.equals(step) || DOWN.equals(step)) {
+        if (UP.equals(verb) || DOWN.equals(verb)) {
             List<String> siblings = parent.isEmpty() ? roots : children.get(parent);
             if (siblings == null) {
                 return null;
             }
             int index = siblings.indexOf(key);
-            int swap = UP.equals(step) ? index - 1 : index + 1;
+            int swap = UP.equals(verb) ? index - 1 : index + 1;
             if (index < 0 || swap < 0 || swap >= siblings.size()) {
                 return write(roots, children);
             }
             Collections.swap(siblings, index, swap);
             return write(roots, children);
         }
-        if (NEST.equals(step)) {
+        if (NEST.equals(verb)) {
             if (!parent.isEmpty()) {
                 return null;
             }
@@ -273,6 +288,54 @@ public final class PlaceLayout {
             roots.add(key);
         } else {
             roots.add(at + 1, key);
+        }
+        return write(roots, children);
+    }
+
+    private static List<String> placeAt(List<String> roots, Map<String, List<String>> children,
+                                        Map<String, String> parentOf, String key, String verb, String targetKey) {
+        if (key.equals(targetKey) || !parentOf.containsKey(targetKey)) {
+            return null;
+        }
+        String targetParent = parentOf.get(targetKey);
+        if (targetParent == null) {
+            targetParent = "";
+        }
+        List<String> own = children.get(key);
+        boolean hasKids = own != null && !own.isEmpty();
+        if (INTO.equals(verb)) {
+            if (!targetParent.isEmpty() || hasKids) {
+                return null;
+            }
+        } else if (hasKids && !targetParent.isEmpty()) {
+            return null;
+        }
+        roots.remove(key);
+        for (List<String> bucket : children.values()) {
+            bucket.remove(key);
+        }
+        if (INTO.equals(verb)) {
+            List<String> nested = children.get(targetKey);
+            if (nested == null) {
+                nested = new ArrayList<String>();
+                children.put(targetKey, nested);
+            }
+            nested.add(key);
+            return write(roots, children);
+        }
+        List<String> siblings = targetParent.isEmpty() ? roots : children.get(targetParent);
+        if (siblings == null) {
+            siblings = new ArrayList<String>();
+            children.put(targetParent, siblings);
+        }
+        int at = siblings.indexOf(targetKey);
+        if (at < 0) {
+            siblings.add(key);
+        } else {
+            if (AFTER.equals(verb)) {
+                at = at + 1;
+            }
+            siblings.add(at, key);
         }
         return write(roots, children);
     }

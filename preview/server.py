@@ -2269,7 +2269,14 @@ def place_layout(lines, pinned, facts):
 def place_move(lines, pinned, facts, type_key, action):
     key = (type_key or "").strip()
     step = (action or "").strip().lower()
-    if not key or step not in ("up", "down", "nest", "lift"):
+    verb = step
+    target_key = ""
+    if ":" in step:
+        verb, target_key = step.split(":", 1)
+        target_key = target_key.strip()
+    step_move = verb in ("up", "down", "nest", "lift")
+    place_move_flag = verb in ("before", "after", "into") and bool(target_key)
+    if not key or not (step_move or place_move_flag):
         return None
     slots = place_layout(lines, pinned, facts)
     roots = []
@@ -2294,17 +2301,47 @@ def place_move(lines, pinned, facts, type_key, action):
                 stored.append(child + "@" + root)
         return stored
 
-    if step in ("up", "down"):
+    def detach():
+        if key in roots:
+            roots.remove(key)
+        for bucket in children.values():
+            if key in bucket:
+                bucket.remove(key)
+
+    if place_move_flag:
+        if target_key == key or target_key not in parent_of:
+            return None
+        target_parent = parent_of.get(target_key) or ""
+        has_kids = bool(children.get(key))
+        if verb == "into":
+            if target_parent or has_kids:
+                return None
+        elif has_kids and target_parent:
+            return None
+        detach()
+        if verb == "into":
+            children.setdefault(target_key, []).append(key)
+            return write()
+        siblings = roots if not target_parent else children.setdefault(target_parent, [])
+        at = siblings.index(target_key) if target_key in siblings else -1
+        if at < 0:
+            siblings.append(key)
+        else:
+            if verb == "after":
+                at += 1
+            siblings.insert(at, key)
+        return write()
+    if verb in ("up", "down"):
         siblings = roots if not parent else children.get(parent) or []
         if key not in siblings:
             return None
         index = siblings.index(key)
-        swap = index - 1 if step == "up" else index + 1
+        swap = index - 1 if verb == "up" else index + 1
         if swap < 0 or swap >= len(siblings):
             return write()
         siblings[index], siblings[swap] = siblings[swap], siblings[index]
         return write()
-    if step == "nest":
+    if verb == "nest":
         if parent:
             return None
         if children.get(key):
@@ -2987,7 +3024,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.106",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.107",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

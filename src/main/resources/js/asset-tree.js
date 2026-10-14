@@ -1767,6 +1767,8 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
+            var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
+            if (portalPanel) fitPortalPanel(portalPanel);
             return;
         }
         frame.appendChild(renderSide());
@@ -2090,28 +2092,113 @@
         });
     }
 
-    function arrangeBar(placeId, typeKey) {
-        var info = siblingInfo(placeId, typeKey);
-        var bar = el('span', 'asset-tree-arrange-bar');
-        function move(symbol, title, action, disabled) {
-            var btn = el('button', 'asset-tree-arrange', symbol);
-            btn.type = 'button';
-            btn.title = title;
-            btn.disabled = !!disabled;
-            btn.setAttribute('aria-label', title);
-            btn.addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (btn.disabled) return;
-                arrangeType(placeId, typeKey, action);
-            });
-            bar.appendChild(btn);
+    function bindTypeDrag(row, placeId, typeKey, label) {
+        var suppressClick = false;
+        row.addEventListener('click', function (event) {
+            if (!suppressClick) return;
+            suppressClick = false;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+        row.addEventListener('pointerdown', function (event) {
+            if (event.button !== 0 || pointerDrag) return;
+            if (event.target && event.target.closest && event.target.closest('button')) return;
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var active = false;
+            var plan = null;
+            function ghostAt(ev) {
+                var ghostNode = document.getElementById('asset-tree-drag-ghost');
+                if (!ghostNode) return;
+                ghostNode.style.left = (ev.clientX + 12) + 'px';
+                ghostNode.style.top = (ev.clientY + 10) + 'px';
+            }
+            function move(ev) {
+                if (ev.pointerId !== event.pointerId) return;
+                var dx = ev.clientX - startX;
+                var dy = ev.clientY - startY;
+                if (!active) {
+                    if (dx * dx + dy * dy < 16) return;
+                    active = true;
+                    app.classList.add('is-dragging');
+                    document.documentElement.classList.add('asset-tree-dragging');
+                    var ghost = el('div', 'asset-tree-drag-ghost', label || typeKey);
+                    ghost.id = 'asset-tree-drag-ghost';
+                    document.body.appendChild(ghost);
+                }
+                ev.preventDefault();
+                ghostAt(ev);
+                var scroller = document.getElementById('asset-tree-scroll');
+                if (scroller) {
+                    var bounds = scroller.getBoundingClientRect();
+                    if (ev.clientY < bounds.top + 28) scroller.scrollTop -= 14;
+                    else if (ev.clientY > bounds.bottom - 28) scroller.scrollTop += 14;
+                }
+                plan = planTypeDrop(ev.clientX, ev.clientY, placeId, typeKey);
+            }
+            function up(ev) {
+                if (ev.pointerId !== event.pointerId) return;
+                window.removeEventListener('pointermove', move, true);
+                window.removeEventListener('pointerup', up, true);
+                window.removeEventListener('pointercancel', up, true);
+                var chosen = null;
+                if (active && ev.type !== 'pointercancel') {
+                    chosen = plan || planTypeDrop(ev.clientX, ev.clientY, placeId, typeKey);
+                    suppressClick = true;
+                }
+                app.classList.remove('is-dragging');
+                document.documentElement.classList.remove('asset-tree-dragging');
+                clearDropClasses();
+                var ghostNode = document.getElementById('asset-tree-drag-ghost');
+                if (ghostNode && ghostNode.parentNode) ghostNode.parentNode.removeChild(ghostNode);
+                if (chosen) arrangeType(placeId, typeKey, chosen);
+            }
+            window.addEventListener('pointermove', move, true);
+            window.addEventListener('pointerup', up, true);
+            window.addEventListener('pointercancel', up, true);
+        });
+    }
+
+    function planTypeDrop(x, y, placeId, typeKey) {
+        clearDropClasses();
+        var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+        var row = null;
+        var placeRow = null;
+        var placeKey = String(placeId);
+        for (var i = 0; i < stack.length; i++) {
+            var node = stack[i];
+            if (!node || !node.closest) continue;
+            if (node.id === 'asset-tree-drag-ghost' || node.closest('#asset-tree-drag-ghost')) continue;
+            var hitRow = node.closest('.asset-tree-row');
+            if (!hitRow || !app.contains(hitRow)) continue;
+            if (hitRow.getAttribute('data-place-id') === placeKey && hitRow.getAttribute('data-type-key')) {
+                row = hitRow;
+                break;
+            }
+            if (hitRow.getAttribute('data-id') === placeKey) {
+                placeRow = hitRow;
+                break;
+            }
         }
-        move('\u2191', t('typeMoveUp'), 'up', !info.found || info.index <= 0);
-        move('\u2193', t('typeMoveDown'), 'down', !info.found || info.index < 0 || info.index >= info.count - 1);
-        move('\u2192', t('typeNest'), 'nest', !info.found || !!info.parent || info.childCount > 0 || info.index <= 0);
-        move('\u2190', t('typeLift'), 'lift', !info.found || !info.parent);
-        return bar;
+        if (placeRow) {
+            if (!localParent(placeId, typeKey)) return null;
+            placeRow.classList.add('is-drop-inside');
+            return 'lift';
+        }
+        if (!row) return null;
+        var targetKey = row.getAttribute('data-type-key');
+        if (!targetKey || targetKey === typeKey) return null;
+        var rect = row.getBoundingClientRect();
+        var ratio = rect.height ? (y - rect.top) / rect.height : 0.5;
+        var mode = ratio < 0.28 ? 'before' : (ratio > 0.72 ? 'after' : 'into');
+        if (mode === 'into') {
+            var info = siblingInfo(placeId, typeKey);
+            if (info.childCount > 0 || localParent(placeId, targetKey)) {
+                mode = ratio < 0.5 ? 'before' : 'after';
+            }
+        }
+        row.classList.add(mode === 'before' ? 'is-drop-before' : (mode === 'after' ? 'is-drop-after' : 'is-drop-inside'));
+        return mode + ':' + targetKey;
     }
 
     function typeGroupRow(placeId, type) {
@@ -2141,7 +2228,10 @@
         row.appendChild(name);
         var count = typeFolderCount(placeId, type);
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (state.canPlaces) row.appendChild(arrangeBar(placeId, type.typeKey));
+        if (state.canPlaces) {
+            row.classList.add('is-movable');
+            bindTypeDrag(row, placeId, type.typeKey, type.label);
+        }
         if (state.canObjects || (state.canConfigure && !nestedHere && !parentKeyOf(type))) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
@@ -9184,12 +9274,35 @@
         panel.appendChild(block);
     }
 
+    function fitPortalPanel(panel) {
+        function apply() {
+            if (!panel.parentNode) {
+                window.removeEventListener('resize', apply);
+                return;
+            }
+            var top = panel.getBoundingClientRect().top;
+            var next = Math.max(280, Math.round(window.innerHeight - top - 44));
+            panel.style.height = next + 'px';
+            panel.style.maxHeight = next + 'px';
+            var board = panel.querySelector('.asset-tree-flow-board');
+            var canvas = panel.querySelector('.asset-tree-flow-canvas');
+            if (board && canvas) {
+                var room = board.clientHeight;
+                if (room > 120 && canvas.offsetHeight - room < 40) canvas.style.height = room + 'px';
+            }
+        }
+        if (state.portalFit) window.removeEventListener('resize', state.portalFit);
+        state.portalFit = apply;
+        window.addEventListener('resize', apply);
+        apply();
+    }
+
     function renderSettings() {
         var panel = el('section', 'asset-tree-report');
         var project = currentProject();
         var name = project ? (project.name || project.key) : state.projectKey;
         panel.appendChild(el('h2', null, t('settingsProject', name)));
-        panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
+        if (state.schemaTab !== 'portal') panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
         if (!state.canConfigure && !state.canGrant && !state.canObjects) {
             panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
             return panel;
@@ -9235,6 +9348,7 @@
             tabs.appendChild(tab);
         });
         panel.appendChild(tabs);
+        if (state.schemaTab === 'portal') panel.classList.add('is-portal');
         if (state.schemaTab === 'types') {
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
@@ -9483,7 +9597,6 @@
     function renderFlowSettings(host) {
         var block = el('div', 'asset-tree-flow-column');
         block.appendChild(el('h3', 'asset-tree-settings-title', t('flowSection')));
-        block.appendChild(el('p', 'asset-tree-hint', t('flowSectionHint')));
         if (!state.flowReady || state.issueTypes === null || state.issueStatuses === null) {
             block.appendChild(el('p', 'asset-tree-hint', t('loading')));
             host.appendChild(block);
@@ -9525,16 +9638,28 @@
         var book = state.flowDraft || cloneBook(state.flowBook);
         state.flowDraft = book;
         var process = selectedProcess(book);
-        var bar = el('div', 'asset-tree-flow-processes');
-        (book.processes || []).forEach(function (item) {
-            var active = process && item.id === process.id;
-            var chip = button(item.name || t('flowProcessDefault'), 'asset-tree-btn asset-tree-flow-tab' + (active ? ' is-active' : ''), function () {
-                state.flowProcessId = item.id;
+        var menu = el('div', 'asset-tree-flow-menu');
+        var picker = null;
+        if ((book.processes || []).length) {
+            var pick = el('label', 'asset-tree-jira-field');
+            pick.appendChild(el('span', null, t('flowSection')));
+            picker = el('select', 'asset-tree-text');
+            picker.setAttribute('aria-label', t('flowSection'));
+            (book.processes || []).forEach(function (item) {
+                var option = el('option', null, item.name || t('flowProcessDefault'));
+                option.value = item.id;
+                if (process && item.id === process.id) option.selected = true;
+                picker.appendChild(option);
+            });
+            picker.addEventListener('change', function () {
+                state.flowProcessId = picker.value;
                 renderFrame();
             });
-            bar.appendChild(chip);
-        });
-        bar.appendChild(button(t('flowProcessNew'), 'asset-tree-btn', function () {
+            pick.appendChild(picker);
+            menu.appendChild(pick);
+        }
+        var menuActions = el('div', 'asset-tree-flow-menu-actions');
+        menuActions.appendChild(button(t('flowProcessNew'), 'asset-tree-btn', function () {
             var created = {
                 id: flowFreshId(book),
                 name: t('flowProcessDefault') + (book.processes.length ? ' ' + (book.processes.length + 1) : ''),
@@ -9546,31 +9671,36 @@
             saveFlowBook(null);
         }));
         if (process) {
-            bar.appendChild(button(t('flowProcessDelete'), 'asset-tree-btn', function () {
+            menuActions.appendChild(button(t('flowProcessDelete'), 'asset-tree-btn', function () {
                 if (!window.confirm(t('flowProcessDeleteConfirm'))) return;
                 book.processes = (book.processes || []).filter(function (item) { return item.id !== process.id; });
                 state.flowProcessId = book.processes.length ? book.processes[0].id : '';
                 saveFlowBook(null);
             }));
         }
-        block.appendChild(bar);
         if (!process) {
+            menu.appendChild(menuActions);
+            block.appendChild(menu);
             block.appendChild(el('p', 'asset-tree-flow-empty is-static', t('flowProcessEmpty')));
             host.appendChild(block);
             return;
         }
-        var name = input('asset-tree-flow-name', process.name || '');
+        var name = input('', process.name || '');
+        name.className = 'asset-tree-text';
         name.placeholder = t('flowProcessDefault');
         name.setAttribute('aria-label', t('flowProcessName'));
         name.addEventListener('input', function () {
             process.name = name.value.replace(/^\s+|\s+$/g, '');
-            var chip = bar.querySelector('.asset-tree-flow-tab.is-active');
-            if (chip) chip.textContent = process.name || t('flowProcessDefault');
+            if (picker && picker.selectedIndex >= 0) {
+                picker.options[picker.selectedIndex].textContent = process.name || t('flowProcessDefault');
+            }
         });
-        var nameRow = el('div', 'asset-tree-flow-name');
-        nameRow.appendChild(el('label', 'asset-tree-flow-label', t('flowProcessName')));
+        var nameRow = el('label', 'asset-tree-jira-field asset-tree-flow-name');
+        nameRow.appendChild(el('span', null, t('flowProcessName')));
         nameRow.appendChild(name);
-        block.appendChild(nameRow);
+        menu.appendChild(nameRow);
+        menu.appendChild(menuActions);
+        block.appendChild(menu);
         var tools = el('div', 'asset-tree-flow-tools');
         function addTool(label, kind) {
             var tool = button(label, 'asset-tree-btn asset-tree-flow-add', function () {
@@ -9630,14 +9760,23 @@
         return false;
     }
 
-    function paintFlow(canvas, draft, error) {
-        while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
-        var width = 980;
-        var height = 560;
+    function flowExtent(canvas, draft) {
+        var width = canvas.parentNode && canvas.parentNode.clientWidth > 200 ? canvas.parentNode.clientWidth : 640;
+        var height = canvas.parentNode && canvas.parentNode.clientHeight > 160 ? canvas.parentNode.clientHeight : 240;
         (draft.nodes || []).forEach(function (node) {
             width = Math.max(width, (node.x || 0) + 320);
-            height = Math.max(height, (node.y || 0) + 180);
+            height = Math.max(height, (node.y || 0) + 150);
         });
+        var room = canvas.parentNode ? canvas.parentNode.clientHeight : 0;
+        if (room > 160 && height - room < 28) height = room;
+        return { width: width, height: height };
+    }
+
+    function paintFlow(canvas, draft, error) {
+        while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+        var extent = flowExtent(canvas, draft);
+        var width = extent.width;
+        var height = extent.height;
         canvas.style.width = width + 'px';
         canvas.style.height = height + 'px';
         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -9731,7 +9870,7 @@
             head.appendChild(remove);
             card.appendChild(head);
             var body = el('div', 'asset-tree-flow-body');
-            var select = el('select');
+            var select = el('select', 'asset-tree-text');
             var empty = el('option', null, '—');
             empty.value = '';
             select.appendChild(empty);
@@ -9851,14 +9990,9 @@
                     node.y = Math.max(0, Math.min(2400, originY + ev.clientY - startY));
                     card.style.left = node.x + 'px';
                     card.style.top = node.y + 'px';
-                    var extentW = 980;
-                    var extentH = 560;
-                    (draft.nodes || []).forEach(function (item) {
-                        extentW = Math.max(extentW, (item.x || 0) + 320);
-                        extentH = Math.max(extentH, (item.y || 0) + 180);
-                    });
-                    canvas.style.width = extentW + 'px';
-                    canvas.style.height = extentH + 'px';
+                    var extent = flowExtent(canvas, draft);
+                    canvas.style.width = extent.width + 'px';
+                    canvas.style.height = extent.height + 'px';
                     drawWires();
                 }
                 function up() {
@@ -9955,10 +10089,12 @@
             draft.conditions.forEach(function (condition, index) {
                 var line = el('div', 'asset-tree-portal-condition');
                 var fieldInput = input('', condition.field, false);
+                fieldInput.className = 'asset-tree-text';
                 fieldInput.placeholder = t('portalField');
                 fieldInput.setAttribute('aria-label', t('portalField'));
                 fieldInput.addEventListener('input', function () { condition.field = fieldInput.value; });
                 var optionInput = input('', condition.option, false);
+                optionInput.className = 'asset-tree-text';
                 optionInput.placeholder = t('portalOption');
                 optionInput.setAttribute('aria-label', t('portalOption'));
                 optionInput.addEventListener('input', function () { condition.option = optionInput.value; });
@@ -9976,7 +10112,7 @@
         }
         paintConditions();
 
-        var target = el('select');
+        var target = el('select', 'asset-tree-text');
         target.setAttribute('aria-label', t('portalThen'));
         var emptyOption = el('option', null, '—');
         emptyOption.value = '';

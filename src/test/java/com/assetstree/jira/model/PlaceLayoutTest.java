@@ -56,6 +56,19 @@ public class PlaceLayoutTest {
     }
 
     @Test
+    public void draggingPlacesATypeBeforeAnotherAndNestsIt() {
+        List<String> lines = Arrays.asList("laptop", "phone", "server");
+        List<String> pinned = Arrays.asList("laptop", "phone", "server");
+        List<String> before = PlaceLayout.move(lines, pinned, schema(), "server", "before:laptop");
+        assertEquals(Arrays.asList("server@", "laptop@", "phone@"), before);
+        List<String> into = PlaceLayout.move(before, pinned, schema(), "phone", "into:laptop");
+        assertEquals(Arrays.asList("server@", "laptop@", "phone@laptop"), into);
+        assertNull(PlaceLayout.move(into, pinned, schema(), "laptop", "into:server"));
+        List<String> after = PlaceLayout.move(into, pinned, schema(), "server", "after:laptop");
+        assertEquals(Arrays.asList("laptop@", "phone@laptop", "server@"), after);
+    }
+
+    @Test
     public void aTypeWithChildrenCannotBeNested() {
         List<String> lines = Arrays.asList("laptop", "printer", "phone");
         assertNull(PlaceLayout.move(lines, Arrays.asList("laptop", "printer", "phone"), schema(), "laptop", PlaceLayout.NEST));
