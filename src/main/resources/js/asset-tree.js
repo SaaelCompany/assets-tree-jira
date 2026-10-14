@@ -3652,10 +3652,7 @@
         var seen = {};
         sortedTypes().forEach(function (type) {
             if (type.location) return;
-            var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
-            var label = parent && parent.label
-                ? (parent.label + ' / ' + (type.label || type.typeKey))
-                : (type.label || type.typeKey);
+            var label = type.label || type.typeKey;
             seen[type.typeKey] = true;
             options.push({ value: type.typeKey, label: label });
         });
@@ -3664,14 +3661,6 @@
             options.unshift({ value: currentKey, label: current.label || currentKey });
         }
         return options;
-    }
-
-    function typePathLabel(asset) {
-        var type = typeFor(asset);
-        var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
-        var label = (asset && (asset.typeLabel || type.label)) || '';
-        if (parent && parent.label) return parent.label + ' / ' + (type.label || label);
-        return label;
     }
 
     function revealEquipmentType(asset) {
@@ -5011,7 +5000,7 @@
         main.appendChild(ops);
         if (crumbs(asset)) main.appendChild(el('p', 'asset-tree-crumb', crumbs(asset)));
 
-        var items = [detailItem(t('type'), typeBadge(typeFor(asset), typePathLabel(asset)))];
+        var items = [detailItem(t('type'), typeBadge(typeFor(asset), asset.typeLabel || typeOf(asset.typeKey).label || ''))];
         items.push(detailItem(t('status'), statusPicker(asset)));
         var place = asset.location || (asset.parentId && byId()[asset.parentId] ? byId()[asset.parentId].name : t('root'));
         items.push(detailItem(parentCaption(asset), el('span', null, place)));
