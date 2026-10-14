@@ -9,6 +9,7 @@ public class AttributeDto {
     private String fieldKey;
     private String kind;
     private boolean required;
+    private boolean showOnIssue;
     private String value;
 
     public AttributeDto() {
@@ -50,6 +51,14 @@ public class AttributeDto {
 
     public void setRequired(boolean required) {
         this.required = required;
+    }
+
+    public boolean isShowOnIssue() {
+        return showOnIssue;
+    }
+
+    public void setShowOnIssue(boolean showOnIssue) {
+        this.showOnIssue = showOnIssue;
     }
 
     public String getValue() {

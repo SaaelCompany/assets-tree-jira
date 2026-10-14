@@ -1069,9 +1069,34 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("KIND", draft.getKind()),
                         new DBParam("REQUIRED", Boolean.valueOf(draft.isRequired())),
+                        new DBParam("ISSUE_HIDDEN", Boolean.valueOf(hidesOnIssue(draft))),
                         new DBParam("POSITION", max + 1),
                         new DBParam("OPTIONS", storedOptions));
                 return toFieldDto(created, i18n());
+            }
+        });
+    }
+
+    @Override
+    public FieldDto updateField(ApplicationUser user, final String typeKey, final String fieldKey, final FieldDraft draft) {
+        if (draft == null || draft.getShowOnIssue() == null) {
+            throw new AssetException(400, "asset-tree.error.field.label");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FieldDto>() {
+            @Override
+            public FieldDto doInTransaction() {
+                AssetTypeEntity type = findType(typeKey);
+                if (type == null) {
+                    throw new AssetException(404, "asset-tree.error.type.notFound");
+                }
+                requireConfigurableProject(user, type.getProjectKey());
+                AssetFieldEntity field = findField(type.getTypeKey(), fieldKey);
+                if (field == null) {
+                    throw new AssetException(404, "asset-tree.error.field.notFound");
+                }
+                field.setIssueHidden(!draft.getShowOnIssue().booleanValue());
+                field.save();
+                return toFieldDto(field, i18n());
             }
         });
     }
@@ -3936,6 +3961,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setFieldKey(field.getFieldKey());
         dto.setKind(field.getKind());
         dto.setRequired(field.isRequired());
+        dto.setShowOnIssue(!field.isIssueHidden());
         dto.setPosition(field.getPosition());
         dto.setLabel(fieldLabel(field, labels));
         dto.setOptions(FieldChoices.optionsOf(field.getOptions()));
@@ -3951,6 +3977,10 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(400, "asset-tree.error.type.icon");
         }
         return icon;
+    }
+
+    private boolean hidesOnIssue(FieldDraft draft) {
+        return draft.getShowOnIssue() != null && !draft.getShowOnIssue().booleanValue();
     }
 
     private String fieldLabel(AssetFieldEntity field, I18nHelper labels) {
@@ -4504,6 +4534,7 @@ public class AssetServiceImpl implements AssetService {
             dto.setName(field.getLabel());
             dto.setKind(field.getKind());
             dto.setRequired(field.isRequired());
+            dto.setShowOnIssue(field.isShowOnIssue());
             dto.setValue(values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "");
             result.add(dto);
         }

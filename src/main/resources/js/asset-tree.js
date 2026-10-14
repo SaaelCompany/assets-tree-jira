@@ -6265,6 +6265,15 @@
             requiredLabel.appendChild(required);
             requiredLabel.appendChild(el('span', null, t('fieldRequired')));
             form.appendChild(requiredLabel);
+            var issueLabel = el('label', 'asset-tree-check');
+            var issue = el('input');
+            issue.type = 'checkbox';
+            issue.id = 'field-issue';
+            issue.checked = true;
+            issueLabel.appendChild(issue);
+            issueLabel.appendChild(el('span', null, t('showOnIssue')));
+            form.appendChild(issueLabel);
+            form.appendChild(el('p', 'asset-tree-hint', t('showOnIssueHint')));
             var error = el('div', 'asset-tree-form-error');
             error.hidden = true;
             form.appendChild(error);
@@ -6285,6 +6294,7 @@
                     label: label.trim(),
                     kind: kind,
                     required: document.getElementById('field-required').checked,
+                    showOnIssue: document.getElementById('field-issue').checked,
                     options: document.getElementById('field-options').value
                 }, function (status, payload) {
                     if (status >= 200 && status < 300) {
@@ -6629,6 +6639,27 @@
             fieldRow.setAttribute('data-name', fieldDef.label || '');
             fieldRow.appendChild(el('span', null, fieldDef.label));
             fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
+            var issueLabel = el('label', 'asset-tree-check asset-tree-field-issue');
+            issueLabel.title = t('showOnIssueHint');
+            var issueBox = el('input');
+            issueBox.type = 'checkbox';
+            issueBox.checked = fieldDef.showOnIssue !== false;
+            issueBox.disabled = !state.canConfigure;
+            if (!state.canConfigure) issueBox.setAttribute('data-disabled', '1');
+            issueBox.addEventListener('change', function () {
+                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), {
+                    showOnIssue: issueBox.checked
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300) refreshSchema();
+                    else {
+                        issueBox.checked = !issueBox.checked;
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            });
+            issueLabel.appendChild(issueBox);
+            issueLabel.appendChild(el('span', null, t('showOnIssue')));
+            fieldRow.appendChild(issueLabel);
             if (state.canConfigure) {
                 fieldRow.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
                     ajax('DELETE', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), null, function (status, payload) {

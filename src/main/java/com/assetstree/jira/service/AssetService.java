@@ -82,6 +82,8 @@ public interface AssetService {
 
     FieldDto addField(ApplicationUser user, String typeKey, FieldDraft draft);
 
+    FieldDto updateField(ApplicationUser user, String typeKey, String fieldKey, FieldDraft draft);
+
     void deleteField(ApplicationUser user, String typeKey, String fieldKey);
 
     List<StatusDto> listStatuses(ApplicationUser user, String projectKey);

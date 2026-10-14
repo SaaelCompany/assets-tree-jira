@@ -100,6 +100,8 @@ public final class UiCatalog {
             "fieldLabel",
             "fieldKind",
             "fieldRequired",
+            "showOnIssue",
+            "showOnIssueHint",
             "kindText",
             "kindNumber",
             "kindUser",

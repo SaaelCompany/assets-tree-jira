@@ -251,7 +251,7 @@
         var card = el('div', 'asset-tree-panel-card');
         card.appendChild(el('strong', null, asset.name || ''));
         (asset.attributes || []).forEach(function (attr) {
-            if (!attr || !attr.name) return;
+            if (!attr || !attr.name || attr.showOnIssue === false) return;
             card.appendChild(cardRow(attr.name, attr.value || ''));
         });
         var person = asset.custodian && asset.custodian.displayName ? asset.custodian.displayName : '';

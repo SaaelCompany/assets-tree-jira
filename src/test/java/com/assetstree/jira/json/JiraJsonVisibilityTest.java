@@ -1,6 +1,7 @@
 package com.assetstree.jira.json;
 
 import com.assetstree.jira.dto.AssetTypeDto;
+import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.model.AssetDraft;
@@ -144,6 +145,15 @@ public class JiraJsonVisibilityTest {
         assertEquals("ОС", field.getLabel());
         assertEquals("text", field.getKind());
         assertFalse(field.isRequired());
+        assertNull(field.getShowOnIssue());
+        FieldDraft hidden = mapper.readValue(
+                "{\"label\":\"ОС\",\"kind\":\"text\",\"showOnIssue\":false}",
+                FieldDraft.class);
+        assertEquals(Boolean.FALSE, hidden.getShowOnIssue());
+        FieldDto shown = new FieldDto();
+        shown.setFieldKey("serial");
+        shown.setShowOnIssue(false);
+        assertTrue(mapper.writeValueAsString(shown).contains("\"showOnIssue\":false"));
     }
 
     private static ObjectMapper mapper() {

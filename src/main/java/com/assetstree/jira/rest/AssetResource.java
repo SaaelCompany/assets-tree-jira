@@ -337,6 +337,18 @@ public class AssetResource {
         });
     }
 
+    @PUT
+    @Path("types/{typeKey}/fields/{fieldKey}")
+    public Response updateField(@PathParam("typeKey") final String typeKey, @PathParam("fieldKey") final String fieldKey,
+                                final FieldDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updateField(user(), typeKey, fieldKey, draft)).build();
+            }
+        });
+    }
+
     @DELETE
     @Path("types/{typeKey}/fields/{fieldKey}")
     public Response deleteField(@PathParam("typeKey") final String typeKey, @PathParam("fieldKey") final String fieldKey) {

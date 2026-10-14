@@ -882,6 +882,7 @@ def type_dto(row, text, rows):
         "fields": [{
             "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
             "required": field["required"], "position": field["position"],
+            "showOnIssue": field["showOnIssue"] if "showOnIssue" in field else True,
             "options": field.get("options") or [],
         } for field in row["fields"]],
     }
@@ -1035,7 +1036,9 @@ def asset_dto(asset, text, with_issues):
     for field in typed["fields"]:
         attributes.append({
             "fieldKey": field["fieldKey"], "name": field["label"], "kind": field["kind"],
-            "required": field["required"], "value": asset["values"].get(field["fieldKey"], ""),
+            "required": field["required"],
+            "showOnIssue": field["showOnIssue"] if "showOnIssue" in field else True,
+            "value": asset["values"].get(field["fieldKey"], ""),
         })
     holder = USERS.get(asset.get("custodianKey") or "")
     dto = {
@@ -2691,7 +2694,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.101",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.102",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2988,6 +2991,23 @@ setTimeout(function () {
         if match and method == "POST":
             return self.add_field(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/types/([a-z0-9-]+)/fields/([a-z0-9-]+)", path)
+        if match and method == "PUT":
+            row = STATE["types"].get(match.group(1))
+            if not row:
+                return 404, {"message": text["asset-tree.error.type.notFound"]}
+            body = self.read_json() or {}
+            for field in row["fields"]:
+                if field["fieldKey"] != match.group(2):
+                    continue
+                if "showOnIssue" in body:
+                    field["showOnIssue"] = bool(body.get("showOnIssue"))
+                return 200, {
+                    "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
+                    "required": field["required"], "position": field["position"],
+                    "showOnIssue": field["showOnIssue"] if "showOnIssue" in field else True,
+                    "options": field.get("options") or [],
+                }
+            return 404, {"message": text.get("asset-tree.error.field.notFound", "Field")}
         if match and method == "DELETE":
             row = STATE["types"].get(match.group(1))
             if not row:
@@ -3496,13 +3516,16 @@ setTimeout(function () {
                 return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
         taken = {field["fieldKey"] for field in row["fields"]}
         field_key = unique_key(slug(label) or "field", taken)
+        shown = True if (body or {}).get("showOnIssue") is None else bool(body.get("showOnIssue"))
         field = {
             "fieldKey": field_key, "label": label, "kind": kind, "required": bool((body or {}).get("required")),
+            "showOnIssue": shown,
             "position": len(row["fields"]), "options": options,
         }
         row["fields"].append(field)
         return 201, {
             "fieldKey": field_key, "label": label, "kind": kind, "required": field["required"],
+            "showOnIssue": shown,
             "position": field["position"], "options": options,
         }
 

@@ -34,7 +34,7 @@
           <div class="asset-tree-panel-card">
             <strong>$textutils.htmlEncode($asset.name)</strong>
             #foreach($attr in $asset.attributes)
-              #if($attr.name && $attr.name != "")
+              #if($attr.showOnIssue && $attr.name && $attr.name != "")
                 <div class="asset-tree-panel-card-row"><span>$textutils.htmlEncode($attr.name)</span><span>$textutils.htmlEncode($!attr.value)</span></div>
               #end
             #end
