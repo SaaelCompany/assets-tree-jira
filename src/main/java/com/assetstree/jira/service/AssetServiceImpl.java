@@ -61,8 +61,10 @@ import com.assetstree.jira.dto.BulkIssueDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
+import com.assetstree.jira.dto.FlowBookDto;
 import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.dto.FlowNodeDto;
+import com.assetstree.jira.dto.FlowProcessDto;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FileDto;
@@ -101,8 +103,11 @@ import com.assetstree.jira.model.WorkbookSheet;
 import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.FlowBook;
 import com.assetstree.jira.model.FlowGraph;
 import com.assetstree.jira.model.PickerLayout;
+import com.assetstree.jira.model.PlaceArrangeDraft;
+import com.assetstree.jira.model.PlaceLayout;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.FlowRules;
 import com.assetstree.jira.model.FieldKinds;
@@ -1705,11 +1710,20 @@ public class AssetServiceImpl implements AssetService {
                 List<AssetEntity> ordered = new ArrayList<AssetEntity>();
                 Collections.addAll(ordered, rows);
                 Collections.sort(ordered, SIBLING_ORDER);
+                List<PickerLayout.Catalog> catalog = new ArrayList<PickerLayout.Catalog>();
+                for (AssetTypeDto type : typeDtos(project.getKey(), rows)) {
+                    if (type == null || type.isLocation()) {
+                        continue;
+                    }
+                    String parentKey = type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+                    catalog.add(new PickerLayout.Catalog(type.getTypeKey(), type.getLabel(), parentKey));
+                }
                 List<PickerLayout.Source> sources = new ArrayList<PickerLayout.Source>();
                 for (AssetEntity row : ordered) {
                     AssetTypeDto type = types.get(row.getTypeKey());
                     String parentKey = type == null || type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
                     AssetTypeDto parentType = parentKey.isEmpty() ? null : types.get(parentKey);
+                    boolean location = type != null && type.isLocation();
                     sources.add(new PickerLayout.Source(
                             row.getID(),
                             TreeLogic.normalizeParent(row.getParentId()),
@@ -1720,10 +1734,11 @@ public class AssetServiceImpl implements AssetService {
                             type == null ? row.getTypeKey() : type.getLabel(),
                             parentKey,
                             parentType == null ? "" : parentType.getLabel(),
-                            type != null && type.isLocation()));
+                            location,
+                            location ? offeredLines(row.getOfferedTypes()) : null));
                 }
                 List<PickerNodeDto> nodes = new ArrayList<PickerNodeDto>();
-                for (PickerLayout.Node laid : PickerLayout.arrange(sources)) {
+                for (PickerLayout.Node laid : PickerLayout.arrange(sources, catalog)) {
                     PickerNodeDto node = new PickerNodeDto();
                     node.setId(laid.getId());
                     node.setParentId(laid.getParentId());
@@ -1800,6 +1815,40 @@ public class AssetServiceImpl implements AssetService {
                 ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", ruleId);
                 ao().delete(rule);
                 return null;
+            }
+        });
+    }
+
+    @Override
+    public PortalRuleDto updatePortalRule(ApplicationUser user, String projectKey, final int ruleId, PortalRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getAssetId() <= 0) {
+            throw new AssetException(400, "asset-tree.error.portal.target");
+        }
+        final List<PortalConditionDraft> conditions = cleanConditions(draft.getConditions());
+        return ao().executeInTransaction(new TransactionCallback<PortalRuleDto>() {
+            @Override
+            public PortalRuleDto doInTransaction() {
+                PortalRuleEntity rule = ao().get(PortalRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.portal.missing");
+                }
+                AssetEntity asset = ao().get(AssetEntity.class, draft.getAssetId());
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.portal.target");
+                }
+                rule.setAssetId(draft.getAssetId());
+                rule.save();
+                ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", ruleId);
+                for (int i = 0; i < conditions.size(); i++) {
+                    PortalConditionDraft condition = conditions.get(i);
+                    ao().create(PortalRuleConditionEntity.class,
+                            new DBParam("RULE_ID", rule.getID()),
+                            new DBParam("POSITION", i),
+                            new DBParam("FIELD_NAME", condition.getField()),
+                            new DBParam("OPTION_NAME", condition.getOption()));
+                }
+                return toPortalRule(rule);
             }
         });
     }
@@ -1889,56 +1938,69 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
-    public FlowGraphDto flowGraph(ApplicationUser user, String projectKey) {
+    public FlowBookDto flowGraph(ApplicationUser user, String projectKey) {
         final Project project = requireConfigurableProject(user, projectKey);
         final Map<String, String> names = issueTypeNames(project);
         final Map<String, String> issueStatuses = issueStatusNames(project);
-        return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
+        return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
             @Override
-            public FlowGraphDto doInTransaction() {
+            public FlowBookDto doInTransaction() {
                 FlowGraphEntity stored = findFlowGraph(project.getKey());
-                FlowGraphDto graph;
+                List<FlowProcessDto> processes;
                 if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
-                    graph = FlowGraph.read(stored.getBody());
+                    processes = FlowBook.read(stored.getBody());
                 } else {
-                    graph = FlowGraph.fromRules(flowRules(project.getKey(), names));
+                    processes = new ArrayList<FlowProcessDto>();
+                    FlowGraphDto graph = FlowGraph.fromRules(flowRules(project.getKey(), names));
+                    if (!graph.getNodes().isEmpty()) {
+                        FlowProcessDto one = new FlowProcessDto();
+                        one.setId("rules1");
+                        one.setNodes(graph.getNodes());
+                        one.setLinks(graph.getLinks());
+                        processes.add(one);
+                    }
                 }
-                nameFlowNodes(graph, names, issueStatuses);
-                return graph;
+                FlowBookDto book = FlowBook.book(processes);
+                nameFlowBook(book, names, issueStatuses);
+                return book;
             }
         });
     }
 
     @Override
-    public FlowGraphDto saveFlowGraph(ApplicationUser user, String projectKey, FlowGraphDto draft) {
+    public FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft) {
         final Project project = requireConfigurableProject(user, projectKey);
         final Map<String, String> names = issueTypeNames(project);
         final Map<String, String> issueStatuses = issueStatusNames(project);
-        final FlowGraphDto graph = FlowGraph.normalize(draft);
-        for (FlowNodeDto node : graph.getNodes()) {
-            if (FlowGraph.REQUEST.equals(node.getKind()) && node.getIssueTypeId() != null
-                    && !node.getIssueTypeId().isEmpty() && !names.containsKey(node.getIssueTypeId())) {
-                throw new AssetException(400, "asset-tree.error.flow.type");
-            }
-            if (FlowGraph.ISSUE.equals(node.getKind()) && node.getIssueStatusId() != null
-                    && !node.getIssueStatusId().isEmpty() && !issueStatuses.containsKey(node.getIssueStatusId())) {
-                throw new AssetException(400, "asset-tree.error.flow.issue");
+        final FlowBookDto book = FlowBook.book(draft == null ? null : draft.getProcesses());
+        for (FlowProcessDto process : book.getProcesses()) {
+            for (FlowNodeDto node : process.getNodes()) {
+                if (FlowGraph.REQUEST.equals(node.getKind()) && node.getIssueTypeId() != null
+                        && !node.getIssueTypeId().isEmpty() && !names.containsKey(node.getIssueTypeId())) {
+                    throw new AssetException(400, "asset-tree.error.flow.type");
+                }
+                if (FlowGraph.ISSUE.equals(node.getKind()) && node.getIssueStatusId() != null
+                        && !node.getIssueStatusId().isEmpty() && !issueStatuses.containsKey(node.getIssueStatusId())) {
+                    throw new AssetException(400, "asset-tree.error.flow.issue");
+                }
             }
         }
-        return ao().executeInTransaction(new TransactionCallback<FlowGraphDto>() {
+        return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
             @Override
-            public FlowGraphDto doInTransaction() {
-                for (FlowNodeDto node : graph.getNodes()) {
-                    if (!FlowGraph.STATUS.equals(node.getKind()) || node.getStatusKey() == null || node.getStatusKey().isEmpty()) {
-                        continue;
-                    }
-                    try {
-                        node.setStatusKey(resolveStatus(project.getKey(), node.getStatusKey()));
-                    } catch (AssetException ex) {
-                        throw new AssetException(400, "asset-tree.error.flow.status");
+            public FlowBookDto doInTransaction() {
+                for (FlowProcessDto process : book.getProcesses()) {
+                    for (FlowNodeDto node : process.getNodes()) {
+                        if (!FlowGraph.STATUS.equals(node.getKind()) || node.getStatusKey() == null || node.getStatusKey().isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            node.setStatusKey(resolveStatus(project.getKey(), node.getStatusKey()));
+                        } catch (AssetException ex) {
+                            throw new AssetException(400, "asset-tree.error.flow.status");
+                        }
                     }
                 }
-                String body = FlowGraph.write(graph);
+                String body = FlowBook.write(book.getProcesses());
                 FlowGraphEntity stored = findFlowGraph(project.getKey());
                 if (stored == null) {
                     ao().create(FlowGraphEntity.class,
@@ -1949,7 +2011,7 @@ public class AssetServiceImpl implements AssetService {
                     stored.save();
                 }
                 ao().deleteWithSQL(FlowRuleEntity.class, "PROJECT_KEY = ?", project.getKey());
-                for (FlowRuleDto pair : FlowGraph.pairs(graph)) {
+                for (FlowRuleDto pair : FlowBook.pairs(book.getProcesses())) {
                     String typeName = names.get(pair.getIssueTypeId());
                     if (typeName == null) {
                         continue;
@@ -1960,8 +2022,8 @@ public class AssetServiceImpl implements AssetService {
                             new DBParam("ISSUE_TYPE_NAME", typeName),
                             new DBParam("STATUS_KEY", pair.getStatusKey()));
                 }
-                nameFlowNodes(graph, names, issueStatuses);
-                return graph;
+                nameFlowBook(book, names, issueStatuses);
+                return book;
             }
         });
     }
@@ -2215,6 +2277,18 @@ public class AssetServiceImpl implements AssetService {
         return found == null || found.length == 0 ? null : found[0];
     }
 
+    private void nameFlowBook(FlowBookDto book, Map<String, String> names, Map<String, String> issueStatuses) {
+        if (book == null || book.getProcesses() == null) {
+            return;
+        }
+        for (FlowProcessDto process : book.getProcesses()) {
+            FlowGraphDto graph = new FlowGraphDto();
+            graph.setNodes(process.getNodes());
+            graph.setLinks(process.getLinks());
+            nameFlowNodes(graph, names, issueStatuses);
+        }
+    }
+
     private void nameFlowNodes(FlowGraphDto graph, Map<String, String> names, Map<String, String> issueStatuses) {
         if (graph == null || graph.getNodes() == null) {
             return;
@@ -2359,7 +2433,7 @@ public class AssetServiceImpl implements AssetService {
     private String equipmentStatusFor(String projectKey, String issueTypeId, String issueStatusId, boolean onTransition) {
         FlowGraphEntity stored = findFlowGraph(projectKey);
         if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
-            return FlowGraph.equipmentStatus(FlowGraph.read(stored.getBody()), issueTypeId, issueStatusId, onTransition);
+            return FlowBook.equipmentStatus(FlowBook.read(stored.getBody()), issueTypeId, issueStatusId, onTransition);
         }
         if (onTransition || issueTypeId == null || issueTypeId.trim().isEmpty()) {
             return null;
@@ -4317,7 +4391,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setAttributes(attributeDtos(type, attributes));
         List<ServicePlanEntity> plans = plansOf(entity.getID());
         dto.setServiceDue(dueNames(plans, LocalDate.now()));
-        dto.setOfferedTypes(type != null && type.isLocation() ? offeredKeys(entity.getOfferedTypes()) : new ArrayList<String>());
+        dto.setOfferedTypes(type != null && type.isLocation() ? offeredLines(entity.getOfferedTypes()) : new ArrayList<String>());
         if (withIssues) {
             dto.setIssues(issuesFor(entity.getID()));
             dto.setComments(commentDtos(entity.getID()));
@@ -4772,24 +4846,27 @@ public class AssetServiceImpl implements AssetService {
                 if (!isLocation(place)) {
                     throw new AssetException(400, "asset-tree.error.type.place");
                 }
-                List<String> keys = offeredKeys(place.getOfferedTypes());
+                List<String> lines = offeredLines(place.getOfferedTypes());
+                List<PlaceLayout.Fact> facts = placeFacts(place.getProjectKey());
                 for (String typeKey : requested) {
                     AssetTypeEntity type = requireType(typeKey);
                     if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
                         throw new AssetException(400, "asset-tree.error.type");
                     }
                     if (present) {
-                        if (!keys.contains(type.getTypeKey())) {
-                            keys.add(type.getTypeKey());
+                        List<String> next = PlaceLayout.addPin(lines, facts, type.getTypeKey());
+                        if (next == null) {
+                            throw new AssetException(400, "asset-tree.error.type");
                         }
+                        lines = next;
                     } else {
                         if (placeHasEquipment(place, type.getTypeKey())) {
                             throw new AssetException(409, "asset-tree.error.type.busy");
                         }
-                        keys.remove(type.getTypeKey());
+                        lines = PlaceLayout.removePin(lines, type.getTypeKey());
                     }
                 }
-                place.setOfferedTypes(joinOffered(keys));
+                place.setOfferedTypes(joinOffered(lines));
                 place.setUpdated(new Date());
                 place.setUpdatedBy(user.getKey());
                 place.save();
@@ -4797,6 +4874,59 @@ public class AssetServiceImpl implements AssetService {
                 return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
             }
         });
+    }
+
+    @Override
+    public AssetDto arrangeType(ApplicationUser user, final int assetId, final PlaceArrangeDraft draft) {
+        if (draft == null || draft.getTypeKey() == null || draft.getTypeKey().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.arrange");
+        }
+        final String typeKey = draft.getTypeKey().trim();
+        final String action = draft.getAction() == null ? "" : draft.getAction().trim();
+        return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
+            @Override
+            public AssetDto doInTransaction() {
+                AssetEntity place = requireAssetCap(user, assetId, GrantCaps.PLACES);
+                if (!isLocation(place)) {
+                    throw new AssetException(400, "asset-tree.error.type.place");
+                }
+                AssetTypeEntity type = requireType(typeKey);
+                if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
+                    throw new AssetException(400, "asset-tree.error.type.arrange");
+                }
+                List<String> pinned = offeredKeys(place.getOfferedTypes());
+                for (AssetEntity asset : assetsIn(place.getProjectKey())) {
+                    Integer parent = TreeLogic.normalizeParent(asset.getParentId());
+                    if (parent != null && parent.intValue() == place.getID() && !isLocation(asset)
+                            && asset.getTypeKey() != null && !pinned.contains(asset.getTypeKey())) {
+                        pinned.add(asset.getTypeKey());
+                    }
+                }
+                List<String> next = PlaceLayout.move(offeredLines(place.getOfferedTypes()), pinned,
+                        placeFacts(place.getProjectKey()), type.getTypeKey(), action);
+                if (next == null) {
+                    throw new AssetException(400, "asset-tree.error.type.arrange");
+                }
+                place.setOfferedTypes(joinOffered(next));
+                place.setUpdated(new Date());
+                place.setUpdatedBy(user.getKey());
+                place.save();
+                AssetEntity[] rows = assetsIn(place.getProjectKey());
+                return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
+            }
+        });
+    }
+
+    private List<PlaceLayout.Fact> placeFacts(String projectKey) {
+        List<PlaceLayout.Fact> facts = new ArrayList<PlaceLayout.Fact>();
+        for (AssetTypeDto type : typeDtos(projectKey, assetsIn(projectKey))) {
+            if (type == null || type.isLocation()) {
+                continue;
+            }
+            String parent = type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+            facts.add(new PlaceLayout.Fact(type.getTypeKey(), parent));
+        }
+        return facts;
     }
 
     private List<String> requestedTypes(PlaceTypeDraft draft) {
@@ -4821,16 +4951,28 @@ public class AssetServiceImpl implements AssetService {
         return keys;
     }
 
-    private List<String> offeredKeys(String raw) {
-        List<String> keys = new ArrayList<String>();
+    private List<String> offeredLines(String raw) {
+        List<String> lines = new ArrayList<String>();
+        List<String> seen = new ArrayList<String>();
         if (raw == null || raw.isEmpty()) {
-            return keys;
+            return lines;
         }
         for (String part : raw.split("\n")) {
-            String key = part.trim();
-            if (!key.isEmpty() && !keys.contains(key)) {
-                keys.add(key);
+            String line = part.trim();
+            String key = PlaceLayout.lineKey(line);
+            if (key.isEmpty() || seen.contains(key)) {
+                continue;
             }
+            seen.add(key);
+            lines.add(line);
+        }
+        return lines;
+    }
+
+    private List<String> offeredKeys(String raw) {
+        List<String> keys = new ArrayList<String>();
+        for (String line : offeredLines(raw)) {
+            keys.add(PlaceLayout.lineKey(line));
         }
         return keys;
     }

@@ -18,9 +18,10 @@ import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
-import com.assetstree.jira.dto.FlowGraphDto;
+import com.assetstree.jira.dto.FlowBookDto;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
@@ -107,6 +108,17 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.updateAsset(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/types/arrange")
+    public Response arrangeType(@PathParam("id") final int id, final PlaceArrangeDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.arrangeType(user(), id, draft)).build();
             }
         });
     }
@@ -600,6 +612,18 @@ public class AssetResource {
         });
     }
 
+    @PUT
+    @Path("projects/{projectKey}/portal-rules/{ruleId}")
+    public Response updatePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId,
+                                     final PortalRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updatePortalRule(user(), projectKey, ruleId, draft)).build();
+            }
+        });
+    }
+
     @DELETE
     @Path("projects/{projectKey}/portal-rules/{ruleId}")
     public Response deletePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
@@ -683,7 +707,7 @@ public class AssetResource {
 
     @PUT
     @Path("projects/{projectKey}/flow-graph")
-    public Response saveFlowGraph(@PathParam("projectKey") final String projectKey, final FlowGraphDto draft) {
+    public Response saveFlowGraph(@PathParam("projectKey") final String projectKey, final FlowBookDto draft) {
         return invoke(new Callable<Response>() {
             @Override
             public Response call() {

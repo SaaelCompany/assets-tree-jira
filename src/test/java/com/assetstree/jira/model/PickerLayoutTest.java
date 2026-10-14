@@ -36,6 +36,27 @@ public class PickerLayoutTest {
     }
 
     @Test
+    public void aPlaceCanNestATypeThatTheSchemaKeepsSeparate() {
+        List<PickerLayout.Catalog> catalog = Arrays.asList(
+                new PickerLayout.Catalog("laptop", "Ноутбук", ""),
+                new PickerLayout.Catalog("camera", "Камера", ""));
+        List<PickerLayout.Node> nodes = PickerLayout.arrange(Arrays.asList(
+                new PickerLayout.Source(1, null, "Сущевка", "P-1", "in_use", "branch", "Филиал", "", "", true,
+                        Arrays.asList("laptop@", "camera@laptop")),
+                gear(8, 1, "Ноутбук 1", "laptop", "Ноутбук", "", ""),
+                gear(9, 1, "Камера 1", "camera", "Камера", "", "")), catalog);
+        PickerLayout.Node laptop = groupNamed(nodes, "Ноутбук");
+        PickerLayout.Node camera = groupNamed(nodes, "Камера");
+        assertEquals(Integer.valueOf(1), laptop.getParentId());
+        assertEquals(Integer.valueOf(laptop.getId()), camera.getParentId());
+        assertEquals(Integer.valueOf(camera.getId()), node(nodes, 9).getParentId());
+        List<PickerLayout.Node> flat = PickerLayout.arrange(Arrays.asList(
+                place(2, null, "Рязанка"),
+                gear(10, 2, "Камера 2", "camera", "Камера", "", "")), catalog);
+        assertEquals(Integer.valueOf(2), groupNamed(flat, "Камера").getParentId());
+    }
+
+    @Test
     public void aRootTypeWithoutASubtypeIsStillItsOwnGroup() {
         List<PickerLayout.Node> nodes = PickerLayout.arrange(Arrays.asList(
                 place(1, null, "Склад"),

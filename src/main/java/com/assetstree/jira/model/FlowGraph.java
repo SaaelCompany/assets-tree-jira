@@ -239,7 +239,7 @@ public final class FlowGraph {
         return normalize(graph);
     }
 
-    private static void writeNode(StringBuilder out, FlowNodeDto node) {
+    static void writeNode(StringBuilder out, FlowNodeDto node) {
         out.append("{\"id\":");
         quote(out, node.getId());
         out.append(",\"kind\":");
@@ -385,7 +385,7 @@ public final class FlowGraph {
         return value instanceof String ? (String) value : "";
     }
 
-    private static void quote(StringBuilder out, String value) {
+    static void quote(StringBuilder out, String value) {
         out.append('"');
         String text = value == null ? "" : value;
         for (int i = 0; i < text.length(); i++) {

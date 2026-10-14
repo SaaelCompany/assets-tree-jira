@@ -26,11 +26,12 @@ import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.ImportDraft;
-import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
+import com.assetstree.jira.dto.FlowBookDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
@@ -132,6 +133,8 @@ public interface AssetService {
 
     PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
 
+    PortalRuleDto updatePortalRule(ApplicationUser user, String projectKey, int ruleId, PortalRuleDraft draft);
+
     void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
 
     List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey);
@@ -144,9 +147,9 @@ public interface AssetService {
 
     void deleteFlowRule(ApplicationUser user, String projectKey, int ruleId);
 
-    FlowGraphDto flowGraph(ApplicationUser user, String projectKey);
+    FlowBookDto flowGraph(ApplicationUser user, String projectKey);
 
-    FlowGraphDto saveFlowGraph(ApplicationUser user, String projectKey, FlowGraphDto draft);
+    FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft);
 
     CardLayout cardLayout(ApplicationUser user, String projectKey);
 
@@ -167,6 +170,9 @@ public interface AssetService {
 
     /** Pins an equipment type to one place, or removes that pin when the place has no such equipment. */
     AssetDto offerType(ApplicationUser user, int assetId, PlaceTypeDraft draft, boolean present);
+
+    /** Moves a type up, down, into the type above, or back onto the place. */
+    AssetDto arrangeType(ApplicationUser user, int assetId, PlaceArrangeDraft draft);
 
     ServicePlanDto updatePlan(ApplicationUser user, int assetId, int planId, ServicePlanDraft draft);
 

@@ -92,8 +92,10 @@
         grants: null,
         portalRules: null,
         flowRules: null,
-        flowGraph: null,
+        flowBook: null,
         flowDraft: null,
+        flowProcessId: '',
+        portalDraft: null,
         flowReady: false,
         flowLoading: false,
         issueTypes: null,
@@ -1085,14 +1087,182 @@
         return countIndex[assetId] || 0;
     }
 
+    function offeredLineKey(line) {
+        var text = String(line || '').replace(/^\s+|\s+$/g, '');
+        var at = text.indexOf('@');
+        return at < 0 ? text : text.slice(0, at).replace(/^\s+|\s+$/g, '');
+    }
+
     function pinsAt(placeId) {
         var place = byId()[placeId];
         var used = {};
         var offered = {};
         if (!place) return { used: used, offered: offered };
         equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
-        (place.offeredTypes || []).forEach(function (key) { offered[key] = true; });
+        (place.offeredTypes || []).forEach(function (line) {
+            var key = offeredLineKey(line);
+            if (key) offered[key] = true;
+        });
         return { used: used, offered: offered };
+    }
+
+    function placeFacts() {
+        return state.types.filter(function (type) { return type && !type.location; });
+    }
+
+    function placeOrdered(lines) {
+        var any = false;
+        for (var i = 0; i < lines.length; i++) {
+            var line = String(lines[i] || '').replace(/^\s+|\s+$/g, '');
+            if (!line) continue;
+            any = true;
+            if (line.indexOf('@') < 0) return false;
+        }
+        return any;
+    }
+
+    function placeSlots(placeId) {
+        var place = byId()[placeId];
+        if (!place || !isFolder(place)) return [];
+        var facts = placeFacts();
+        var known = {};
+        var schemaKeys = [];
+        facts.forEach(function (type) {
+            if (!type.typeKey || known[type.typeKey]) return;
+            known[type.typeKey] = type;
+            schemaKeys.push(type.typeKey);
+        });
+        var lines = place.offeredTypes || [];
+        var linePos = {};
+        var explicit = {};
+        var position = 0;
+        lines.forEach(function (line) {
+            var text = String(line || '').replace(/^\s+|\s+$/g, '');
+            if (!text) return;
+            var key = offeredLineKey(text);
+            if (!key || !known[key] || Object.prototype.hasOwnProperty.call(linePos, key)) return;
+            linePos[key] = position;
+            position++;
+            var at = text.indexOf('@');
+            if (at >= 0) {
+                var parent = text.slice(at + 1).replace(/^\s+|\s+$/g, '');
+                if (parent === key || !known[parent]) parent = '';
+                explicit[key] = parent;
+            }
+        });
+        var visible = {};
+        var pins = pinsAt(placeId);
+        schemaKeys.forEach(function (key) {
+            if (pins.used[key] || pins.offered[key] || Object.prototype.hasOwnProperty.call(linePos, key)) visible[key] = true;
+        });
+        function rawParent(key) {
+            if (Object.prototype.hasOwnProperty.call(explicit, key)) return explicit[key];
+            var schemaParent = parentKeyOf(known[key]);
+            if (schemaParent && schemaParent !== key && known[schemaParent]) return schemaParent;
+            return '';
+        }
+        var raw = {};
+        function remember() {
+            Object.keys(visible).forEach(function (key) { raw[key] = rawParent(key); });
+        }
+        remember();
+        var guard = 0;
+        var grew = true;
+        while (grew && guard < 8) {
+            grew = false;
+            guard++;
+            Object.keys(raw).forEach(function (key) {
+                var parent = raw[key];
+                if (parent && !visible[parent] && known[parent]) {
+                    visible[parent] = true;
+                    grew = true;
+                }
+            });
+            if (grew) remember();
+        }
+        var parentOf = {};
+        Object.keys(visible).forEach(function (key) {
+            var parent = raw[key] || '';
+            parentOf[key] = parent && parent !== key && visible[parent] ? parent : '';
+        });
+        var flatGuard = 0;
+        var changed = true;
+        while (changed && flatGuard < 8) {
+            changed = false;
+            flatGuard++;
+            Object.keys(parentOf).forEach(function (key) {
+                var parent = parentOf[key];
+                if (parent && parentOf[parent]) {
+                    parentOf[key] = '';
+                    changed = true;
+                }
+            });
+        }
+        var roots = [];
+        var children = {};
+        schemaKeys.forEach(function (key) {
+            if (!visible[key]) return;
+            var parent = parentOf[key] || '';
+            if (!parent || !visible[parent]) {
+                roots.push(key);
+                return;
+            }
+            if (!children[parent]) children[parent] = [];
+            children[parent].push(key);
+        });
+        function score(key) {
+            if (Object.prototype.hasOwnProperty.call(linePos, key)) return linePos[key];
+            var at = schemaKeys.indexOf(key);
+            return 1000000 + (at < 0 ? schemaKeys.length : at);
+        }
+        function byLine(list) {
+            list.sort(function (left, right) { return score(left) - score(right); });
+        }
+        if (placeOrdered(lines)) {
+            byLine(roots);
+            Object.keys(children).forEach(function (parent) { byLine(children[parent]); });
+        }
+        var slots = [];
+        roots.forEach(function (root) {
+            slots.push({ typeKey: root, parentKey: '' });
+            (children[root] || []).forEach(function (child) {
+                slots.push({ typeKey: child, parentKey: root });
+            });
+        });
+        return slots;
+    }
+
+    function localParent(placeId, typeKey) {
+        var parent = '';
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.typeKey === typeKey) parent = slot.parentKey || '';
+        });
+        return parent;
+    }
+
+    function siblingInfo(placeId, typeKey) {
+        var slots = placeSlots(placeId);
+        var parent = '';
+        var found = false;
+        slots.forEach(function (slot) {
+            if (slot.typeKey === typeKey) {
+                parent = slot.parentKey || '';
+                found = true;
+            }
+        });
+        var siblings = [];
+        var childCount = 0;
+        slots.forEach(function (slot) {
+            if ((slot.parentKey || '') === parent) siblings.push(slot.typeKey);
+            if (slot.parentKey === typeKey) childCount++;
+        });
+        return {
+            found: found,
+            parent: parent,
+            index: siblings.indexOf(typeKey),
+            count: siblings.length,
+            childCount: childCount
+        };
     }
 
     function pinned(pins, typeKey) {
@@ -1110,25 +1280,23 @@
     }
 
     function typeGroupsFor(placeId) {
-        var place = byId()[placeId];
-        if (!place || !isFolder(place)) return [];
-        var pins = pinsAt(placeId);
-        return state.types.filter(function (type) {
-            if (type.location || parentKeyOf(type)) return false;
-            if (pinned(pins, type.typeKey)) return true;
-            var kids = subtypesOf(type.typeKey);
-            for (var i = 0; i < kids.length; i++) {
-                if (pinned(pins, kids[i].typeKey)) return true;
-            }
-            return false;
+        var groups = [];
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.parentKey) return;
+            var type = typeByKey(slot.typeKey);
+            if (type && !type.location) groups.push(type);
         });
+        return groups;
     }
 
     function subtypesAt(placeId, parentKey) {
-        var pins = pinsAt(placeId);
-        return subtypesOf(parentKey).filter(function (type) {
-            return pinned(pins, type.typeKey);
+        var groups = [];
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.parentKey !== parentKey) return;
+            var type = typeByKey(slot.typeKey);
+            if (type && !type.location) groups.push(type);
         });
+        return groups;
     }
 
     function typeExpandKey(placeId, typeKey) {
@@ -1143,7 +1311,7 @@
 
     function typeFolderCount(placeId, type) {
         var count = equipmentIn(placeId, type.typeKey).length;
-        if (!parentKeyOf(type)) {
+        if (!localParent(placeId, type.typeKey)) {
             subtypesAt(placeId, type.typeKey).forEach(function (child) {
                 count += equipmentIn(placeId, child.typeKey).length;
             });
@@ -1905,11 +2073,53 @@
         }
     }
 
+    function arrangeType(placeId, typeKey, action) {
+        ajax('POST', '/assets/' + placeId + '/types/arrange', { typeKey: typeKey, action: action }, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                reloadTree(function () {
+                    state.expanded[placeId] = true;
+                    var parent = localParent(placeId, typeKey);
+                    if (parent) state.expanded[typeExpandKey(placeId, parent)] = true;
+                    rememberExpanded();
+                    renderNodes();
+                    replaceDetail();
+                });
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function arrangeBar(placeId, typeKey) {
+        var info = siblingInfo(placeId, typeKey);
+        var bar = el('span', 'asset-tree-arrange-bar');
+        function move(symbol, title, action, disabled) {
+            var btn = el('button', 'asset-tree-arrange', symbol);
+            btn.type = 'button';
+            btn.title = title;
+            btn.disabled = !!disabled;
+            btn.setAttribute('aria-label', title);
+            btn.addEventListener('click', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (btn.disabled) return;
+                arrangeType(placeId, typeKey, action);
+            });
+            bar.appendChild(btn);
+        }
+        move('\u2191', t('typeMoveUp'), 'up', !info.found || info.index <= 0);
+        move('\u2193', t('typeMoveDown'), 'down', !info.found || info.index < 0 || info.index >= info.count - 1);
+        move('\u2192', t('typeNest'), 'nest', !info.found || !!info.parent || info.childCount > 0 || info.index <= 0);
+        move('\u2190', t('typeLift'), 'lift', !info.found || !info.parent);
+        return bar;
+    }
+
     function typeGroupRow(placeId, type) {
-        var kids = parentKeyOf(type) ? [] : subtypesAt(placeId, type.typeKey);
+        var nestedHere = !!localParent(placeId, type.typeKey);
+        var kids = nestedHere ? [] : subtypesAt(placeId, type.typeKey);
         var open = kids.length > 0 && typeBranchOpen(placeId, type.typeKey);
         var branch = el('div', 'asset-tree-branch');
-        var row = el('div', 'asset-tree-row is-type' + (parentKeyOf(type) ? ' is-subtype' : ''));
+        var row = el('div', 'asset-tree-row is-type' + (nestedHere ? ' is-subtype' : ''));
         row.setAttribute('role', 'treeitem');
         row.setAttribute('data-place-id', String(placeId));
         row.setAttribute('data-type-key', type.typeKey);
@@ -1931,7 +2141,8 @@
         row.appendChild(name);
         var count = typeFolderCount(placeId, type);
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (state.canObjects || (state.canConfigure && !parentKeyOf(type))) {
+        if (state.canPlaces) row.appendChild(arrangeBar(placeId, type.typeKey));
+        if (state.canObjects || (state.canConfigure && !nestedHere && !parentKeyOf(type))) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
             nest.title = t('addNode');
@@ -2079,7 +2290,7 @@
 
     function openTypeAdd(placeId, typeKey) {
         var type = typeOf(typeKey);
-        var inner = !!(state.canConfigure && type && !parentKeyOf(type));
+        var inner = !!(state.canConfigure && type && !parentKeyOf(type) && !localParent(placeId, type.typeKey));
         var object = !!state.canObjects;
         if (!inner && !object) return;
         if (inner && object) {
@@ -2527,7 +2738,12 @@
             }));
         }
         var direct = equipmentIn(group.placeId, group.typeKey).length;
-        var offered = place && (place.offeredTypes || []).indexOf(group.typeKey) >= 0;
+        var offered = false;
+        if (place) {
+            (place.offeredTypes || []).forEach(function (line) {
+                if (offeredLineKey(line) === group.typeKey) offered = true;
+            });
+        }
         if (!direct && offered && state.canPlaces) {
             tools.appendChild(button(t('removeTypeHere'), 'asset-tree-btn', function () {
                 if (!window.confirm(t('removeTypeHereConfirm', type.label || group.typeKey))) return;
@@ -6974,9 +7190,11 @@
         applyRights(match);
         state.grants = null;
         state.portalRules = null;
+        state.portalDraft = null;
         state.flowRules = null;
-        state.flowGraph = null;
+        state.flowBook = null;
         state.flowDraft = null;
+        state.flowProcessId = '';
         state.flowReady = false;
         state.flowLoading = false;
         state.issueTypes = null;
@@ -7016,9 +7234,11 @@
         applyRights(project);
         state.grants = null;
         state.portalRules = null;
+        state.portalDraft = null;
         state.flowRules = null;
-        state.flowGraph = null;
+        state.flowBook = null;
         state.flowDraft = null;
+        state.flowProcessId = '';
         state.flowReady = false;
         state.flowLoading = false;
         state.issueTypes = null;
@@ -9184,6 +9404,20 @@
         return copy;
     }
 
+    function cloneBook(book) {
+        var copy = { processes: [] };
+        ((book && book.processes) || []).forEach(function (process) {
+            var graph = cloneFlow(process);
+            copy.processes.push({
+                id: process.id,
+                name: process.name || '',
+                nodes: graph.nodes,
+                links: graph.links
+            });
+        });
+        return copy;
+    }
+
     function flowNodeId(draft) {
         var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
         var taken = {};
@@ -9198,13 +9432,61 @@
         return id;
     }
 
-    function renderFlowSettings(panel) {
-        var block = el('div', 'asset-tree-settings-block');
+    function flowFreshId(book) {
+        var nodes = [];
+        ((book && book.processes) || []).forEach(function (process) {
+            nodes.push({ id: process.id });
+            (process.nodes || []).forEach(function (node) { nodes.push(node); });
+        });
+        return flowNodeId({ nodes: nodes });
+    }
+
+    function selectedProcess(book) {
+        var found = null;
+        ((book && book.processes) || []).forEach(function (process) {
+            if (process.id === state.flowProcessId) found = process;
+        });
+        if (!found && book && book.processes && book.processes.length) found = book.processes[0];
+        if (found) state.flowProcessId = found.id;
+        return found;
+    }
+
+    function saveFlowBook(errorNode, done) {
+        var book = state.flowDraft || { processes: [] };
+        var body = {
+            processes: (book.processes || []).map(function (process) {
+                return {
+                    id: process.id,
+                    name: process.name || '',
+                    nodes: process.nodes || [],
+                    links: process.links || []
+                };
+            })
+        };
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/flow-graph', body, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                state.flowBook = payload || { processes: [] };
+                state.flowDraft = cloneBook(state.flowBook);
+                selectedProcess(state.flowDraft);
+                state.flowRules = null;
+                if (done) done();
+                else renderFrame();
+            } else if (errorNode) {
+                errorNode.hidden = false;
+                errorNode.textContent = (payload && payload.message) || t('errorTitle');
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function renderFlowSettings(host) {
+        var block = el('div', 'asset-tree-flow-column');
         block.appendChild(el('h3', 'asset-tree-settings-title', t('flowSection')));
         block.appendChild(el('p', 'asset-tree-hint', t('flowSectionHint')));
         if (!state.flowReady || state.issueTypes === null || state.issueStatuses === null) {
             block.appendChild(el('p', 'asset-tree-hint', t('loading')));
-            panel.appendChild(block);
+            host.appendChild(block);
             if (state.flowLoading) return;
             state.flowLoading = true;
             var projectKey = state.projectKey;
@@ -9215,17 +9497,17 @@
                 if (state.projectKey !== projectKey) return;
                 state.flowReady = true;
                 state.flowLoading = false;
-                if (!state.flowDraft) state.flowDraft = cloneFlow(state.flowGraph);
+                if (!state.flowDraft) state.flowDraft = cloneBook(state.flowBook);
                 if (state.view === 'settings' && state.schemaTab === 'portal') renderFrame();
             }
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flow-graph', null, function (status, payload) {
                 if (state.projectKey !== projectKey) return;
-                if (status === 200) state.flowGraph = payload || { nodes: [], links: [] };
+                if (status === 200) state.flowBook = payload || { processes: [] };
                 else {
-                    state.flowGraph = { nodes: [], links: [] };
+                    state.flowBook = { processes: [] };
                     notify((payload && payload.message) || t('errorTitle'));
                 }
-                state.flowDraft = cloneFlow(state.flowGraph);
+                state.flowDraft = cloneBook(state.flowBook);
                 finish();
             });
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/issue-types', null, function (status, payload) {
@@ -9240,13 +9522,60 @@
             });
             return;
         }
-        var draft = state.flowDraft || cloneFlow(state.flowGraph);
-        state.flowDraft = draft;
+        var book = state.flowDraft || cloneBook(state.flowBook);
+        state.flowDraft = book;
+        var process = selectedProcess(book);
+        var bar = el('div', 'asset-tree-flow-processes');
+        (book.processes || []).forEach(function (item) {
+            var active = process && item.id === process.id;
+            var chip = button(item.name || t('flowProcessDefault'), 'asset-tree-btn asset-tree-flow-tab' + (active ? ' is-active' : ''), function () {
+                state.flowProcessId = item.id;
+                renderFrame();
+            });
+            bar.appendChild(chip);
+        });
+        bar.appendChild(button(t('flowProcessNew'), 'asset-tree-btn', function () {
+            var created = {
+                id: flowFreshId(book),
+                name: t('flowProcessDefault') + (book.processes.length ? ' ' + (book.processes.length + 1) : ''),
+                nodes: [],
+                links: []
+            };
+            book.processes.push(created);
+            state.flowProcessId = created.id;
+            saveFlowBook(null);
+        }));
+        if (process) {
+            bar.appendChild(button(t('flowProcessDelete'), 'asset-tree-btn', function () {
+                if (!window.confirm(t('flowProcessDeleteConfirm'))) return;
+                book.processes = (book.processes || []).filter(function (item) { return item.id !== process.id; });
+                state.flowProcessId = book.processes.length ? book.processes[0].id : '';
+                saveFlowBook(null);
+            }));
+        }
+        block.appendChild(bar);
+        if (!process) {
+            block.appendChild(el('p', 'asset-tree-flow-empty is-static', t('flowProcessEmpty')));
+            host.appendChild(block);
+            return;
+        }
+        var name = input('asset-tree-flow-name', process.name || '');
+        name.placeholder = t('flowProcessDefault');
+        name.setAttribute('aria-label', t('flowProcessName'));
+        name.addEventListener('input', function () {
+            process.name = name.value.replace(/^\s+|\s+$/g, '');
+            var chip = bar.querySelector('.asset-tree-flow-tab.is-active');
+            if (chip) chip.textContent = process.name || t('flowProcessDefault');
+        });
+        var nameRow = el('div', 'asset-tree-flow-name');
+        nameRow.appendChild(el('label', 'asset-tree-flow-label', t('flowProcessName')));
+        nameRow.appendChild(name);
+        block.appendChild(nameRow);
         var tools = el('div', 'asset-tree-flow-tools');
         function addTool(label, kind) {
             var tool = button(label, 'asset-tree-btn asset-tree-flow-add', function () {
-                addFlowNode(draft, kind);
-                paintFlow(canvas, draft, error);
+                addFlowNode(process, kind);
+                paintFlow(canvas, process, error);
             });
             tool.insertBefore(el('span', 'asset-tree-flow-dot is-' + kind), tool.firstChild);
             tools.appendChild(tool);
@@ -9263,28 +9592,14 @@
         board.appendChild(canvas);
         block.appendChild(error);
         block.appendChild(board);
-        panel.appendChild(block);
-        paintFlow(canvas, draft, error);
+        paintFlow(canvas, process, error);
         var actions = el('div', 'asset-tree-inline-actions');
         actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
             error.hidden = true;
-            ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/flow-graph', {
-                nodes: draft.nodes,
-                links: draft.links
-            }, function (status, payload) {
-                if (status >= 200 && status < 300) {
-                    state.flowGraph = payload || { nodes: [], links: [] };
-                    state.flowDraft = cloneFlow(state.flowGraph);
-                    state.flowRules = null;
-                    renderFrame();
-                } else {
-                    error.hidden = false;
-                    error.textContent = (payload && payload.message) || t('errorTitle');
-                }
-            });
+            saveFlowBook(error);
         }));
         block.appendChild(actions);
-        panel.appendChild(block);
+        host.appendChild(block);
     }
 
     function addFlowNode(draft, kind) {
@@ -9558,13 +9873,21 @@
         drawWires();
     }
 
+    function emptyPortalDraft() {
+        return { id: null, assetId: '', conditions: [{ field: '', option: '' }] };
+    }
+
     function renderPortalSettings(panel) {
-        var block = el('div', 'asset-tree-settings-block');
-        block.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
+        panel.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
+        var layout = el('div', 'asset-tree-settings-block asset-tree-portal-layout');
+        var fields = el('div', 'asset-tree-portal-fields');
+        fields.appendChild(el('h3', 'asset-tree-settings-title', t('portalFieldsTitle')));
+        fields.appendChild(el('p', 'asset-tree-hint', t('portalFieldsHint')));
         if (state.portalRules === null) {
             state.portalRules = [];
-            block.appendChild(el('p', 'asset-tree-hint', t('loading')));
-            panel.appendChild(block);
+            fields.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            layout.appendChild(fields);
+            panel.appendChild(layout);
             var projectKey = state.projectKey;
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/portal-rules', null, function (status, payload) {
                 if (state.view !== 'settings' || state.projectKey !== projectKey) return;
@@ -9575,7 +9898,7 @@
                 }
                 if (state.schemaTab === 'portal') renderFrame();
             });
-            renderFlowSettings(panel);
+            renderFlowSettings(layout);
             return;
         }
         var list = el('div', 'asset-tree-portal-list');
@@ -9583,15 +9906,31 @@
             list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
         }
         state.portalRules.forEach(function (rule) {
-            var row = el('div', 'asset-tree-portal-rule');
-            var text = (rule.conditions || []).map(function (condition) {
-                return (condition.field || '') + ' = ' + (condition.option || '');
-            }).join('  ·  ');
-            row.appendChild(el('span', 'asset-tree-portal-when', text));
-            row.appendChild(el('span', 'asset-tree-portal-target', rule.assetPath || rule.assetName || ''));
-            row.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
+            var card = el('div', 'asset-tree-portal-rule');
+            var when = el('div', 'asset-tree-portal-when');
+            (rule.conditions || []).forEach(function (condition, index) {
+                var line = el('p', null, (index ? t('portalAddCondition') + ' ' : t('portalIf') + ' ')
+                    + (condition.field || '') + ' ' + t('portalEquals') + ' ' + (condition.option || ''));
+                when.appendChild(line);
+            });
+            card.appendChild(when);
+            card.appendChild(el('p', 'asset-tree-portal-target', t('portalThen') + ' ' + (rule.assetPath || rule.assetName || '')));
+            var actions = el('div', 'asset-tree-portal-rule-actions');
+            actions.appendChild(button(t('portalEditRule'), 'asset-tree-btn', function () {
+                state.portalDraft = {
+                    id: rule.id,
+                    assetId: String(rule.assetId || ''),
+                    conditions: (rule.conditions || []).map(function (condition) {
+                        return { field: condition.field || '', option: condition.option || '' };
+                    })
+                };
+                if (!state.portalDraft.conditions.length) state.portalDraft.conditions = [{ field: '', option: '' }];
+                renderFrame();
+            }));
+            actions.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
                 ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules/' + rule.id, null, function (status, payload) {
                     if (status >= 200 && status < 300) {
+                        if (state.portalDraft && state.portalDraft.id === rule.id) state.portalDraft = emptyPortalDraft();
                         state.portalRules = null;
                         renderFrame();
                     } else {
@@ -9599,30 +9938,36 @@
                     }
                 });
             }));
-            list.appendChild(row);
+            card.appendChild(actions);
+            list.appendChild(card);
         });
-        block.appendChild(list);
+        fields.appendChild(list);
 
-        var conditions = [{ field: '', option: '' }];
+        if (!state.portalDraft) state.portalDraft = emptyPortalDraft();
+        var draft = state.portalDraft;
+        var editing = !!draft.id;
         var conditionBox = el('div', 'asset-tree-portal-conditions');
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
 
         function paintConditions() {
             conditionBox.innerHTML = '';
-            conditions.forEach(function (condition, index) {
+            draft.conditions.forEach(function (condition, index) {
                 var line = el('div', 'asset-tree-portal-condition');
                 var fieldInput = input('', condition.field, false);
                 fieldInput.placeholder = t('portalField');
+                fieldInput.setAttribute('aria-label', t('portalField'));
                 fieldInput.addEventListener('input', function () { condition.field = fieldInput.value; });
                 var optionInput = input('', condition.option, false);
                 optionInput.placeholder = t('portalOption');
+                optionInput.setAttribute('aria-label', t('portalOption'));
                 optionInput.addEventListener('input', function () { condition.option = optionInput.value; });
                 line.appendChild(fieldInput);
+                line.appendChild(el('span', 'asset-tree-portal-equals', t('portalEquals')));
                 line.appendChild(optionInput);
-                if (conditions.length > 1) {
+                if (draft.conditions.length > 1) {
                     line.appendChild(button('×', 'asset-tree-btn', function () {
-                        conditions.splice(index, 1);
+                        draft.conditions.splice(index, 1);
                         paintConditions();
                     }));
                 }
@@ -9632,6 +9977,7 @@
         paintConditions();
 
         var target = el('select');
+        target.setAttribute('aria-label', t('portalThen'));
         var emptyOption = el('option', null, '—');
         emptyOption.value = '';
         target.appendChild(emptyOption);
@@ -9642,19 +9988,23 @@
             option.value = String(asset.id);
             target.appendChild(option);
         });
+        target.value = draft.assetId || '';
+        target.addEventListener('change', function () { draft.assetId = target.value; });
 
         var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
         form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
-            if (conditions.length >= 6) return;
-            conditions.push({ field: '', option: '' });
+            if (draft.conditions.length >= 6) return;
+            draft.conditions.push({ field: '', option: '' });
             paintConditions();
         }));
-        form.appendChild(field(t('portalTarget'), target, true));
+        form.appendChild(el('p', 'asset-tree-portal-lead', t('portalThen')));
+        form.appendChild(target);
         form.appendChild(error);
-        form.appendChild(button(t('portalAddRule'), 'asset-tree-btn primary', function () {
+        var submit = button(editing ? t('portalSaveRule') : t('portalAddRule'), 'asset-tree-btn primary', function () {
             var cleaned = [];
-            conditions.forEach(function (condition) {
+            draft.conditions.forEach(function (condition) {
                 var fieldName = condition.field.replace(/^\s+|\s+$/g, '');
                 var optionName = condition.option.replace(/^\s+|\s+$/g, '');
                 if (fieldName && optionName) cleaned.push({ field: fieldName, option: optionName });
@@ -9664,11 +10014,13 @@
                 error.textContent = t('portalConditionRequired');
                 return;
             }
-            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules', {
-                assetId: parseInt(target.value, 10),
-                conditions: cleaned
-            }, function (status, payload) {
+            var body = { assetId: parseInt(target.value, 10), conditions: cleaned };
+            var editingId = draft.id;
+            var method = editingId ? 'PUT' : 'POST';
+            var path = '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules' + (editingId ? '/' + editingId : '');
+            ajax(method, path, body, function (status, payload) {
                 if (status >= 200 && status < 300) {
+                    state.portalDraft = emptyPortalDraft();
                     state.portalRules = null;
                     renderFrame();
                 } else {
@@ -9676,11 +10028,21 @@
                     error.textContent = (payload && payload.message) || t('errorTitle');
                 }
             });
-        }));
+        });
+        var formActions = el('div', 'asset-tree-inline-actions');
+        formActions.appendChild(submit);
+        if (editing) {
+            formActions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+                state.portalDraft = emptyPortalDraft();
+                renderFrame();
+            }));
+        }
+        form.appendChild(formActions);
         form.addEventListener('submit', function (event) { event.preventDefault(); });
-        block.appendChild(form);
-        panel.appendChild(block);
-        renderFlowSettings(panel);
+        fields.appendChild(form);
+        layout.appendChild(fields);
+        panel.appendChild(layout);
+        renderFlowSettings(layout);
     }
 
     function renderStatusSettings(panel) {

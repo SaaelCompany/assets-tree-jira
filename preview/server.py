@@ -922,6 +922,7 @@ def picker_nodes(rows, text):
             "parentTypeKey": parent_type_key,
             "parentTypeLabel": parent_label,
             "location": location,
+            "offeredLines": list(row.get("offeredTypes") or []) if location else [],
         })
     return arrange_picker(sources)
 
@@ -942,7 +943,7 @@ def arrange_picker(sources):
         gear = equipment_by_place.get(source["id"])
         if not gear:
             continue
-        append_picker_groups(nodes, source["id"], gear, next_group, placed)
+        append_picker_groups(nodes, source["id"], gear, next_group, placed, source.get("offeredLines") or [])
     for source in sources:
         if source["location"] or source["id"] in placed:
             continue
@@ -950,31 +951,64 @@ def arrange_picker(sources):
     return nodes
 
 
-def append_picker_groups(nodes, place_id, gear, next_group, placed):
-    by_root = {}
+def append_picker_groups(nodes, place_id, gear, next_group, placed, lines=None):
+    facts = []
+    labels = {}
+    seen = set()
+    project = ""
+    if gear:
+        typed = type_row(gear[0]["typeKey"])
+        if typed:
+            project = typed.get("projectKey") or ""
+    for row in place_facts(project) if project else []:
+        key = row.get("typeKey") or ""
+        if not key or key in seen:
+            continue
+        facts.append(row)
+        labels[key] = row.get("label") or key
+        seen.add(key)
+    pinned = []
+    by_type = {}
     for item in gear:
-        root = item["typeKey"] if not item["parentTypeKey"] else item["parentTypeKey"]
-        by_root.setdefault(root, []).append(item)
-    for root_key, items in by_root.items():
+        key = item["typeKey"]
+        if key not in pinned:
+            pinned.append(key)
+        by_type.setdefault(key, []).append(item)
+        if key not in seen:
+            facts.append({"typeKey": key, "parentTypeKey": item.get("parentTypeKey") or "", "label": item["typeLabel"]})
+            labels[key] = item["typeLabel"]
+            seen.add(key)
+    slots = place_layout(lines or [], pinned, facts)
+    roots = []
+    children = {}
+    for slot in slots:
+        if not slot["parentKey"]:
+            roots.append(slot["typeKey"])
+        else:
+            children.setdefault(slot["parentKey"], []).append(slot["typeKey"])
+
+    def used(key):
+        if by_type.get(key):
+            return True
+        return any(by_type.get(child) for child in children.get(key, []))
+
+    for root in roots:
+        if not used(root):
+            continue
         root_id = next_group[0]
         next_group[0] = root_id - 1
-        nodes.append(picker_group(root_id, place_id, picker_root_label(root_key, items)))
-        direct = []
-        by_subtype = {}
-        for item in items:
-            if not item["parentTypeKey"]:
-                direct.append(item)
-                continue
-            by_subtype.setdefault(item["typeKey"], []).append(item)
-        for item in direct:
+        nodes.append(picker_group(root_id, place_id, labels.get(root) or root))
+        for item in by_type.get(root, []):
             nodes.append(picker_asset(item, root_id))
             placed.add(item["id"])
-        for children in by_subtype.values():
-            subtype_id = next_group[0]
-            next_group[0] = subtype_id - 1
-            nodes.append(picker_group(subtype_id, root_id, children[0]["typeLabel"]))
-            for item in children:
-                nodes.append(picker_asset(item, subtype_id))
+        for child in children.get(root, []):
+            if not by_type.get(child):
+                continue
+            child_id = next_group[0]
+            next_group[0] = child_id - 1
+            nodes.append(picker_group(child_id, root_id, labels.get(child) or child))
+            for item in by_type[child]:
+                nodes.append(picker_asset(item, child_id))
                 placed.add(item["id"])
 
 
@@ -2104,10 +2138,269 @@ def bulk_types(project_key, action, keys, text):
     return 200, {"done": done, "errors": errors}
 
 
+def line_key(line):
+    text = (line or "").strip()
+    if "@" in text:
+        text = text.split("@", 1)[0].strip()
+    return text
+
+
+def lines_ordered(lines):
+    any_line = False
+    for line in lines or []:
+        text = (line or "").strip()
+        if not text:
+            continue
+        any_line = True
+        if "@" not in text:
+            return False
+    return any_line
+
+
+def place_facts(project_key):
+    rows = [row for row in STATE["types"].values() if row.get("projectKey") == project_key and not row.get("location")]
+    rows.sort(key=lambda row: (row.get("sortOrder") or 0, row.get("typeKey") or ""))
+    return rows
+
+
+def place_layout(lines, pinned, facts):
+    known = {}
+    schema_keys = []
+    for row in facts or []:
+        key = row.get("typeKey") or ""
+        if not key or key in known:
+            continue
+        known[key] = row
+        schema_keys.append(key)
+    line_pos = {}
+    explicit = {}
+    position = 0
+    for line in lines or []:
+        text = (line or "").strip()
+        if not text:
+            continue
+        key = line_key(text)
+        if not key or key not in known or key in line_pos:
+            continue
+        line_pos[key] = position
+        position += 1
+        if "@" in text:
+            parent = text.split("@", 1)[1].strip()
+            if parent == key or parent not in known:
+                parent = ""
+            explicit[key] = parent
+    visible = {}
+    for key in pinned or []:
+        key = (key or "").strip()
+        if key in known:
+            visible[key] = True
+    for key in line_pos:
+        visible[key] = True
+
+    def raw_parent(key):
+        if key in explicit:
+            return explicit[key]
+        schema_parent = parent_key(known[key])
+        if schema_parent and schema_parent != key and schema_parent in known:
+            return schema_parent
+        return ""
+
+    raw = {}
+
+    def remember():
+        raw.clear()
+        for key in visible:
+            raw[key] = raw_parent(key)
+
+    remember()
+    for _guard in range(8):
+        grew = False
+        for key, parent in list(raw.items()):
+            if parent and parent not in visible and parent in known:
+                visible[parent] = True
+                grew = True
+        if not grew:
+            break
+        remember()
+    parent_of = {}
+    for key in visible:
+        parent = raw.get(key) or ""
+        parent_of[key] = parent if parent and parent != key and parent in visible else ""
+    for _guard in range(8):
+        changed = False
+        for key, parent in list(parent_of.items()):
+            if parent and parent_of.get(parent):
+                parent_of[key] = ""
+                changed = True
+        if not changed:
+            break
+    roots = []
+    children = {}
+    for key in schema_keys:
+        if key not in visible:
+            continue
+        parent = parent_of.get(key) or ""
+        if not parent or parent not in visible:
+            roots.append(key)
+            continue
+        children.setdefault(parent, []).append(key)
+
+    def score(key):
+        if key in line_pos:
+            return line_pos[key]
+        try:
+            at = schema_keys.index(key)
+        except ValueError:
+            at = len(schema_keys)
+        return 1000000 + at
+
+    if lines_ordered(lines):
+        roots.sort(key=score)
+        for bucket in children.values():
+            bucket.sort(key=score)
+    slots = []
+    for root in roots:
+        slots.append({"typeKey": root, "parentKey": ""})
+        for child in children.get(root, []):
+            slots.append({"typeKey": child, "parentKey": root})
+    return slots
+
+
+def place_move(lines, pinned, facts, type_key, action):
+    key = (type_key or "").strip()
+    step = (action or "").strip().lower()
+    if not key or step not in ("up", "down", "nest", "lift"):
+        return None
+    slots = place_layout(lines, pinned, facts)
+    roots = []
+    children = {}
+    parent_of = {}
+    for slot in slots:
+        if not slot["parentKey"]:
+            roots.append(slot["typeKey"])
+            parent_of[slot["typeKey"]] = ""
+            continue
+        children.setdefault(slot["parentKey"], []).append(slot["typeKey"])
+        parent_of[slot["typeKey"]] = slot["parentKey"]
+    if key not in parent_of:
+        return None
+    parent = parent_of[key]
+
+    def write():
+        stored = []
+        for root in roots:
+            stored.append(root + "@")
+            for child in children.get(root, []):
+                stored.append(child + "@" + root)
+        return stored
+
+    if step in ("up", "down"):
+        siblings = roots if not parent else children.get(parent) or []
+        if key not in siblings:
+            return None
+        index = siblings.index(key)
+        swap = index - 1 if step == "up" else index + 1
+        if swap < 0 or swap >= len(siblings):
+            return write()
+        siblings[index], siblings[swap] = siblings[swap], siblings[index]
+        return write()
+    if step == "nest":
+        if parent:
+            return None
+        if children.get(key):
+            return None
+        index = roots.index(key) if key in roots else -1
+        if index <= 0:
+            return None
+        previous = roots[index - 1]
+        roots.pop(index)
+        children.setdefault(previous, []).append(key)
+        return write()
+    if not parent:
+        return None
+    nested = children.get(parent) or []
+    if key in nested:
+        nested.remove(key)
+    at = roots.index(parent) if parent in roots else -1
+    if at < 0:
+        roots.append(key)
+    else:
+        roots.insert(at + 1, key)
+    return write()
+
+
+def add_pin(lines, facts, type_key):
+    known = {}
+    for row in facts or []:
+        key = row.get("typeKey") or ""
+        if key and key not in known:
+            known[key] = row
+    key = (type_key or "").strip()
+    if key not in known:
+        return None
+    nxt = list(lines or [])
+    if any(line_key(line) == key for line in nxt):
+        return nxt
+    if lines_ordered(nxt):
+        parent = parent_key(known[key])
+        if parent not in known or parent == key:
+            parent = ""
+        nxt.append(key + "@" + parent)
+    else:
+        nxt.append(key)
+    return nxt
+
+
+def remove_pin(lines, type_key):
+    key = (type_key or "").strip()
+    return [line for line in (lines or []) if line_key(line) != key]
+
+
 def flow_link_allowed(source, target):
     if source["kind"] == "request":
         return target["kind"] in ("issue", "status")
     return source["kind"] == "issue" and target["kind"] == "status"
+
+
+def normalize_flow_book(raw):
+    processes = []
+    seen = set()
+    incoming = (raw or {}).get("processes")
+    if not isinstance(incoming, list):
+        graph = normalize_flow_graph(raw or {})
+        return {"processes": [{"id": "legacy", "name": "", "nodes": graph["nodes"], "links": graph["links"]}]}
+    for item in incoming:
+        node_id = (item.get("id") or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9]{4,16}", node_id) or node_id in seen:
+            continue
+        seen.add(node_id)
+        graph = normalize_flow_graph(item)
+        name = " ".join((item.get("name") or "").split())
+        if len(name) > 80:
+            name = name[:80]
+        processes.append({"id": node_id, "name": name, "nodes": graph["nodes"], "links": graph["links"]})
+        if len(processes) >= 20:
+            break
+    return {"processes": processes}
+
+
+def flow_book_named(book):
+    processes = []
+    for process in (book or {}).get("processes") or []:
+        named = flow_graph_named(process)
+        named["id"] = process.get("id") or ""
+        named["name"] = process.get("name") or ""
+        processes.append(named)
+    return {"processes": processes}
+
+
+def flow_rules_from_book(project_key, book, names):
+    chosen = {}
+    for process in (book or {}).get("processes") or []:
+        for rule in flow_rules_from_graph(project_key, process, names):
+            if rule["issueTypeId"] not in chosen:
+                chosen[rule["issueTypeId"]] = rule
+    return list(chosen.values())
 
 
 def normalize_flow_graph(raw):
@@ -2694,7 +2987,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.105",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.2.106",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -2780,26 +3073,33 @@ setTimeout(function () {
             if method == "GET":
                 stored = STATE["flow_graphs"].get(project_key)
                 if stored:
-                    return 200, flow_graph_named(stored)
-                return 200, flow_graph_from_rules(project_key)
+                    book = stored if "processes" in stored else normalize_flow_book(stored)
+                    return 200, flow_book_named(book)
+                graph = flow_graph_from_rules(project_key)
+                if graph["nodes"]:
+                    return 200, flow_book_named({"processes": [{
+                        "id": "rules1", "name": "", "nodes": graph["nodes"], "links": graph["links"],
+                    }]})
+                return 200, {"processes": []}
             body = self.read_json() or {}
-            graph = normalize_flow_graph(body)
+            book = normalize_flow_book(body)
             names = {item["id"]: item["name"] for item in ISSUE_TYPES}
             ensure_statuses(project_key, text)
             known = {row["statusKey"] for row in STATE["statuses"].get(project_key, [])}
             status_names = {item["id"]: item["name"] for item in ISSUE_STATUSES}
-            for node in graph["nodes"]:
-                if node["kind"] == "request" and node["issueTypeId"] and node["issueTypeId"] not in names:
-                    return 400, {"message": text["asset-tree.error.flow.type"]}
-                if node["kind"] == "issue" and node["issueStatusId"] and node["issueStatusId"] not in status_names:
-                    return 400, {"message": text.get("asset-tree.error.flow.issue", "Request status")}
-                if node["kind"] == "status" and node["statusKey"]:
-                    node["statusKey"] = canonical(node["statusKey"])
-                    if node["statusKey"] not in known:
-                        return 400, {"message": text["asset-tree.error.flow.status"]}
-            STATE["flow_graphs"][project_key] = graph
-            STATE["flows"][project_key] = flow_rules_from_graph(project_key, graph, names)
-            return 200, flow_graph_named(graph)
+            for process in book["processes"]:
+                for node in process["nodes"]:
+                    if node["kind"] == "request" and node["issueTypeId"] and node["issueTypeId"] not in names:
+                        return 400, {"message": text["asset-tree.error.flow.type"]}
+                    if node["kind"] == "issue" and node["issueStatusId"] and node["issueStatusId"] not in status_names:
+                        return 400, {"message": text.get("asset-tree.error.flow.issue", "Request status")}
+                    if node["kind"] == "status" and node["statusKey"]:
+                        node["statusKey"] = canonical(node["statusKey"])
+                        if node["statusKey"] not in known:
+                            return 400, {"message": text["asset-tree.error.flow.status"]}
+            STATE["flow_graphs"][project_key] = book
+            STATE["flows"][project_key] = flow_rules_from_book(project_key, book, names)
+            return 200, flow_book_named(book)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-statuses", path)
         if match and method == "GET":
             if match.group(1) not in {item["key"] for item in PROJECTS}:
@@ -2864,6 +3164,36 @@ setTimeout(function () {
             bucket.append(rule)
             return 201, dict(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
+        if match and method == "PUT":
+            ensure_portal_demo()
+            rule_id = int(match.group(2))
+            found = None
+            for rule in STATE["portal_rules"]:
+                if rule["id"] == rule_id:
+                    found = rule
+            if not found:
+                return 404, {"message": text["asset-tree.error.portal.missing"]}
+            body = self.read_json() or {}
+            asset = STATE["assets"].get(int(body.get("assetId") or 0))
+            conditions = []
+            seen = set()
+            for item in body.get("conditions") or []:
+                field = " ".join((item.get("field") or "").split())
+                option = " ".join((item.get("option") or "").split())
+                if not field or not option:
+                    continue
+                key = field.lower()
+                if key in seen:
+                    return 400, {"message": text["asset-tree.error.portal.field"]}
+                seen.add(key)
+                conditions.append({"field": field, "option": option})
+            if not asset or asset["projectKey"] != match.group(1):
+                return 400, {"message": text["asset-tree.error.portal.target"]}
+            if not conditions:
+                return 400, {"message": text["asset-tree.error.portal.conditions"]}
+            found["assetId"] = asset["id"]
+            found["conditions"] = conditions
+            return 200, portal_rule_dto(found)
         if match and method == "DELETE":
             ensure_portal_demo()
             rule_id = int(match.group(2))
@@ -2908,6 +3238,9 @@ setTimeout(function () {
             return 200, picker_nodes(project_assets(match.group(1)), text)
         if path == "/types" and method == "POST":
             return self.create_type(self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/types/arrange", path)
+        if match and method == "POST":
+            return self.arrange_type(int(match.group(1)), self.read_json(), text)
         match = re.fullmatch(r"/assets/(\d+)/types", path)
         if match and method == "POST":
             return self.offer_type(int(match.group(1)), self.read_json(), True, text)
@@ -3204,10 +3537,13 @@ setTimeout(function () {
             if not row or row.get("location") or row.get("projectKey") != asset["projectKey"]:
                 return 400, {"message": text["asset-tree.error.type"]}
         offered = list(asset.get("offeredTypes") or [])
+        facts = place_facts(asset["projectKey"])
         if present:
             for type_key in type_keys:
-                if type_key not in offered:
-                    offered.append(type_key)
+                nxt = add_pin(offered, facts, type_key)
+                if nxt is None:
+                    return 400, {"message": text["asset-tree.error.type"]}
+                offered = nxt
         else:
             for type_key in type_keys:
                 direct = any(
@@ -3216,9 +3552,36 @@ setTimeout(function () {
                 )
                 if direct:
                     return 409, {"message": text.get("asset-tree.error.type.busy", "Busy")}
-            offered = [key for key in offered if key not in type_keys]
+            for type_key in type_keys:
+                offered = remove_pin(offered, type_key)
         asset["offeredTypes"] = offered
         return (200, asset_dto(asset, text, False)) if present else (204, None)
+
+    def arrange_type(self, asset_id, body, text):
+        asset = STATE["assets"].get(asset_id)
+        if not asset:
+            return 404, {"message": text["asset-tree.error.notFound"]}
+        if not is_location_id(asset_id):
+            return 400, {"message": text.get("asset-tree.error.type.place", "Place")}
+        type_key = ((body or {}).get("typeKey") or "").strip()
+        row = STATE["types"].get(type_key)
+        if not row or row.get("location") or row.get("projectKey") != asset["projectKey"]:
+            return 400, {"message": text.get("asset-tree.error.type.arrange", "Move")}
+        pinned = []
+        for line in asset.get("offeredTypes") or []:
+            key = line_key(line)
+            if key and key not in pinned:
+                pinned.append(key)
+        for item in STATE["assets"].values():
+            if item.get("parentId") == asset_id and not is_location_id(item["id"]):
+                key = item.get("typeKey") or ""
+                if key and key not in pinned:
+                    pinned.append(key)
+        nxt = place_move(list(asset.get("offeredTypes") or []), pinned, place_facts(asset["projectKey"]), type_key, (body or {}).get("action"))
+        if nxt is None:
+            return 400, {"message": text.get("asset-tree.error.type.arrange", "Move")}
+        asset["offeredTypes"] = nxt
+        return 200, asset_dto(asset, text, False)
 
     def create_plan(self, asset_id, body, text):
         asset = STATE["assets"].get(asset_id)
