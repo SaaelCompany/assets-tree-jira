@@ -131,6 +131,7 @@
             panel.insertBefore(el('p', 'asset-tree-panel-hint', t(i18n, 'panelHint')), panel.firstChild);
         }
         if (canEdit && !panel.querySelector('input')) {
+            var find = el('div', 'asset-tree-panel-find');
             var input = el('input');
             input.type = 'search';
             input.placeholder = t(i18n, 'panelSearch');
@@ -170,12 +171,13 @@
                     });
                 }, 220);
             });
+            find.appendChild(input);
             var before = list || panel.querySelector('.asset-tree-panel-empty') || panel.querySelector('.asset-tree-panel-open');
             if (before) {
-                panel.insertBefore(input, before);
+                panel.insertBefore(find, before);
                 panel.insertBefore(results, before);
             } else {
-                panel.appendChild(input);
+                panel.appendChild(find);
                 panel.appendChild(results);
             }
         }
@@ -224,9 +226,10 @@
             }
             assets.forEach(function (asset) {
                 var item = el('li');
+                var line = el('div', 'asset-tree-panel-line');
                 var link = el('a', null, asset.objectKey + '  ' + asset.name + (asset.location ? ' · ' + asset.location : ''));
                 link.href = contextPath() + '/plugins/servlet/asset-tree?project=' + encodeURIComponent(asset.projectKey || projectKey || '') + '#' + asset.id;
-                item.appendChild(link);
+                line.appendChild(link);
                 if (canEdit) {
                     var remove = el('button', null, '×');
                     remove.setAttribute('aria-label', t(i18n, 'unlink'));
@@ -235,11 +238,32 @@
                             loadLinks(panel, issueId, i18n, canEdit, projectKey);
                         });
                     });
-                    item.appendChild(remove);
+                    line.appendChild(remove);
                 }
+                item.appendChild(line);
+                item.appendChild(assetCard(asset, i18n));
                 list.appendChild(item);
             });
         });
+    }
+
+    function assetCard(asset, i18n) {
+        var card = el('div', 'asset-tree-panel-card');
+        card.appendChild(el('strong', null, asset.name || ''));
+        (asset.attributes || []).forEach(function (attr) {
+            if (!attr || !attr.name) return;
+            card.appendChild(cardRow(attr.name, attr.value || ''));
+        });
+        var person = asset.custodian && asset.custodian.displayName ? asset.custodian.displayName : '';
+        if (person) card.appendChild(cardRow(t(i18n, 'custodian'), person));
+        return card;
+    }
+
+    function cardRow(label, value) {
+        var row = el('div', 'asset-tree-panel-card-row');
+        row.appendChild(el('span', null, label));
+        row.appendChild(el('span', null, value));
+        return row;
     }
 
     var listening = false;

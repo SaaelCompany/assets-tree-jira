@@ -29,7 +29,20 @@
   #if($assetTreeAssets && $assetTreeAssets.size() > 0)
     <ul class="asset-tree-panel-list" id="asset-tree-panel-list">
       #foreach($asset in $assetTreeAssets)
-        <li><a href="${panelBase}/plugins/servlet/asset-tree?project=${textutils.htmlEncode($asset.projectKey)}#${asset.id}">$textutils.htmlEncode($asset.objectKey)  $textutils.htmlEncode($asset.name)#if($asset.location && $asset.location != "") · $textutils.htmlEncode($asset.location)#end</a></li>
+        <li>
+          <div class="asset-tree-panel-line"><a href="${panelBase}/plugins/servlet/asset-tree?project=${textutils.htmlEncode($asset.projectKey)}#${asset.id}">$textutils.htmlEncode($asset.objectKey)  $textutils.htmlEncode($asset.name)#if($asset.location && $asset.location != "") · $textutils.htmlEncode($asset.location)#end</a></div>
+          <div class="asset-tree-panel-card">
+            <strong>$textutils.htmlEncode($asset.name)</strong>
+            #foreach($attr in $asset.attributes)
+              #if($attr.name && $attr.name != "")
+                <div class="asset-tree-panel-card-row"><span>$textutils.htmlEncode($attr.name)</span><span>$textutils.htmlEncode($!attr.value)</span></div>
+              #end
+            #end
+            #if($i18n && $asset.custodian && $asset.custodian.displayName && $asset.custodian.displayName != "")
+              <div class="asset-tree-panel-card-row"><span>$i18n.getText("asset-tree.ui.custodian")</span><span>$textutils.htmlEncode($asset.custodian.displayName)</span></div>
+            #end
+          </div>
+        </li>
       #end
     </ul>
   #else
