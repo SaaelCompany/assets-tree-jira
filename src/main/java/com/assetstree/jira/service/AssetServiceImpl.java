@@ -3615,6 +3615,20 @@ public class AssetServiceImpl implements AssetService {
         dto.setCanComment(places || objects);
         dto.setCanConfigure(types);
         dto.setCanGrant(assets || admin);
+        dto.setCanArrange(canArrangeTypes(user, project));
+    }
+
+    private boolean canArrangeTypes(ApplicationUser user, Project project) {
+        if (user == null || project == null) {
+            return false;
+        }
+        if (isAdmin(user) || hasGlobalManage(user)) {
+            return true;
+        }
+        if (permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
+            return true;
+        }
+        return grantHas(user, project, GrantCaps.ADMIN);
     }
 
     private boolean hasCap(ApplicationUser user, Project project, String cap) {
@@ -4886,7 +4900,14 @@ public class AssetServiceImpl implements AssetService {
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
-                AssetEntity place = requireAssetCap(user, assetId, GrantCaps.PLACES);
+                AssetEntity place = requireAsset(assetId);
+                Project project = project(place.getProjectKey());
+                if (!canArrangeTypes(user, project)) {
+                    if (!canOpen(user, project)) {
+                        throw new AssetException(404, "asset-tree.error.notFound");
+                    }
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
                 if (!isLocation(place)) {
                     throw new AssetException(400, "asset-tree.error.type.place");
                 }

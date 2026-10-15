@@ -623,6 +623,8 @@
 html.asset-tree-dragging,
 html.asset-tree-dragging * {
     cursor: grabbing !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
 }
 
 #asset-tree-app .asset-tree-grip svg {
@@ -2031,6 +2033,8 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-row.is-movable {
     cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 #asset-tree-app .asset-tree-row.is-movable button {

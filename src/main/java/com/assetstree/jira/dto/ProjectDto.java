@@ -22,6 +22,7 @@ public class ProjectDto {
     private boolean canTypes;
     private boolean canAssets;
     private boolean canAdmin;
+    private boolean canArrange;
     private CardLayout card;
 
     public String getKey() {
@@ -142,6 +143,14 @@ public class ProjectDto {
 
     public void setCanAdmin(boolean canAdmin) {
         this.canAdmin = canAdmin;
+    }
+
+    public boolean isCanArrange() {
+        return canArrange;
+    }
+
+    public void setCanArrange(boolean canArrange) {
+        this.canArrange = canArrange;
     }
 
     public CardLayout getCard() {

@@ -72,6 +72,7 @@
         canComment: false,
         canConfigure: false,
         canGrant: false,
+        canArrange: false,
         canManage: false,
         treeReady: false,
         projects: [],
@@ -483,6 +484,7 @@
         state.canTypes = present('canTypes') ? !!project.canTypes : (present('canConfigure') ? !!project.canConfigure : objects);
         state.canAssets = present('canAssets') ? !!project.canAssets : false;
         state.canAdmin = present('canAdmin') ? !!project.canAdmin : false;
+        state.canArrange = present('canArrange') ? !!project.canArrange : false;
         state.canEdit = objects || places;
         state.canCreate = objects;
         state.canMove = places || objects;
@@ -2092,6 +2094,11 @@
         });
     }
 
+    function clearTextSelection() {
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (selection && selection.removeAllRanges) selection.removeAllRanges();
+    }
+
     function bindTypeDrag(row, placeId, typeKey, label) {
         var suppressClick = false;
         row.addEventListener('click', function (event) {
@@ -2100,13 +2107,18 @@
             event.preventDefault();
             event.stopPropagation();
         }, true);
+        row.addEventListener('selectstart', function (event) {
+            event.preventDefault();
+        });
         row.addEventListener('pointerdown', function (event) {
             if (event.button !== 0 || pointerDrag) return;
             if (event.target && event.target.closest && event.target.closest('button')) return;
+            event.preventDefault();
             var startX = event.clientX;
             var startY = event.clientY;
             var active = false;
             var plan = null;
+            clearTextSelection();
             function ghostAt(ev) {
                 var ghostNode = document.getElementById('asset-tree-drag-ghost');
                 if (!ghostNode) return;
@@ -2122,6 +2134,7 @@
                     active = true;
                     app.classList.add('is-dragging');
                     document.documentElement.classList.add('asset-tree-dragging');
+                    clearTextSelection();
                     var ghost = el('div', 'asset-tree-drag-ghost', label || typeKey);
                     ghost.id = 'asset-tree-drag-ghost';
                     document.body.appendChild(ghost);
@@ -2228,7 +2241,7 @@
         row.appendChild(name);
         var count = typeFolderCount(placeId, type);
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (state.canPlaces) {
+        if (state.canArrange) {
             row.classList.add('is-movable');
             bindTypeDrag(row, placeId, type.typeKey, type.label);
         }
@@ -2524,6 +2537,7 @@
             state.draggingId = pointerDrag.id;
             app.classList.add('is-dragging');
             document.documentElement.classList.add('asset-tree-dragging');
+            clearTextSelection();
             var moving = byId()[pointerDrag.id];
             var ghost = el('div', 'asset-tree-drag-ghost', moving ? moving.name : '');
             ghost.id = 'asset-tree-drag-ghost';
