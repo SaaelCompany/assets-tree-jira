@@ -12,6 +12,7 @@ public class FieldDto {
     private String label;
     private String kind;
     private boolean required;
+    private boolean showOnIssue;
     private int position;
     private List<String> options = new ArrayList<String>();
 
@@ -45,6 +46,14 @@ public class FieldDto {
 
     public void setRequired(boolean required) {
         this.required = required;
+    }
+
+    public boolean isShowOnIssue() {
+        return showOnIssue;
+    }
+
+    public void setShowOnIssue(boolean showOnIssue) {
+        this.showOnIssue = showOnIssue;
     }
 
     public int getPosition() {

@@ -1,11 +1,14 @@
 package com.assetstree.jira.json;
 
 import com.assetstree.jira.dto.AssetTypeDto;
+import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.AttributeDraft;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.dto.FlowGraphDto;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.TypeDraft;
 import org.codehaus.jackson.map.AnnotationIntrospector;
@@ -89,6 +92,10 @@ public class JiraJsonVisibilityTest {
         assertNull(partial.getShowInTree());
         assertNull(partial.getColor());
         assertNull(partial.getPlaceCaption());
+        assertNull(partial.getParentTypeKey());
+
+        TypeDraft child = mapper.readValue("{\"parentTypeKey\":\"hardware\"}", TypeDraft.class);
+        assertEquals("hardware", child.getParentTypeKey());
 
         TypeDraft captioned = mapper.readValue("{\"placeCaption\":\"Кабинет\"}", TypeDraft.class);
         assertEquals("Кабинет", captioned.getPlaceCaption());
@@ -100,11 +107,13 @@ public class JiraJsonVisibilityTest {
         stored.setShowInTree(false);
         stored.setIcon("desktop");
         stored.setPlaceCaption("Филиал");
+        stored.setParentTypeKey("hardware");
         String typeJson = mapper.writeValueAsString(stored);
         assertTrue(typeJson.contains("\"showInTree\":false"));
         assertTrue(typeJson.contains("\"location\":true"));
         assertTrue(typeJson.contains("\"placeCaption\":\"Филиал\""));
         assertTrue(typeJson.contains("\"icon\":\"desktop\""));
+        assertTrue(typeJson.contains("\"parentTypeKey\":\"hardware\""));
 
         PortalRuleDraft portal = mapper.readValue(
                 "{\"assetId\":4,\"conditions\":[{\"field\":\"Площадка\",\"option\":\"Пункт А\"},{\"field\":\"Отделение\",\"option\":\"Пункт А\"}]}",
@@ -114,12 +123,37 @@ public class JiraJsonVisibilityTest {
         assertEquals("Площадка", portal.getConditions().get(0).getField());
         assertEquals("Пункт А", portal.getConditions().get(1).getOption());
 
+        FlowRuleDraft flow = mapper.readValue(
+                "{\"issueTypeId\":\"10001\",\"statusKey\":\"repair\"}",
+                FlowRuleDraft.class);
+        assertEquals("10001", flow.getIssueTypeId());
+        assertEquals("repair", flow.getStatusKey());
+
+        FlowGraphDto graph = mapper.readValue(
+                "{\"nodes\":[{\"id\":\"req1\",\"kind\":\"request\",\"x\":48,\"y\":36,\"issueTypeId\":\"10001\"},"
+                        + "{\"id\":\"iss1\",\"kind\":\"issue\",\"x\":340,\"y\":36,\"issueStatusId\":\"5\"}],"
+                        + "\"links\":[{\"from\":\"req1\",\"to\":\"iss1\"}]}",
+                FlowGraphDto.class);
+        assertEquals("req1", graph.getNodes().get(0).getId());
+        assertEquals(48, graph.getNodes().get(0).getX());
+        assertEquals("5", graph.getNodes().get(1).getIssueStatusId());
+        assertEquals("iss1", graph.getLinks().get(0).getTo());
+
         FieldDraft field = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"required\":false}",
                 FieldDraft.class);
         assertEquals("ОС", field.getLabel());
         assertEquals("text", field.getKind());
         assertFalse(field.isRequired());
+        assertNull(field.getShowOnIssue());
+        FieldDraft hidden = mapper.readValue(
+                "{\"label\":\"ОС\",\"kind\":\"text\",\"showOnIssue\":false}",
+                FieldDraft.class);
+        assertEquals(Boolean.FALSE, hidden.getShowOnIssue());
+        FieldDto shown = new FieldDto();
+        shown.setFieldKey("serial");
+        shown.setShowOnIssue(false);
+        assertTrue(mapper.writeValueAsString(shown).contains("\"showOnIssue\":false"));
     }
 
     private static ObjectMapper mapper() {

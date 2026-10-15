@@ -27,6 +27,7 @@ public class AssetDto {
     private String projectName;
     private String location;
     private boolean editable;
+    private boolean cardImage;
     private UserProfileDto custodian;
     private String holderRole;
     private List<AttributeDto> attributes = new ArrayList<AttributeDto>();
@@ -188,6 +189,14 @@ public class AssetDto {
 
     public void setEditable(boolean editable) {
         this.editable = editable;
+    }
+
+    public boolean isCardImage() {
+        return cardImage;
+    }
+
+    public void setCardImage(boolean cardImage) {
+        this.cardImage = cardImage;
     }
 
     public UserProfileDto getCustodian() {

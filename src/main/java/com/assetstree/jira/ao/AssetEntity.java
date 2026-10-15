@@ -87,4 +87,10 @@ public interface AssetEntity extends Entity {
     String getOfferedTypes();
 
     void setOfferedTypes(String offeredTypes);
+
+    /** png, jpeg, or empty when this equipment has no card picture. */
+    @StringLength(16)
+    String getCardImage();
+
+    void setCardImage(String cardImage);
 }

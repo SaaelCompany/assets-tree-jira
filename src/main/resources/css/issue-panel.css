@@ -3,6 +3,10 @@
     color: #172b4d;
 }
 
+.asset-tree-panel-find {
+    max-width: 240px;
+}
+
 .asset-tree-panel input {
     width: 100%;
     box-sizing: border-box;
@@ -31,14 +35,49 @@
     padding: 0;
 }
 
+.asset-tree-panel-results {
+    max-width: 240px;
+}
+
 .asset-tree-panel-results li,
-.asset-tree-panel-list li {
+.asset-tree-panel-line {
     display: flex;
     gap: 8px;
     align-items: center;
     justify-content: space-between;
+}
+
+.asset-tree-panel-results li,
+.asset-tree-panel-list li {
     padding: 6px 0;
     border-bottom: 1px solid #eef1f5;
+}
+
+.asset-tree-panel-card {
+    max-width: 260px;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+}
+
+.asset-tree-panel-card strong {
+    display: block;
+    margin: 0 0 6px;
+    font-size: 13px;
+}
+
+.asset-tree-panel-card-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.asset-tree-panel-card-row span:first-child {
+    color: #6b778c;
 }
 
 .asset-tree-panel a {

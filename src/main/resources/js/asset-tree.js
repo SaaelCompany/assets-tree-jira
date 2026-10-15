@@ -72,6 +72,7 @@
         canComment: false,
         canConfigure: false,
         canGrant: false,
+        canArrange: false,
         canManage: false,
         treeReady: false,
         projects: [],
@@ -91,6 +92,15 @@
         statuses: [],
         grants: null,
         portalRules: null,
+        flowRules: null,
+        flowBook: null,
+        flowDraft: null,
+        flowProcessId: '',
+        portalDraft: null,
+        flowReady: false,
+        flowLoading: false,
+        issueTypes: null,
+        issueStatuses: null,
         selectedId: null,
         dirty: false,
         expanded: {},
@@ -125,9 +135,17 @@
         picked: {},
         pickScope: '',
         bulkErrors: [],
-        baseUrl: ''
+        baseUrl: '',
+        cardDraft: null,
+        cardDrag: '',
+        cardSuppressClick: false,
+        cardSelected: ''
     };
     var idIndex = null;
+    var childIndex = null;
+    var countIndex = null;
+    var fieldCache = null;
+    var treeToken = 0;
     var noticeTimer = null;
 
     function normalizeView(raw) {
@@ -212,6 +230,9 @@
 
     function invalidate() {
         idIndex = null;
+        childIndex = null;
+        countIndex = null;
+        fieldCache = null;
     }
 
     function compareAssets(left, right) {
@@ -222,12 +243,32 @@
     }
 
     function childrenOf(parentId) {
-        return state.assets.filter(function (asset) {
-            if (parentId === null) {
-                return asset.parentId === null || asset.parentId === undefined || !byId()[asset.parentId];
-            }
-            return asset.parentId === parentId;
-        }).sort(compareAssets);
+        if (!childIndex) {
+            var byParent = {};
+            var roots = [];
+            state.assets.forEach(function (asset) {
+                var parent = asset.parentId;
+                if (parent === null || parent === undefined || !byId()[parent]) {
+                    roots.push(asset);
+                } else {
+                    var bucket = byParent[parent];
+                    if (!bucket) {
+                        bucket = [];
+                        byParent[parent] = bucket;
+                    }
+                    bucket.push(asset);
+                }
+            });
+            roots.sort(compareAssets);
+            Object.keys(byParent).forEach(function (key) {
+                byParent[key].sort(compareAssets);
+            });
+            childIndex = { byParent: byParent, roots: roots };
+        }
+        if (parentId === null) {
+            return childIndex.roots;
+        }
+        return childIndex.byParent[parentId] || [];
     }
 
     function descendantsOf(id) {
@@ -443,6 +484,7 @@
         state.canTypes = present('canTypes') ? !!project.canTypes : (present('canConfigure') ? !!project.canConfigure : objects);
         state.canAssets = present('canAssets') ? !!project.canAssets : false;
         state.canAdmin = present('canAdmin') ? !!project.canAdmin : false;
+        state.canArrange = present('canArrange') ? !!project.canArrange : false;
         state.canEdit = objects || places;
         state.canCreate = objects;
         state.canMove = places || objects;
@@ -669,6 +711,9 @@
     }
 
     function filterFields() {
+        if (fieldCache) {
+            return fieldCache;
+        }
         var fields = [
             { key: 'name', label: t('name'), kind: 'text' },
             { key: 'type', label: t('type'), kind: 'type' },
@@ -689,6 +734,7 @@
                 });
             });
         });
+        fieldCache = fields;
         return fields;
     }
 
@@ -1020,25 +1066,259 @@
     }
 
     function equipmentCount(assetId) {
-        var count = 0;
-        childrenOf(assetId).forEach(function (child) {
-            if (isFolder(child)) count += equipmentCount(child.id);
-            else count += 1;
+        if (!countIndex) {
+            countIndex = {};
+            var visiting = {};
+            function fill(id) {
+                if (Object.prototype.hasOwnProperty.call(countIndex, id)) return countIndex[id];
+                if (visiting[id]) return 0;
+                visiting[id] = true;
+                var count = 0;
+                childrenOf(id).forEach(function (child) {
+                    if (isFolder(child)) count += fill(child.id);
+                    else count += 1;
+                });
+                visiting[id] = false;
+                countIndex[id] = count;
+                return count;
+            }
+            state.assets.forEach(function (asset) {
+                fill(asset.id);
+            });
+        }
+        return countIndex[assetId] || 0;
+    }
+
+    function offeredLineKey(line) {
+        var text = String(line || '').replace(/^\s+|\s+$/g, '');
+        var at = text.indexOf('@');
+        return at < 0 ? text : text.slice(0, at).replace(/^\s+|\s+$/g, '');
+    }
+
+    function pinsAt(placeId) {
+        var place = byId()[placeId];
+        var used = {};
+        var offered = {};
+        if (!place) return { used: used, offered: offered };
+        equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
+        (place.offeredTypes || []).forEach(function (line) {
+            var key = offeredLineKey(line);
+            if (key) offered[key] = true;
         });
-        return count;
+        return { used: used, offered: offered };
+    }
+
+    function placeFacts() {
+        return state.types.filter(function (type) { return type && !type.location; });
+    }
+
+    function placeOrdered(lines) {
+        var any = false;
+        for (var i = 0; i < lines.length; i++) {
+            var line = String(lines[i] || '').replace(/^\s+|\s+$/g, '');
+            if (!line) continue;
+            any = true;
+            if (line.indexOf('@') < 0) return false;
+        }
+        return any;
+    }
+
+    function placeSlots(placeId) {
+        var place = byId()[placeId];
+        if (!place || !isFolder(place)) return [];
+        var facts = placeFacts();
+        var known = {};
+        var schemaKeys = [];
+        facts.forEach(function (type) {
+            if (!type.typeKey || known[type.typeKey]) return;
+            known[type.typeKey] = type;
+            schemaKeys.push(type.typeKey);
+        });
+        var lines = place.offeredTypes || [];
+        var linePos = {};
+        var explicit = {};
+        var position = 0;
+        lines.forEach(function (line) {
+            var text = String(line || '').replace(/^\s+|\s+$/g, '');
+            if (!text) return;
+            var key = offeredLineKey(text);
+            if (!key || !known[key] || Object.prototype.hasOwnProperty.call(linePos, key)) return;
+            linePos[key] = position;
+            position++;
+            var at = text.indexOf('@');
+            if (at >= 0) {
+                var parent = text.slice(at + 1).replace(/^\s+|\s+$/g, '');
+                if (parent === key || !known[parent]) parent = '';
+                explicit[key] = parent;
+            }
+        });
+        var visible = {};
+        var pins = pinsAt(placeId);
+        schemaKeys.forEach(function (key) {
+            if (pins.used[key] || pins.offered[key] || Object.prototype.hasOwnProperty.call(linePos, key)) visible[key] = true;
+        });
+        function rawParent(key) {
+            if (Object.prototype.hasOwnProperty.call(explicit, key)) return explicit[key];
+            var schemaParent = parentKeyOf(known[key]);
+            if (schemaParent && schemaParent !== key && known[schemaParent]) return schemaParent;
+            return '';
+        }
+        var raw = {};
+        function remember() {
+            Object.keys(visible).forEach(function (key) { raw[key] = rawParent(key); });
+        }
+        remember();
+        var guard = 0;
+        var grew = true;
+        while (grew && guard < 8) {
+            grew = false;
+            guard++;
+            Object.keys(raw).forEach(function (key) {
+                var parent = raw[key];
+                if (parent && !visible[parent] && known[parent]) {
+                    visible[parent] = true;
+                    grew = true;
+                }
+            });
+            if (grew) remember();
+        }
+        var parentOf = {};
+        Object.keys(visible).forEach(function (key) {
+            var parent = raw[key] || '';
+            parentOf[key] = parent && parent !== key && visible[parent] ? parent : '';
+        });
+        var flatGuard = 0;
+        var changed = true;
+        while (changed && flatGuard < 8) {
+            changed = false;
+            flatGuard++;
+            Object.keys(parentOf).forEach(function (key) {
+                var parent = parentOf[key];
+                if (parent && parentOf[parent]) {
+                    parentOf[key] = '';
+                    changed = true;
+                }
+            });
+        }
+        var roots = [];
+        var children = {};
+        schemaKeys.forEach(function (key) {
+            if (!visible[key]) return;
+            var parent = parentOf[key] || '';
+            if (!parent || !visible[parent]) {
+                roots.push(key);
+                return;
+            }
+            if (!children[parent]) children[parent] = [];
+            children[parent].push(key);
+        });
+        function score(key) {
+            if (Object.prototype.hasOwnProperty.call(linePos, key)) return linePos[key];
+            var at = schemaKeys.indexOf(key);
+            return 1000000 + (at < 0 ? schemaKeys.length : at);
+        }
+        function byLine(list) {
+            list.sort(function (left, right) { return score(left) - score(right); });
+        }
+        if (placeOrdered(lines)) {
+            byLine(roots);
+            Object.keys(children).forEach(function (parent) { byLine(children[parent]); });
+        }
+        var slots = [];
+        roots.forEach(function (root) {
+            slots.push({ typeKey: root, parentKey: '' });
+            (children[root] || []).forEach(function (child) {
+                slots.push({ typeKey: child, parentKey: root });
+            });
+        });
+        return slots;
+    }
+
+    function localParent(placeId, typeKey) {
+        var parent = '';
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.typeKey === typeKey) parent = slot.parentKey || '';
+        });
+        return parent;
+    }
+
+    function siblingInfo(placeId, typeKey) {
+        var slots = placeSlots(placeId);
+        var parent = '';
+        var found = false;
+        slots.forEach(function (slot) {
+            if (slot.typeKey === typeKey) {
+                parent = slot.parentKey || '';
+                found = true;
+            }
+        });
+        var siblings = [];
+        var childCount = 0;
+        slots.forEach(function (slot) {
+            if ((slot.parentKey || '') === parent) siblings.push(slot.typeKey);
+            if (slot.parentKey === typeKey) childCount++;
+        });
+        return {
+            found: found,
+            parent: parent,
+            index: siblings.indexOf(typeKey),
+            count: siblings.length,
+            childCount: childCount
+        };
+    }
+
+    function pinned(pins, typeKey) {
+        return !!(pins.used[typeKey] || pins.offered[typeKey]);
+    }
+
+    function parentKeyOf(type) {
+        return type && type.parentTypeKey ? String(type.parentTypeKey) : '';
+    }
+
+    function subtypesOf(parentKey) {
+        return state.types.filter(function (type) {
+            return !type.location && parentKeyOf(type) === parentKey;
+        });
     }
 
     function typeGroupsFor(placeId) {
-        var place = byId()[placeId];
-        if (!place || !isFolder(place)) return [];
-        var used = {};
-        equipmentIn(placeId).forEach(function (asset) { used[asset.typeKey] = true; });
-        var offered = {};
-        (place.offeredTypes || []).forEach(function (key) { offered[key] = true; });
-        return state.types.filter(function (type) {
-            if (type.location) return false;
-            return !!used[type.typeKey] || !!offered[type.typeKey];
+        var groups = [];
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.parentKey) return;
+            var type = typeByKey(slot.typeKey);
+            if (type && !type.location) groups.push(type);
         });
+        return groups;
+    }
+
+    function subtypesAt(placeId, parentKey) {
+        var groups = [];
+        placeSlots(placeId).forEach(function (slot) {
+            if (slot.parentKey !== parentKey) return;
+            var type = typeByKey(slot.typeKey);
+            if (type && !type.location) groups.push(type);
+        });
+        return groups;
+    }
+
+    function typeExpandKey(placeId, typeKey) {
+        return 'type:' + placeId + ':' + typeKey;
+    }
+
+    function typeBranchOpen(placeId, typeKey) {
+        var key = typeExpandKey(placeId, typeKey);
+        if (Object.prototype.hasOwnProperty.call(state.expanded, key)) return !!state.expanded[key];
+        return true;
+    }
+
+    function typeFolderCount(placeId, type) {
+        var count = equipmentIn(placeId, type.typeKey).length;
+        if (!localParent(placeId, type.typeKey)) {
+            subtypesAt(placeId, type.typeKey).forEach(function (child) {
+                count += equipmentIn(placeId, child.typeKey).length;
+            });
+        }
+        return count;
     }
 
     function ensureExpandedDefaults() {
@@ -1489,10 +1769,101 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
+            var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
+            if (portalPanel) fitPortalPanel(portalPanel);
             return;
         }
         frame.appendChild(renderSide());
+        frame.appendChild(panelSplit('side'));
         frame.appendChild(renderDetail());
+        applyPanels();
+    }
+
+    function panelStore() {
+        if (state.panels) return state.panels;
+        var saved = {};
+        try {
+            saved = JSON.parse(localStorage.getItem('asset-tree.panels') || '{}') || {};
+        } catch (error) {
+            saved = {};
+        }
+        state.panels = {
+            side: panelClamp(saved.side, 180, 640, 272),
+            aside: panelClamp(saved.aside, 200, 560, 280)
+        };
+        return state.panels;
+    }
+
+    function panelClamp(value, min, max, fallback) {
+        var number = Number(value);
+        if (!isFinite(number)) return fallback;
+        return Math.max(min, Math.min(max, Math.round(number)));
+    }
+
+    function rememberPanels() {
+        try {
+            localStorage.setItem('asset-tree.panels', JSON.stringify(panelStore()));
+        } catch (error) {
+            return;
+        }
+    }
+
+    function applyPanels(form) {
+        var widths = panelStore();
+        var frame = document.getElementById('asset-tree-frame');
+        if (frame) frame.style.setProperty('--asset-side', widths.side + 'px');
+        var requests = form ? [form] : document.querySelectorAll('#asset-tree-app .asset-tree-request');
+        for (var i = 0; i < requests.length; i++) {
+            requests[i].style.setProperty('--asset-aside', widths.aside + 'px');
+        }
+    }
+
+    function panelSplit(kind) {
+        var handle = el('div', 'asset-tree-split');
+        handle.setAttribute('role', 'separator');
+        handle.setAttribute('aria-orientation', 'vertical');
+        handle.tabIndex = 0;
+        handle.title = t('panelResize');
+        var limits = kind === 'aside' ? [200, 560] : [180, 640];
+        function setWidth(next) {
+            panelStore()[kind] = panelClamp(next, limits[0], limits[1], panelStore()[kind]);
+            applyPanels();
+        }
+        handle.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            var startX = event.clientX;
+            var start = panelStore()[kind];
+            handle.classList.add('is-active');
+            function move(ev) {
+                var delta = ev.clientX - startX;
+                setWidth(kind === 'aside' ? start - delta : start + delta);
+            }
+            function up() {
+                handle.classList.remove('is-active');
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                rememberPanels();
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+        handle.addEventListener('keydown', function (event) {
+            var step = event.shiftKey ? 40 : 16;
+            var sign = event.key === 'ArrowRight' ? 1 : (event.key === 'ArrowLeft' ? -1 : 0);
+            if (!sign) return;
+            event.preventDefault();
+            var delta = kind === 'aside' ? -sign * step : sign * step;
+            setWidth(panelStore()[kind] + delta);
+            rememberPanels();
+        });
+        return handle;
+    }
+
+    function attachAside(form, aside) {
+        form.appendChild(panelSplit('aside'));
+        form.appendChild(aside);
+        applyPanels(form);
     }
 
     function renderSide() {
@@ -1504,7 +1875,6 @@
             state.assets.forEach(function (asset) {
                 if (showsInTree(asset)) state.expanded[asset.id] = true;
             });
-            state.query = '';
             rememberExpanded();
             renderNodes();
         }));
@@ -1534,7 +1904,7 @@
         side.appendChild(scroll);
         if (state.canCreate) {
             side.appendChild(button('+ ' + t('addHere'), 'asset-tree-queue-add', function () {
-                if (state.typeGroup) openCreate(state.typeGroup.placeId, 'object', state.typeGroup.typeKey);
+                if (state.typeGroup) openTypeAdd(state.typeGroup.placeId, state.typeGroup.typeKey);
                 else if (treeAnchorId() && isFolder(byId()[treeAnchorId()])) openCreate(treeAnchorId());
                 else openCreate(null, 'place');
             }));
@@ -1678,7 +2048,6 @@
             chevron.addEventListener('click', function (event) {
                 event.stopPropagation();
                 state.expanded[asset.id] = !isExpanded(asset.id);
-                state.query = '';
                 rememberExpanded();
                 renderNodes();
             });
@@ -1708,30 +2077,182 @@
         }
     }
 
+    function arrangeType(placeId, typeKey, action) {
+        ajax('POST', '/assets/' + placeId + '/types/arrange', { typeKey: typeKey, action: action }, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                reloadTree(function () {
+                    state.expanded[placeId] = true;
+                    var parent = localParent(placeId, typeKey);
+                    if (parent) state.expanded[typeExpandKey(placeId, parent)] = true;
+                    rememberExpanded();
+                    renderNodes();
+                    replaceDetail();
+                });
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function clearTextSelection() {
+        var selection = window.getSelection ? window.getSelection() : null;
+        if (selection && selection.removeAllRanges) selection.removeAllRanges();
+    }
+
+    function bindTypeDrag(row, placeId, typeKey, label) {
+        var suppressClick = false;
+        row.addEventListener('click', function (event) {
+            if (!suppressClick) return;
+            suppressClick = false;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+        row.addEventListener('selectstart', function (event) {
+            event.preventDefault();
+        });
+        row.addEventListener('pointerdown', function (event) {
+            if (event.button !== 0 || pointerDrag) return;
+            if (event.target && event.target.closest && event.target.closest('button')) return;
+            event.preventDefault();
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var active = false;
+            var plan = null;
+            clearTextSelection();
+            function ghostAt(ev) {
+                var ghostNode = document.getElementById('asset-tree-drag-ghost');
+                if (!ghostNode) return;
+                ghostNode.style.left = (ev.clientX + 12) + 'px';
+                ghostNode.style.top = (ev.clientY + 10) + 'px';
+            }
+            function move(ev) {
+                if (ev.pointerId !== event.pointerId) return;
+                var dx = ev.clientX - startX;
+                var dy = ev.clientY - startY;
+                if (!active) {
+                    if (dx * dx + dy * dy < 16) return;
+                    active = true;
+                    app.classList.add('is-dragging');
+                    document.documentElement.classList.add('asset-tree-dragging');
+                    clearTextSelection();
+                    var ghost = el('div', 'asset-tree-drag-ghost', label || typeKey);
+                    ghost.id = 'asset-tree-drag-ghost';
+                    document.body.appendChild(ghost);
+                }
+                ev.preventDefault();
+                ghostAt(ev);
+                var scroller = document.getElementById('asset-tree-scroll');
+                if (scroller) {
+                    var bounds = scroller.getBoundingClientRect();
+                    if (ev.clientY < bounds.top + 28) scroller.scrollTop -= 14;
+                    else if (ev.clientY > bounds.bottom - 28) scroller.scrollTop += 14;
+                }
+                plan = planTypeDrop(ev.clientX, ev.clientY, placeId, typeKey);
+            }
+            function up(ev) {
+                if (ev.pointerId !== event.pointerId) return;
+                window.removeEventListener('pointermove', move, true);
+                window.removeEventListener('pointerup', up, true);
+                window.removeEventListener('pointercancel', up, true);
+                var chosen = null;
+                if (active && ev.type !== 'pointercancel') {
+                    chosen = plan || planTypeDrop(ev.clientX, ev.clientY, placeId, typeKey);
+                    suppressClick = true;
+                }
+                app.classList.remove('is-dragging');
+                document.documentElement.classList.remove('asset-tree-dragging');
+                clearDropClasses();
+                var ghostNode = document.getElementById('asset-tree-drag-ghost');
+                if (ghostNode && ghostNode.parentNode) ghostNode.parentNode.removeChild(ghostNode);
+                if (chosen) arrangeType(placeId, typeKey, chosen);
+            }
+            window.addEventListener('pointermove', move, true);
+            window.addEventListener('pointerup', up, true);
+            window.addEventListener('pointercancel', up, true);
+        });
+    }
+
+    function planTypeDrop(x, y, placeId, typeKey) {
+        clearDropClasses();
+        var stack = document.elementsFromPoint ? document.elementsFromPoint(x, y) : [document.elementFromPoint(x, y)];
+        var row = null;
+        var placeRow = null;
+        var placeKey = String(placeId);
+        for (var i = 0; i < stack.length; i++) {
+            var node = stack[i];
+            if (!node || !node.closest) continue;
+            if (node.id === 'asset-tree-drag-ghost' || node.closest('#asset-tree-drag-ghost')) continue;
+            var hitRow = node.closest('.asset-tree-row');
+            if (!hitRow || !app.contains(hitRow)) continue;
+            if (hitRow.getAttribute('data-place-id') === placeKey && hitRow.getAttribute('data-type-key')) {
+                row = hitRow;
+                break;
+            }
+            if (hitRow.getAttribute('data-id') === placeKey) {
+                placeRow = hitRow;
+                break;
+            }
+        }
+        if (placeRow) {
+            if (!localParent(placeId, typeKey)) return null;
+            placeRow.classList.add('is-drop-inside');
+            return 'lift';
+        }
+        if (!row) return null;
+        var targetKey = row.getAttribute('data-type-key');
+        if (!targetKey || targetKey === typeKey) return null;
+        var rect = row.getBoundingClientRect();
+        var ratio = rect.height ? (y - rect.top) / rect.height : 0.5;
+        var mode = ratio < 0.28 ? 'before' : (ratio > 0.72 ? 'after' : 'into');
+        if (mode === 'into') {
+            var info = siblingInfo(placeId, typeKey);
+            if (info.childCount > 0 || localParent(placeId, targetKey)) {
+                mode = ratio < 0.5 ? 'before' : 'after';
+            }
+        }
+        row.classList.add(mode === 'before' ? 'is-drop-before' : (mode === 'after' ? 'is-drop-after' : 'is-drop-inside'));
+        return mode + ':' + targetKey;
+    }
+
     function typeGroupRow(placeId, type) {
+        var nestedHere = !!localParent(placeId, type.typeKey);
+        var kids = nestedHere ? [] : subtypesAt(placeId, type.typeKey);
+        var open = kids.length > 0 && typeBranchOpen(placeId, type.typeKey);
         var branch = el('div', 'asset-tree-branch');
-        var row = el('div', 'asset-tree-row is-type');
+        var row = el('div', 'asset-tree-row is-type' + (nestedHere ? ' is-subtype' : ''));
         row.setAttribute('role', 'treeitem');
         row.setAttribute('data-place-id', String(placeId));
+        row.setAttribute('data-type-key', type.typeKey);
         var selected = state.typeGroup && state.typeGroup.placeId === placeId && state.typeGroup.typeKey === type.typeKey;
         if (selected) row.classList.add('is-selected');
-        var chevron = el('button', 'asset-tree-chevron', '');
+        var chevron = el('button', 'asset-tree-chevron', kids.length ? (open ? '▾' : '▸') : '');
         chevron.type = 'button';
-        chevron.disabled = true;
+        chevron.disabled = !kids.length;
+        chevron.setAttribute('aria-label', open ? t('collapse') : t('expand'));
+        chevron.addEventListener('click', function (event) {
+            event.stopPropagation();
+            state.expanded[typeExpandKey(placeId, type.typeKey)] = !typeBranchOpen(placeId, type.typeKey);
+            rememberExpanded();
+            renderNodes();
+        });
         row.appendChild(chevron);
         var name = el('span', 'asset-tree-name', type.label);
         name.insertBefore(typeTile(type, 'sm'), name.firstChild);
         row.appendChild(name);
-        var count = equipmentIn(placeId, type.typeKey).length;
+        var count = typeFolderCount(placeId, type);
         if (count) row.appendChild(el('span', 'asset-tree-qcount', '(' + count + ')'));
-        if (state.canObjects) {
+        if (state.canArrange) {
+            row.classList.add('is-movable');
+            bindTypeDrag(row, placeId, type.typeKey, type.label);
+        }
+        if (state.canObjects || (state.canConfigure && !nestedHere && !parentKeyOf(type))) {
             var nest = el('button', 'asset-tree-nest', '+');
             nest.type = 'button';
-            nest.title = t('addObject');
+            nest.title = t('addNode');
             nest.setAttribute('aria-label', nest.title);
             nest.addEventListener('click', function (event) {
                 event.stopPropagation();
-                openCreate(placeId, 'object', type.typeKey);
+                openTypeAdd(placeId, type.typeKey);
             });
             row.appendChild(nest);
         }
@@ -1739,6 +2260,13 @@
             selectTypeGroup(placeId, type.typeKey);
         });
         branch.appendChild(row);
+        if (open) {
+            var nested = el('div', 'asset-tree-children');
+            kids.forEach(function (child) {
+                nested.appendChild(typeGroupRow(placeId, child));
+            });
+            branch.appendChild(nested);
+        }
         return branch;
     }
 
@@ -1778,17 +2306,135 @@
         });
     }
 
-    function openOfferType(placeId) {
-        var present = {};
-        typeGroupsFor(placeId).forEach(function (type) { present[type.typeKey] = true; });
-        var available = state.types.filter(function (type) { return !type.location && !present[type.typeKey]; });
+    function openNestedType(placeId, parentKey) {
+        var parent = typeByKey(parentKey);
+        var place = byId()[placeId];
+        if (!parent || !place || parentKeyOf(parent) || !state.canConfigure) return;
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('offerTypeNew')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('nestedTypeHint', parent.label || parent.typeKey)));
+            dialog.appendChild(el('p', 'asset-tree-crumb', crumbs(place) + '  /  ' + (parent.label || parent.typeKey)));
+            var form = el('form');
+            var name = input('type-label', '', false);
+            name.maxLength = 255;
+            form.appendChild(field(t('typeLabel'), name, true));
+            var chosenColor = parent.color || PALETTE[0];
+            var chosenIcon = '';
+            var icons = iconPicker(iconKeyOf(parent), chosenColor, function (key) {
+                chosenIcon = key;
+            });
+            var colors = colorSwatches(chosenColor, function (color) {
+                chosenColor = color;
+                icons.paint(color);
+            });
+            var look = el('div', 'asset-tree-appearance');
+            look.appendChild(field(t('color'), colors, true));
+            look.appendChild(field(t('icon'), icons, true));
+            form.appendChild(look);
+            var error = el('div', 'asset-tree-form-error');
+            error.hidden = true;
+            form.appendChild(error);
+            var busy = false;
+            var save = button(t('addType'), 'asset-tree-btn primary', function () {
+                var label = name.value.trim();
+                if (!label) {
+                    error.hidden = false;
+                    error.textContent = t('typeNameRequired');
+                    return;
+                }
+                if (busy) return;
+                busy = true;
+                save.disabled = true;
+                ajax('POST', '/types', {
+                    label: label,
+                    color: chosenColor,
+                    icon: chosenIcon || iconKeyOf(parent),
+                    projectKey: state.projectKey,
+                    location: false,
+                    showInTree: false,
+                    parentTypeKey: parent.typeKey
+                }, function (status, payload) {
+                    if (status < 200 || status >= 300 || !payload || !payload.typeKey) {
+                        busy = false;
+                        save.disabled = false;
+                        error.hidden = false;
+                        error.textContent = (payload && payload.message) || t('errorTitle');
+                        return;
+                    }
+                    ajax('POST', '/assets/' + placeId + '/types', { typeKeys: [payload.typeKey] }, function (offerStatus, offerPayload) {
+                        if (offerStatus < 200 || offerStatus >= 300) {
+                            busy = false;
+                            save.disabled = false;
+                            error.hidden = false;
+                            error.textContent = (offerPayload && offerPayload.message) || t('errorTitle');
+                            return;
+                        }
+                        closeModal();
+                        reloadTree(function () {
+                            state.expanded[placeId] = true;
+                            state.expanded[typeExpandKey(placeId, parent.typeKey)] = true;
+                            rememberExpanded();
+                            selectTypeGroup(placeId, payload.typeKey);
+                        });
+                    });
+                });
+            });
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(save);
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            form.appendChild(actions);
+            form.addEventListener('submit', function (event) {
+                event.preventDefault();
+                save.click();
+            });
+            dialog.appendChild(form);
+        });
+    }
+
+    function openTypeAdd(placeId, typeKey) {
+        var type = typeOf(typeKey);
+        var inner = !!(state.canConfigure && type && !parentKeyOf(type) && !localParent(placeId, type.typeKey));
+        var object = !!state.canObjects;
+        if (!inner && !object) return;
+        if (inner && object) {
+            openModal(function (dialog) {
+                dialog.appendChild(el('h2', null, t('growTitle')));
+                dialog.appendChild(el('p', 'asset-tree-hint', t('addUnderTypeHint', type.label || type.typeKey)));
+                var choose = el('div', 'asset-tree-dialog-actions');
+                choose.appendChild(button(t('addObject'), 'asset-tree-btn primary', function () {
+                    closeModal();
+                    openCreate(placeId, 'object', typeKey);
+                }));
+                choose.appendChild(button(t('addTypeHere'), 'asset-tree-btn', function () {
+                    closeModal();
+                    openOfferType(placeId, type.typeKey);
+                }));
+                choose.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+                dialog.appendChild(choose);
+            });
+            return;
+        }
+        if (object) openCreate(placeId, 'object', typeKey);
+        else openOfferType(placeId, type.typeKey);
+    }
+
+    function openOfferType(placeId, parentKey) {
+        var pins = pinsAt(placeId);
+        var parent = parentKey ? typeByKey(parentKey) : null;
+        var available = state.types.filter(function (type) {
+            if (type.location || pinned(pins, type.typeKey)) return false;
+            if (parent) return parentKeyOf(type) === parent.typeKey;
+            return true;
+        });
         openModal(function (dialog) {
             dialog.appendChild(el('h2', null, t('offerTypeTitle')));
-            dialog.appendChild(el('p', 'asset-tree-hint', t('offerTypeHint')));
+            dialog.appendChild(el('p', 'asset-tree-hint', parent
+                ? t('nestedTypeHint', parent.label || parent.typeKey)
+                : t('offerTypeHint')));
             var picked = {};
             var add = null;
             if (!available.length) {
-                dialog.appendChild(el('p', null, t('offerTypeEmpty')));
+                if (!parent) dialog.appendChild(el('p', null, t('offerTypeEmpty')));
             } else {
                 var list = el('div', 'asset-tree-offer-list');
                 available.forEach(function (type) {
@@ -1802,7 +2448,8 @@
                     });
                     row.appendChild(box);
                     row.appendChild(typeTile(type, 'sm'));
-                    row.appendChild(el('span', null, type.label));
+                    var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+                    row.appendChild(el('span', null, parent ? (parent.label + ' / ' + type.label) : type.label));
                     list.appendChild(row);
                 });
                 dialog.appendChild(list);
@@ -1819,9 +2466,10 @@
                 actions.appendChild(add);
             }
             if (state.canConfigure) {
-                actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn', function () {
+                actions.appendChild(button(t('offerTypeNew'), 'asset-tree-btn' + (available.length ? '' : ' primary'), function () {
                     closeModal();
-                    openTypes();
+                    if (parent) openNestedType(placeId, parent.typeKey);
+                    else openTypes();
                 }));
             }
             actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
@@ -1889,6 +2537,7 @@
             state.draggingId = pointerDrag.id;
             app.classList.add('is-dragging');
             document.documentElement.classList.add('asset-tree-dragging');
+            clearTextSelection();
             var moving = byId()[pointerDrag.id];
             var ghost = el('div', 'asset-tree-drag-ghost', moving ? moving.name : '');
             ghost.id = 'asset-tree-drag-ghost';
@@ -2098,6 +2747,7 @@
                     return;
                 }
                 if (status === 200) {
+                    stampCardImage(payload);
                     state.detail = payload;
                     replaceDetail();
                 }
@@ -2115,6 +2765,7 @@
                 return;
             }
             if (status === 200) {
+                stampCardImage(payload);
                 state.detail = payload;
                 showDetail(payload, false);
             } else if (status === 404) {
@@ -2191,7 +2842,12 @@
             }));
         }
         var direct = equipmentIn(group.placeId, group.typeKey).length;
-        var offered = place && (place.offeredTypes || []).indexOf(group.typeKey) >= 0;
+        var offered = false;
+        if (place) {
+            (place.offeredTypes || []).forEach(function (line) {
+                if (offeredLineKey(line) === group.typeKey) offered = true;
+            });
+        }
         if (!direct && offered && state.canPlaces) {
             tools.appendChild(button(t('removeTypeHere'), 'asset-tree-btn', function () {
                 if (!window.confirm(t('removeTypeHereConfirm', type.label || group.typeKey))) return;
@@ -2219,7 +2875,7 @@
         }), [t('name'), t('keyLabel'), t('status'), t('custodian')], {
             scope: 'group:' + group.placeId + ':' + group.typeKey,
             rows: kids.map(function (child) {
-                return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey };
+                return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey, asset: child };
             })
         }));
         return section;
@@ -2490,9 +3146,12 @@
         var seen = {};
         var types = [];
         function addType(type) {
-            if (!type || type.location || !type.typeKey || seen[type.typeKey]) return;
-            seen[type.typeKey] = true;
-            types.push(type);
+            if (!type || type.location || !type.typeKey) return;
+            var root = type;
+            if (parentKeyOf(type)) root = typeByKey(parentKeyOf(type)) || type;
+            if (!root.typeKey || seen[root.typeKey] || parentKeyOf(root)) return;
+            seen[root.typeKey] = true;
+            types.push(root);
         }
         typeGroupsFor(asset.id).forEach(addType);
         gear.forEach(function (item) { addType(typeOf(item.typeKey)); });
@@ -2552,11 +3211,37 @@
             typeBlock.appendChild(el('p', 'asset-tree-hint', t('placeEmptyInside')));
         } else {
             types.forEach(function (type) {
-                var count = 0;
-                gear.forEach(function (item) { if (item.typeKey === type.typeKey) count++; });
-                typeBlock.appendChild(linkLine(type.label, t('childCount', count), function () {
-                    selectTypeGroup(asset.id, type.typeKey, count ? 'under' : 'direct');
+                var own = 0;
+                gear.forEach(function (item) { if (item.typeKey === type.typeKey) own++; });
+                var children = [];
+                var childSeen = {};
+                subtypesAt(asset.id, type.typeKey).forEach(function (child) {
+                    childSeen[child.typeKey] = true;
+                    children.push(child);
+                });
+                gear.forEach(function (item) {
+                    var child = typeOf(item.typeKey);
+                    if (parentKeyOf(child) === type.typeKey && !childSeen[child.typeKey]) {
+                        childSeen[child.typeKey] = true;
+                        children.push(child);
+                    }
+                });
+                var total = own;
+                children.forEach(function (child) {
+                    gear.forEach(function (item) { if (item.typeKey === child.typeKey) total++; });
+                });
+                typeBlock.appendChild(linkLine(type.label, t('childCount', total), function () {
+                    selectTypeGroup(asset.id, type.typeKey, own ? 'under' : 'direct');
                 }, type.color, type));
+                children.forEach(function (child) {
+                    var nestedCount = 0;
+                    gear.forEach(function (item) { if (item.typeKey === child.typeKey) nestedCount++; });
+                    var line = linkLine(child.label, t('childCount', nestedCount), function () {
+                        selectTypeGroup(asset.id, child.typeKey, nestedCount ? 'under' : 'direct');
+                    }, child.color, child);
+                    line.classList.add('is-nested');
+                    typeBlock.appendChild(line);
+                });
             });
         }
         main.appendChild(moduleBlock(t('placeTypes'), typeBlock));
@@ -2588,7 +3273,7 @@
         aside.appendChild(moduleBlock(t('dates'), datesBody(full)));
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         section.appendChild(form);
         return section;
     }
@@ -2710,7 +3395,8 @@
                     key: String(child.id),
                     kind: isFolder(child) ? 'place' : 'object',
                     label: child.name,
-                    projectKey: child.projectKey || state.projectKey
+                    projectKey: child.projectKey || state.projectKey,
+                    asset: child
                 };
             })
         }));
@@ -3009,7 +3695,7 @@
                 bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
                 bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
                     printCards(items.map(function (item) {
-                        return byId()[parseInt(item.key, 10)];
+                        return item.asset || assetByAnyId(parseInt(item.key, 10));
                     }));
                 }));
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
@@ -3281,6 +3967,32 @@
         return row;
     }
 
+    function equipmentTypeOptions(currentKey) {
+        var options = [];
+        var seen = {};
+        sortedTypes().forEach(function (type) {
+            if (type.location) return;
+            var label = type.label || type.typeKey;
+            seen[type.typeKey] = true;
+            options.push({ value: type.typeKey, label: label });
+        });
+        if (currentKey && !seen[currentKey]) {
+            var current = typeOf(currentKey);
+            options.unshift({ value: currentKey, label: current.label || currentKey });
+        }
+        return options;
+    }
+
+    function revealEquipmentType(asset) {
+        if (!asset || isFolder(asset) || !asset.parentId || !asset.typeKey) return;
+        state.expanded[asset.parentId] = true;
+        var type = typeOf(asset.typeKey);
+        var rootKey = parentKeyOf(type) || asset.typeKey;
+        state.expanded[typeExpandKey(asset.parentId, rootKey)] = true;
+        rememberExpanded();
+        state.typeGroup = { placeId: asset.parentId, typeKey: asset.typeKey, scope: 'direct' };
+    }
+
     function statusPicker(asset) {
         if (!mayEdit(asset)) {
             return el('span', 'asset-tree-lozenge ' + statusClass(asset.status), statusLabel(asset.status));
@@ -3389,11 +4101,13 @@
         if (changes && Object.prototype.hasOwnProperty.call(changes, 'custodianKey')) {
             custodianKey = changes.custodianKey || '';
         }
+        var nextType = changes && changes.typeKey ? changes.typeKey : (source.typeKey || asset.typeKey);
+        var typeMoved = nextType !== (source.typeKey || asset.typeKey);
         setBusy(true);
         ajax('PUT', '/assets/' + asset.id, {
             name: changes && Object.prototype.hasOwnProperty.call(changes, 'name') ? changes.name : source.name,
             projectKey: source.projectKey || asset.projectKey || state.projectKey,
-            typeKey: source.typeKey || asset.typeKey,
+            typeKey: nextType,
             status: changes && changes.status ? changes.status : source.status,
             description: changes && Object.prototype.hasOwnProperty.call(changes, 'description') ? changes.description : (source.description || ''),
             custodianKey: custodianKey,
@@ -3401,13 +4115,14 @@
         }, function (code, payload) {
             setBusy(false);
             if (code < 200 || code >= 300) {
-                setFormError((payload && payload.message) || t('errorTitle'));
                 if (changes && typeof changes.onError === 'function') changes.onError();
+                setFormError((payload && payload.message) || t('errorTitle'));
                 return;
             }
             notify(t('saved'));
             assetsChanged();
             reloadTree(function () {
+                if (typeMoved) revealEquipmentType(byId()[asset.id]);
                 selectAsset(asset.id, true);
             });
         });
@@ -3499,13 +4214,16 @@
         input.placeholder = t('custodianSearch');
         var results = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         input.addEventListener('input', function () {
             clearTimeout(timer);
             timer = setTimeout(function () {
                 var query = input.value.trim();
+                var seq = ++searchSeq;
                 results.innerHTML = '';
                 if (query.length < 2) return;
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || input.value.trim() !== query) return;
                     results.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -3601,6 +4319,8 @@
         if (item.action === 'comment_delete') return t('actCommentDelete');
         if (item.action === 'file') return t('actFile');
         if (item.action === 'file_delete') return t('actFileDelete');
+        if (item.action === 'card_image') return t('actCardImage');
+        if (item.action === 'card_image_delete') return t('actCardImageDelete');
         if (item.action === 'move') return t('actMove');
         if (item.action === 'place_add') return t('actPlaceAdd');
         if (item.action === 'place_remove') return t('actPlaceRemove');
@@ -3623,7 +4343,7 @@
         text.appendChild(el('span', null, stamp(item.created)));
         head.appendChild(text);
         row.appendChild(head);
-        if (item.action === 'created') return row;
+        if (item.action === 'created' || item.action === 'card_image' || item.action === 'card_image_delete') return row;
         if (placeKind(item.action)) {
             var placeChange = el('div', 'asset-tree-history-change');
             var placeLabel = item.newValue || item.oldValue || '';
@@ -3847,6 +4567,96 @@
         node.textContent = message || '';
     }
 
+    function stampCardImage(payload) {
+        if (!payload || !payload.id) return;
+        [state.assets, state.searchHits, state.mineAssets, state.holderAssets].forEach(function (pool) {
+            if (!pool) return;
+            for (var i = 0; i < pool.length; i++) {
+                if (pool[i] && pool[i].id === payload.id) {
+                    pool[i].cardImage = !!payload.cardImage;
+                    pool[i].updated = payload.updated;
+                }
+            }
+        });
+    }
+
+    function cardImageUrl(asset) {
+        var base = String(state.baseUrl || '').replace(/\/+$/, '');
+        if (!base) base = window.location.origin + contextPath();
+        var stamp = asset && asset.updated ? encodeURIComponent(asset.updated) : '';
+        return base + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id + (stamp ? '&v=' + stamp : '');
+    }
+
+    function showCardImageError(message) {
+        var node = document.getElementById('asset-tree-card-image-error');
+        if (!node) {
+            if (message) setFormError(message);
+            return;
+        }
+        node.hidden = !message;
+        node.textContent = message || '';
+    }
+
+    function uploadCardImage(asset, file) {
+        if (!file) return;
+        showCardImageError('');
+        var xhr = new XMLHttpRequest();
+        var data = new FormData();
+        data.append('file', file, file.name || 'card.png');
+        xhr.open('POST', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
+        xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                notify(t('saved'));
+                selectAsset(asset.id, true);
+                return;
+            }
+            var payload = null;
+            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
+            showCardImageError((payload && payload.message) || t('errorTitle'));
+        };
+        xhr.send(data);
+    }
+
+    function pickCardImage(asset) {
+        var input = document.getElementById('asset-tree-card-image-file');
+        if (!input) {
+            input = el('input');
+            input.id = 'asset-tree-card-image-file';
+            input.type = 'file';
+            input.accept = 'image/png,image/jpeg';
+            input.className = 'asset-tree-import-file';
+            document.body.appendChild(input);
+        }
+        input.onchange = function () {
+            var chosen = input.files && input.files[0];
+            input.value = '';
+            if (chosen) uploadCardImage(asset, chosen);
+        };
+        input.click();
+    }
+
+    function deleteCardImage(asset) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('DELETE', contextPath() + '/plugins/servlet/asset-tree-card-image?assetId=' + asset.id, true);
+        xhr.setRequestHeader('X-Atlassian-Token', 'no-check');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status >= 200 && xhr.status < 300) {
+                notify(t('saved'));
+                selectAsset(asset.id, true);
+                return;
+            }
+            var payload = null;
+            try { payload = JSON.parse(xhr.responseText); } catch (error) { payload = null; }
+            showCardImageError((payload && payload.message) || t('errorTitle'));
+        };
+        xhr.send();
+    }
+
     function uploadFile(asset, file) {
         if (!file) return;
         showFileError('');
@@ -3901,6 +4711,517 @@
         return base + '/plugins/servlet/asset-tree?project=' + encodeURIComponent(project) + '&key=' + encodeURIComponent(key);
     }
 
+    function assetByAnyId(id) {
+        if (!id && id !== 0) return null;
+        var known = byId()[id];
+        if (known) return known;
+        var pools = [state.searchHits, state.mineAssets, state.holderAssets];
+        for (var p = 0; p < pools.length; p++) {
+            var pool = pools[p];
+            if (!pool) continue;
+            for (var i = 0; i < pool.length; i++) {
+                if (pool[i] && pool[i].id === id) return pool[i];
+            }
+        }
+        return null;
+    }
+
+    var CARD_BLOCKS = ['name', 'key', 'type', 'place', 'status', 'custodian', 'project', 'description', 'scan'];
+    var CARD_BLOCK_SET = {};
+    CARD_BLOCKS.forEach(function (token) { CARD_BLOCK_SET[token] = true; });
+    var CARD_SIZES = { card: true, wide: true, label: true };
+    var CARD_QRS = { left: true, right: true, top: true, none: true };
+
+    var CARD_KINDS = { text: true, field: true, qr: true, logo: true, picture: true };
+    var CARD_FONTS = { sans: true, serif: true, mono: true };
+    var CARD_ALIGNS = { left: true, center: true, right: true };
+    var CARD_SRC = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/;
+    var CARD_COLOR = /^#[0-9a-fA-F]{6}$/;
+    var CARD_ELEMENT_ID = /^[a-z0-9]{4,16}$/;
+
+    function defaultCard() {
+        return { size: 'card', qr: 'left', lines: ['name', 'type', 'place', 'key', 'scan'], width: 86, height: 54, grid: 2 };
+    }
+
+    function cardEdge(value, max, fallback) {
+        var number = Number(value);
+        if (!isFinite(number)) return fallback;
+        if (number < 15) return 15;
+        if (number > max) return max;
+        return cardRound(number);
+    }
+
+    function cardSheet(layout) {
+        var size = layout;
+        var width = 0;
+        var height = 0;
+        if (layout && typeof layout === 'object') {
+            size = layout.size;
+            width = layout.width;
+            height = layout.height;
+        }
+        if (size === 'custom') return { w: cardEdge(width, 210, 86), h: cardEdge(height, 297, 54) };
+        if (size === 'wide') return { w: 100, h: 64 };
+        if (size === 'label') return { w: 58, h: 36 };
+        return { w: 86, h: 54 };
+    }
+
+    function cardSnap(value, step) {
+        var number = cardRound(value);
+        if (!step) return number;
+        return cardRound(Math.round(number / step) * step);
+    }
+
+    function cardFieldToken(raw) {
+        var trimmed = String(raw || '').replace(/^\s+|\s+$/g, '');
+        if (!trimmed) return '';
+        var lower = trimmed.toLowerCase();
+        var token = CARD_BLOCK_SET[lower] ? lower : trimmed;
+        if (CARD_BLOCK_SET[token] || /^attr:[a-z][a-z0-9-]{0,39}$/.test(token)) return token;
+        return '';
+    }
+
+    function cardCleanText(raw) {
+        var source = String(raw || '');
+        var out = '';
+        var space = false;
+        var breaks = 0;
+        for (var i = 0; i < source.length && out.length < 180; i++) {
+            var c = source.charAt(i);
+            if (c === '\r') continue;
+            if (c === '\n') {
+                if (!out || out.charAt(out.length - 1) === '\n' || breaks >= 8) continue;
+                out += '\n';
+                breaks += 1;
+                space = false;
+                continue;
+            }
+            if (c === ' ' || c === '\t') {
+                space = !!out && out.charAt(out.length - 1) !== '\n';
+                continue;
+            }
+            if (c.charCodeAt(0) < 32) continue;
+            if (space) {
+                out += ' ';
+                space = false;
+            }
+            out += c;
+        }
+        return out.replace(/^\s+|\s+$/g, '');
+    }
+
+    function cardRound(value) {
+        var number = Number(value);
+        if (!isFinite(number)) return 0;
+        return Math.round(number * 100) / 100;
+    }
+
+    function cardNewId(used) {
+        var probe = 100000 + Math.floor(Math.random() * 1000000);
+        var id = probe.toString(36);
+        while (!CARD_ELEMENT_ID.test(id) || used[id]) {
+            probe += 1;
+            id = probe.toString(36);
+        }
+        used[id] = true;
+        return id;
+    }
+
+    function cardFontFamily(font) {
+        if (font === 'serif') return 'Georgia, "Times New Roman", serif';
+        if (font === 'mono') return 'ui-monospace, SFMono-Regular, Menlo, monospace';
+        return '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    }
+
+    function cleanElements(raw, layout) {
+        var sheet = cardSheet(layout);
+        var elements = [];
+        var ids = {};
+        var fields = {};
+        var assetCode = false;
+        var picture = false;
+        (raw || []).forEach(function (item) {
+            if (!item || elements.length >= 24) return;
+            var kind = String(item.kind || '').toLowerCase();
+            if (!CARD_KINDS[kind]) return;
+            var kept = { kind: kind, token: '', text: '', src: '', bold: !!item.bold };
+            if (kind === 'field') {
+                var token = cardFieldToken(item.token);
+                if (!token || fields[token]) return;
+                fields[token] = true;
+                kept.token = token;
+            } else if (kind === 'qr') {
+                var mode = String(item.token || '').toLowerCase();
+                if (mode && mode !== 'asset') return;
+                if (assetCode) return;
+                assetCode = true;
+                kept.token = 'asset';
+            } else if (kind === 'logo') {
+                var src = String(item.src || '').replace(/^\s+|\s+$/g, '');
+                if (src.length > 90000 || !CARD_SRC.test(src)) return;
+                kept.src = src;
+            } else if (kind === 'picture') {
+                if (picture) return;
+                picture = true;
+            } else {
+                var caption = cardCleanText(item.text);
+                if (!caption) return;
+                kept.text = caption;
+            }
+            var id = String(item.id || '').toLowerCase();
+            if (!CARD_ELEMENT_ID.test(id) || ids[id]) id = cardNewId(ids);
+            else ids[id] = true;
+            kept.id = id;
+            var mark = kind === 'qr' || kind === 'logo' || kind === 'picture';
+            var w = mark ? 22 : 36;
+            var h = mark ? 22 : 8;
+            if (Number(item.w) >= 4) w = Number(item.w);
+            if (Number(item.h) >= 4) h = Number(item.h);
+            kept.w = Math.max(4, Math.min(sheet.w, cardRound(w)));
+            kept.h = Math.max(4, Math.min(sheet.h, cardRound(h)));
+            kept.x = Math.max(0, Math.min(sheet.w - 4, cardRound(item.x)));
+            kept.y = Math.max(0, Math.min(sheet.h - 4, cardRound(item.y)));
+            var fontSize = parseInt(item.size, 10);
+            kept.size = fontSize >= 6 && fontSize <= 36 ? fontSize : 11;
+            var color = String(item.color || '');
+            kept.color = CARD_COLOR.test(color) ? color.toLowerCase() : '#172b4d';
+            var font = String(item.font || '').toLowerCase();
+            kept.font = CARD_FONTS[font] ? font : 'sans';
+            var align = String(item.align || '').toLowerCase();
+            kept.align = CARD_ALIGNS[align] ? align : 'left';
+            elements.push(kept);
+        });
+        return elements;
+    }
+
+    function legacyLineStyle(token, size) {
+        var small = size === 'label';
+        if (token === 'name') return { size: small ? 10 : 13, bold: true, color: '#172b4d', font: 'sans', h: small ? 5 : 7 };
+        if (token === 'key') return { size: small ? 9 : 12, bold: false, color: '#172b4d', font: 'mono', h: small ? 4.5 : 6 };
+        if (token === 'scan') return { size: small ? 7 : 8, bold: false, color: '#6b778c', font: 'sans', h: small ? 6 : 8 };
+        if (token === 'description') return { size: small ? 7 : 9, bold: false, color: '#44546f', font: 'sans', h: small ? 6 : 10 };
+        return { size: small ? 8 : 9, bold: false, color: '#44546f', font: 'sans', h: small ? 4 : 5 };
+    }
+
+    function elementsFromLegacy(layout) {
+        var size = layout.size;
+        var sheet = cardSheet(layout);
+        var place = layout.qr;
+        var qr = null;
+        if (place === 'top') {
+            var side = size === 'wide' ? 26 : (size === 'label' ? 14 : 22);
+            qr = { x: (sheet.w - side) / 2, y: size === 'label' ? 2 : 3, w: side, h: side };
+        } else if (place === 'left' || place === 'right') {
+            var box = size === 'wide' ? 54 : (size === 'label' ? 26 : 46);
+            var inset = size === 'label' ? 2 : 3;
+            qr = { x: place === 'right' ? sheet.w - inset - box : inset, y: size === 'label' ? 5 : 4, w: box, h: box };
+        }
+        var pad = size === 'label' ? 2.5 : 4;
+        var column = { x: pad, y: pad, w: sheet.w - pad * 2 };
+        if (qr && place === 'top') column.y = qr.y + qr.h + 1.5;
+        else if (qr && place === 'right') column.w = Math.max(12, qr.x - pad - 1);
+        else if (qr) {
+            column.x = qr.x + qr.w + 1;
+            column.w = Math.max(12, sheet.w - column.x - pad);
+        }
+        var items = [];
+        if (qr) {
+            items.push({
+                id: 'qrold1', kind: 'qr', token: 'asset', text: '', src: '',
+                x: qr.x, y: qr.y, w: qr.w, h: qr.h,
+                size: 11, color: '#172b4d', font: 'sans', bold: false, align: 'left'
+            });
+        }
+        var y = column.y;
+        (layout.lines || []).forEach(function (token, index) {
+            var style = legacyLineStyle(token, size);
+            items.push({
+                id: 'line' + index + 'old', kind: 'field', token: token, text: '', src: '',
+                x: column.x, y: y, w: column.w, h: style.h,
+                size: style.size, color: style.color, font: style.font, bold: style.bold, align: 'left'
+            });
+            y += style.h + 0.6;
+        });
+        return cleanElements(items, layout);
+    }
+
+    function normalizeClientCard(layout) {
+        var source = layout || {};
+        var size = source.size === 'custom' || CARD_SIZES[source.size] ? source.size : 'card';
+        var qr = CARD_QRS[source.qr] ? source.qr : 'left';
+        var lines = [];
+        var seen = {};
+        (source.lines || []).forEach(function (line) {
+            var token = cardFieldToken(line);
+            if (!token || seen[token] || lines.length >= 12) return;
+            seen[token] = true;
+            lines.push(token);
+        });
+        var card = { size: size, qr: qr, lines: lines, grid: 2 };
+        var grid = parseInt(source.grid, 10);
+        if (grid === 0 || grid === 1 || grid === 2 || grid === 5) card.grid = grid;
+        var sheet = cardSheet(card.size === 'custom' ? { size: 'custom', width: source.width, height: source.height } : card.size);
+        card.width = sheet.w;
+        card.height = sheet.h;
+        card.size = card.size === 'custom' ? 'custom' : (sheet.w === 100 ? 'wide' : (sheet.w === 58 ? 'label' : (card.size === 'card' || card.size === 'wide' || card.size === 'label' ? card.size : 'card')));
+        if (card.size !== 'custom') {
+            if (card.size === 'wide') { card.width = 100; card.height = 64; }
+            else if (card.size === 'label') { card.width = 58; card.height = 36; }
+            else { card.size = 'card'; card.width = 86; card.height = 54; }
+        }
+        if (source.elements) card.elements = cleanElements(source.elements, card);
+        return card;
+    }
+
+    function copyCard(layout) {
+        if (!layout) return defaultCard();
+        return normalizeClientCard(layout);
+    }
+
+    function cardDraft() {
+        var key = state.projectKey || '';
+        if (!state.cardDraft || state.cardDraft.projectKey !== key) {
+            var project = currentProject();
+            var layout = copyCard(project && project.card);
+            if (!layout.elements) layout.elements = elementsFromLegacy(layout);
+            layout.projectKey = key;
+            state.cardDraft = layout;
+            state.cardSelected = '';
+        }
+        return state.cardDraft;
+    }
+
+    function cardLayoutFor(projectKey) {
+        var key = projectKey || state.projectKey;
+        for (var i = 0; i < state.projects.length; i++) {
+            if (state.projects[i].key === key) return copyCard(state.projects[i].card);
+        }
+        return defaultCard();
+    }
+
+    function customFields() {
+        var map = {};
+        var list = [];
+        (state.types || []).forEach(function (type) {
+            (type.fields || []).forEach(function (fieldDef) {
+                var key = String(fieldDef.fieldKey || '').toLowerCase();
+                if (!/^[a-z][a-z0-9-]{0,39}$/.test(key)) return;
+                var typeLabel = type.label || type.typeKey || '';
+                if (!map[key]) {
+                    map[key] = { fieldKey: key, label: fieldDef.label || key, typeLabel: typeLabel };
+                    list.push(map[key]);
+                } else if (typeLabel && map[key].typeLabel.indexOf(typeLabel) < 0) {
+                    map[key].typeLabel = map[key].typeLabel ? map[key].typeLabel + ', ' + typeLabel : typeLabel;
+                }
+            });
+        });
+        list.sort(function (left, right) {
+            return String(left.typeLabel + left.label).localeCompare(String(right.typeLabel + right.label));
+        });
+        return list;
+    }
+
+    function blockLabel(token) {
+        if (token === 'name') return t('name');
+        if (token === 'key') return t('keyLabel');
+        if (token === 'type') return t('type');
+        if (token === 'place') return t('parent');
+        if (token === 'status') return t('status');
+        if (token === 'custodian') return t('custodian');
+        if (token === 'project') return t('project');
+        if (token === 'description') return t('description');
+        if (token === 'scan') return t('cardScanName');
+        if (token.indexOf('attr:') === 0) {
+            var key = token.substring(5);
+            var found = null;
+            customFields().forEach(function (fieldDef) {
+                if (fieldDef.fieldKey === key) found = fieldDef;
+            });
+            if (found) return (found.typeLabel ? found.typeLabel + ' · ' : '') + (found.label || key);
+            return key;
+        }
+        return token;
+    }
+
+    function cardLineText(asset, token) {
+        if (!asset || !token) return '';
+        if (token.indexOf('attr:') === 0) {
+            var fieldKey = token.substring(5);
+            var attrs = asset.attributes || [];
+            for (var i = 0; i < attrs.length; i++) {
+                if (attrs[i] && String(attrs[i].fieldKey || '').toLowerCase() === fieldKey) {
+                    return String(attrs[i].value || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+                }
+            }
+            return '';
+        }
+        if (token === 'name') return String(asset.name || '').replace(/^\s+|\s+$/g, '');
+        if (token === 'key') return String(asset.objectKey || '').replace(/^\s+|\s+$/g, '');
+        if (token === 'type') return String(asset.typeLabel || typeOf(asset.typeKey).label || '').replace(/^\s+|\s+$/g, '');
+        if (token === 'place') return String(placePath(asset) || '').replace(/^\s+|\s+$/g, '');
+        if (token === 'status') {
+            if (asset.sample && asset.statusLabel) return asset.statusLabel;
+            return String(statusLabel(asset.status) || '').replace(/^\s+|\s+$/g, '');
+        }
+        if (token === 'custodian') return asset.custodian ? String(asset.custodian.displayName || '').replace(/^\s+|\s+$/g, '') : '';
+        if (token === 'project') return String(asset.projectName || asset.projectKey || '').replace(/^\s+|\s+$/g, '');
+        if (token === 'description') return String(asset.description || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+        if (token === 'scan') return t('cardScan');
+        return '';
+    }
+
+    function sampleCardAsset() {
+        var attributes = [];
+        customFields().forEach(function (fieldDef) {
+            attributes.push({ fieldKey: fieldDef.fieldKey, value: fieldDef.label || fieldDef.fieldKey });
+        });
+        return {
+            sample: true,
+            name: t('cardSampleName'),
+            objectKey: 'RMD-3',
+            typeLabel: t('cardSampleType'),
+            location: t('cardSamplePlace'),
+            statusLabel: t('cardSampleStatus'),
+            custodian: { displayName: t('cardSampleHolder') },
+            projectName: t('cardSampleProject'),
+            projectKey: state.projectKey || '',
+            description: t('cardSampleDescription'),
+            attributes: attributes
+        };
+    }
+
+    function cardCss() {
+        return '.asset-tree-card-preview{color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
+            + '.asset-tree-card-preview .bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
+            + '.asset-tree-card-preview .bar p{margin:0;flex:1}'
+            + '.asset-tree-card-preview .bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
+            + '.asset-tree-card-preview .sheet{display:flex;flex-wrap:wrap;gap:4mm;padding:8mm}'
+            + '.asset-tree-card-preview .asset-tree-card{width:86mm;height:54mm;border:.3mm solid #172b4d;display:flex;box-sizing:border-box;page-break-inside:avoid;background:#fff;overflow:hidden}'
+            + '.asset-tree-card-preview .asset-tree-card.is-wide{width:100mm;height:64mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label{width:58mm;height:36mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-right{flex-direction:row-reverse}'
+            + '.asset-tree-card-preview .asset-tree-card.is-top{flex-direction:column;align-items:stretch}'
+            + '.asset-tree-card-preview .asset-tree-card-qr{width:46mm;height:46mm;margin:4mm 0 4mm 3mm;flex:none}'
+            + '.asset-tree-card-preview .asset-tree-card.is-right .asset-tree-card-qr{margin:4mm 3mm 4mm 0}'
+            + '.asset-tree-card-preview .asset-tree-card.is-top .asset-tree-card-qr{width:22mm;height:22mm;margin:3mm auto 0}'
+            + '.asset-tree-card-preview .asset-tree-card.is-wide .asset-tree-card-qr{width:54mm;height:54mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-wide.is-top .asset-tree-card-qr{width:26mm;height:26mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-qr{width:26mm;height:26mm;margin:5mm 0 5mm 2mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label.is-right .asset-tree-card-qr{margin:5mm 2mm 5mm 0}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label.is-top .asset-tree-card-qr{width:14mm;height:14mm;margin:2mm auto 0}'
+            + '.asset-tree-card-preview .asset-tree-card-qr svg{width:100%;height:100%;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-text{flex:1;min-width:0;min-height:0;padding:4mm 4mm 3mm 1mm;display:flex;flex-direction:column;overflow:hidden}'
+            + '.asset-tree-card-preview .asset-tree-card.is-top .asset-tree-card-text{padding:1.5mm 4mm 3mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-none .asset-tree-card-text{padding:4mm}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-text{padding:2.5mm 2.5mm 2mm 1mm}'
+            + '.asset-tree-card-preview .asset-tree-card-line{font-size:9pt;line-height:1.2;color:#44546f;overflow:hidden}'
+            + '.asset-tree-card-preview .asset-tree-card-line + .asset-tree-card-line{margin-top:.6mm}'
+            + '.asset-tree-card-preview .asset-tree-card-line.is-name{font-size:13pt;font-weight:700;line-height:1.15;color:#172b4d;max-height:2.4em}'
+            + '.asset-tree-card-preview .asset-tree-card-line.is-key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12pt;letter-spacing:.04em;color:#172b4d}'
+            + '.asset-tree-card-preview .asset-tree-card-line.is-scan{font-size:8pt;color:#6b778c}'
+            + '.asset-tree-card-preview .asset-tree-card-line.is-desc{max-height:3.6em}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line{font-size:7.5pt}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-name{font-size:10pt}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-key{font-size:9pt}'
+            + '.asset-tree-card-preview .asset-tree-card.is-label .asset-tree-card-line.is-scan{font-size:6.5pt}'
+            + '.asset-tree-card-preview .asset-tree-card.is-free{position:relative;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-item{position:absolute;box-sizing:border-box;overflow:hidden;line-height:1.15;margin:0;padding:0;white-space:pre-wrap;word-wrap:break-word}'
+            + '.asset-tree-card-preview .asset-tree-card-item.is-qr svg{width:100%;height:100%;display:block}'
+            + '.asset-tree-card-preview .asset-tree-card-item.is-logo img,.asset-tree-card-preview .asset-tree-card-item.is-picture img{width:100%;height:100%;object-fit:contain;display:block}'
+            + '@media print{.asset-tree-card-preview .bar{display:none}.asset-tree-card-preview .sheet{padding:0;gap:3mm}.asset-tree-card-preview .asset-tree-card{border-color:#000}}';
+    }
+
+    function ensureCardCss() {
+        if (document.getElementById('asset-tree-card-css')) return;
+        var style = document.createElement('style');
+        style.id = 'asset-tree-card-css';
+        style.appendChild(document.createTextNode(cardCss()));
+        document.head.appendChild(style);
+    }
+
+    function lineKind(token) {
+        if (token === 'name') return 'name';
+        if (token === 'key') return 'key';
+        if (token === 'scan') return 'scan';
+        if (token === 'description') return 'desc';
+        return 'meta';
+    }
+
+    function cardItemStyle(item) {
+        return 'left:' + item.x + 'mm;top:' + item.y + 'mm;width:' + item.w + 'mm;height:' + item.h
+            + 'mm;font-size:' + item.size + 'pt;color:' + item.color + ';font-family:' + cardFontFamily(item.font)
+            + ';font-weight:' + (item.bold ? '700' : '400') + ';text-align:' + item.align + ';';
+    }
+
+    function cardItemHtml(asset, item, preview) {
+        var style = cardItemStyle(item);
+        if (item.kind === 'logo') {
+            return '<div class="asset-tree-card-item is-logo" style="' + style + '"><img alt="" src="' + item.src + '"></div>';
+        }
+        if (item.kind === 'picture') {
+            if (!asset || !asset.cardImage) return '';
+            return '<div class="asset-tree-card-item is-picture" style="' + style + '"><img alt="" src="' + htmlEscape(cardImageUrl(asset)) + '"></div>';
+        }
+        if (item.kind === 'qr') {
+            var payload = item.token === 'asset' ? cardLink(asset) : item.text;
+            var code = '';
+            if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+                code = window.AssetTreeQr.svg(payload) || '';
+            }
+            if (!code) return preview ? '<div class="asset-tree-card-item is-qr" style="' + style + '"></div>' : '';
+            return '<div class="asset-tree-card-item is-qr" style="' + style + '">' + code + '</div>';
+        }
+        var text = item.kind === 'text' ? item.text : cardLineText(asset, item.token);
+        if (!text) return '';
+        return '<div class="asset-tree-card-item is-' + item.kind + '" style="' + style + '">' + htmlEscape(text) + '</div>';
+    }
+
+    function cardNeedsQr(layout) {
+        var card = normalizeClientCard(layout);
+        if (card.elements) {
+            for (var i = 0; i < card.elements.length; i++) {
+                if (card.elements[i].kind === 'qr') return true;
+            }
+            return false;
+        }
+        return card.qr !== 'none';
+    }
+
+    function cardArticle(asset, layout, preview) {
+        var card = normalizeClientCard(layout);
+        if (card.elements) {
+            var parts = [];
+            card.elements.forEach(function (item) {
+                var html = cardItemHtml(asset, item, preview);
+                if (html) parts.push(html);
+            });
+            if (!parts.length && !preview) return '';
+            return '<article class="asset-tree-card is-free" style="' + cardFrameStyle(card) + '">' + parts.join('') + '</article>';
+        }
+        var code = '';
+        if (card.qr !== 'none') {
+            if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+                code = window.AssetTreeQr.svg(cardLink(asset)) || '';
+            }
+            if (!code && !preview) return '';
+        }
+        var lines = [];
+        card.lines.forEach(function (token) {
+            var text = cardLineText(asset, token);
+            if (!text) return;
+            lines.push('<div class="asset-tree-card-line is-' + lineKind(token) + '">' + htmlEscape(text) + '</div>');
+        });
+        if (!lines.length && card.qr === 'none') return '';
+        var qrHtml = card.qr === 'none' ? '' : '<div class="asset-tree-card-qr">' + code + '</div>';
+        return '<article class="asset-tree-card is-' + card.size + ' is-' + card.qr + '" style="' + cardFrameStyle(card) + '">' + qrHtml
+            + '<div class="asset-tree-card-text">' + lines.join('') + '</div></article>';
+    }
+
+    function cardFrameStyle(layout) {
+        var sheet = cardSheet(layout);
+        return 'width:' + sheet.w + 'mm;height:' + sheet.h + 'mm;';
+    }
+
     function printCards(assets) {
         var cards = (assets || []).filter(function (asset) {
             return asset && !isFolder(asset) && asset.objectKey;
@@ -3909,8 +5230,26 @@
             notify(t('printEmpty'));
             return;
         }
-        if (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function') {
+        var needsLibrary = false;
+        cards.forEach(function (asset) {
+            if (cardNeedsQr(cardLayoutFor(asset.projectKey))) needsLibrary = true;
+        });
+        if (needsLibrary && (!window.AssetTreeQr || typeof window.AssetTreeQr.svg !== 'function')) {
             notify(t('errorTitle'));
+            return;
+        }
+        var qrSkipped = 0;
+        var body = cards.map(function (asset) {
+            var layout = cardLayoutFor(asset.projectKey);
+            var html = cardArticle(asset, layout, false);
+            if (!html) {
+                if (cardNeedsQr(layout)) qrSkipped++;
+                return '';
+            }
+            return html;
+        }).join('');
+        if (!body) {
+            notify(qrSkipped ? t('printQrSkipped') : t('printEmpty'));
             return;
         }
         var sheet = window.open('', '_blank');
@@ -3918,34 +5257,13 @@
             notify(t('printBlocked'));
             return;
         }
-        var body = cards.map(function (asset) {
-            var link = cardLink(asset);
-            var type = asset.typeLabel || typeOf(asset.typeKey).label || '';
-            var place = placePath(asset);
-            return '<article class="card"><div class="qr">' + window.AssetTreeQr.svg(link) + '</div><div class="text">'
-                + '<div class="name">' + htmlEscape(asset.name || '') + '</div>'
-                + '<div class="meta">' + htmlEscape(type) + (place ? ' · ' + htmlEscape(place) : '') + '</div>'
-                + '<div class="key">' + htmlEscape(asset.objectKey) + '</div>'
-                + '<div class="scan">' + htmlEscape(t('cardScan')) + '</div>'
-                + '</div></article>';
-        }).join('');
-        var style = 'body{margin:0;color:#172b4d;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
-            + '.bar{display:flex;gap:16px;align-items:center;padding:16px 24px;background:#f4f5f7}'
-            + '.bar p{margin:0;flex:1}.bar button{font:inherit;background:#0052cc;color:#fff;border:0;border-radius:3px;padding:8px 16px;cursor:pointer}'
-            + '.sheet{display:flex;flex-wrap:wrap;gap:4mm;padding:8mm}'
-            + '.card{width:86mm;height:54mm;border:.3mm solid #172b4d;display:flex;box-sizing:border-box;page-break-inside:avoid;background:#fff}'
-            + '.qr{width:46mm;height:46mm;margin:4mm 0 4mm 3mm;flex:none}.qr svg{width:100%;height:100%;display:block}'
-            + '.text{flex:1;min-width:0;padding:4mm 4mm 3mm 1mm;display:flex;flex-direction:column}'
-            + '.name{font-size:13pt;font-weight:700;line-height:1.15;max-height:2.4em;overflow:hidden}'
-            + '.meta{margin-top:2mm;font-size:9pt;color:#44546f}'
-            + '.key{margin-top:auto;font-family:ui-monospace,monospace;font-size:12pt;letter-spacing:.04em}'
-            + '.scan{font-size:8pt;color:#6b778c}'
-            + '@media print{.bar{display:none}.sheet{padding:0;gap:3mm}.card{border-color:#000}}'
-            + '@page{size:A4;margin:8mm}';
+        if (qrSkipped) notify(t('printQrSkipped'));
         sheet.document.open();
-        sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>' + style + '</style></head><body>'
-            + '<div class="bar"><p>' + htmlEscape(t('printHint')) + '</p><button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
-            + '<div class="sheet">' + body + '</div></body></html>');
+        sheet.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + htmlEscape(t('printSheet')) + '</title><style>body{margin:0}' + cardCss()
+            + '@page{size:A4;margin:8mm}</style></head><body>'
+            + '<div class="asset-tree-card-preview"><div class="bar"><p>' + htmlEscape(t('printHint')) + '</p>'
+            + '<button type="button" onclick="window.print()">' + htmlEscape(t('printAction')) + '</button></div>'
+            + '<div class="sheet">' + body + '</div></div></body></html>');
         sheet.document.close();
     }
 
@@ -3975,6 +5293,14 @@
             }));
         }
         var extra = [];
+        if (mayEdit(asset) && !isFolder(asset)) {
+            var current = state.detail && state.detail.id === asset.id ? state.detail : asset;
+            if (current.cardImage) {
+                extra.push({ label: t('cardQrRemove'), onClick: function () { deleteCardImage(current); } });
+            } else {
+                extra.push({ label: t('cardQrUpload'), onClick: function () { pickCardImage(current); } });
+            }
+        }
         if (mayEdit(asset)) extra.push({ label: t('delete'), danger: true, onClick: function () { openDelete(asset); } });
         if (childrenOf(asset.id).length || !showsInTree(asset)) {
             extra.push({
@@ -4042,7 +5368,7 @@
         aside.appendChild(moduleBlock(t('dates'), datesBody(asset)));
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         section.appendChild(form);
     }
 
@@ -4185,9 +5511,9 @@
         aside.appendChild(el('h3', null, t('people')));
         aside.appendChild(custodianField('asset-field-custodian', asset.custodian));
         aside.appendChild(el('h3', null, t('details')));
-        aside.appendChild(field(t('type'), selectBox('asset-field-type', state.types.map(function (type) {
-            return { value: type.typeKey, label: type.label };
-        }), asset.typeKey, !state.canEdit)));
+        aside.appendChild(field(t('type'), selectBox('asset-field-type', placePage
+            ? state.types.map(function (type) { return { value: type.typeKey, label: type.label }; })
+            : equipmentTypeOptions(asset.typeKey), asset.typeKey, !state.canEdit)));
         if (!placePage) {
             aside.appendChild(field(t('status'), selectBox('asset-field-status', statusChoices(), asset.status, !state.canEdit)));
         }
@@ -4208,7 +5534,7 @@
         aside.appendChild(meta);
 
         form.appendChild(main);
-        form.appendChild(aside);
+        attachAside(form, aside);
         form.addEventListener('submit', function (event) {
             event.preventDefault();
             saveDetail();
@@ -4388,6 +5714,8 @@
         }
         var id = state.selectedId;
         var current = byId()[id];
+        var nextTypeKey = document.getElementById('asset-field-type').value;
+        var typeMoved = !current || current.typeKey !== nextTypeKey;
         var parentValue = document.getElementById('asset-field-parent').value;
         var parentId = parentValue === '' ? null : parseInt(parentValue, 10);
         var parentChanged = !current || (current.parentId || null) !== parentId;
@@ -4409,7 +5737,7 @@
                 return;
             }
             if (!parentChanged) {
-                finishSave(id, t('saved'));
+                finishSave(id, t('saved'), typeMoved);
                 return;
             }
             ajax('POST', '/assets/' + id + '/move', { parentId: parentId, index: null }, function (moveStatus, movePayload) {
@@ -4423,17 +5751,18 @@
                     state.expanded[parentId] = true;
                     rememberExpanded();
                 }
-                finishSave(id, t('moved'));
+                finishSave(id, t('moved'), typeMoved);
             });
         });
     }
 
-    function finishSave(id, message) {
+    function finishSave(id, message, typeMoved) {
         state.dirty = false;
         state.editing = false;
         assetsChanged();
         reloadTree(function () {
             setBusy(false);
+            if (typeMoved) revealEquipmentType(byId()[id]);
             selectAsset(id, true);
             notify(message);
         });
@@ -4899,7 +6228,9 @@
                 state.types.forEach(function (type) {
                     if (kind === 'place' && !type.location) return;
                     if (kind === 'object' && type.location) return;
-                    options.push({ value: type.typeKey, label: type.label });
+                    var parent = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+                    var label = parent ? (parent.label + ' / ' + type.label) : type.label;
+                    options.push({ value: type.typeKey, label: label });
                 });
                 if (kind !== 'object') {
                     options.push({ value: '__new__', label: t('newType') });
@@ -5316,6 +6647,15 @@
             requiredLabel.appendChild(required);
             requiredLabel.appendChild(el('span', null, t('fieldRequired')));
             form.appendChild(requiredLabel);
+            var issueLabel = el('label', 'asset-tree-check');
+            var issue = el('input');
+            issue.type = 'checkbox';
+            issue.id = 'field-issue';
+            issue.checked = true;
+            issueLabel.appendChild(issue);
+            issueLabel.appendChild(el('span', null, t('showOnIssue')));
+            form.appendChild(issueLabel);
+            form.appendChild(el('p', 'asset-tree-hint', t('showOnIssueHint')));
             var error = el('div', 'asset-tree-form-error');
             error.hidden = true;
             form.appendChild(error);
@@ -5336,6 +6676,7 @@
                     label: label.trim(),
                     kind: kind,
                     required: document.getElementById('field-required').checked,
+                    showOnIssue: document.getElementById('field-issue').checked,
                     options: document.getElementById('field-options').value
                 }, function (status, payload) {
                     if (status >= 200 && status < 300) {
@@ -5434,9 +6775,24 @@
     }
 
     function sortedTypes() {
-        return state.types.slice().sort(function (left, right) {
+        function byLabel(left, right) {
             return String(left.label || '').localeCompare(String(right.label || ''), 'ru');
+        }
+        var roots = state.types.filter(function (type) { return !parentKeyOf(type); }).sort(byLabel);
+        var listed = {};
+        var result = [];
+        roots.forEach(function (type) {
+            listed[type.typeKey] = true;
+            result.push(type);
+            subtypesOf(type.typeKey).sort(byLabel).forEach(function (child) {
+                listed[child.typeKey] = true;
+                result.push(child);
+            });
         });
+        state.types.filter(function (type) { return !listed[type.typeKey]; }).sort(byLabel).forEach(function (type) {
+            result.push(type);
+        });
+        return result;
     }
 
     function appendConstructor(container, modal) {
@@ -5487,15 +6843,21 @@
                 state.fieldQuery = '';
                 repaintSchema();
             });
-            pick.setAttribute('data-name', type.label || '');
+            var parentType = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
+            pick.setAttribute('data-name', (parentType ? parentType.label + ' ' : '') + (type.label || ''));
             pick.appendChild(typeTile(type, 'sm'));
             pick.appendChild(el('span', 'asset-tree-type-name', type.label || ''));
+            if (parentType) {
+                var mark = el('span', 'asset-tree-key', parentType.label || '');
+                mark.title = t('subtypeOf', parentType.label || '');
+                pick.appendChild(mark);
+            }
             var count = el('span', 'asset-tree-key', String((type.fields || []).length));
             count.title = t('schemaFieldCount', (type.fields || []).length);
             pick.appendChild(count);
             if (state.canConfigure) {
-                var line = el('div', 'asset-tree-type-row');
-                line.setAttribute('data-name', type.label || '');
+                var line = el('div', 'asset-tree-type-row' + (parentType ? ' is-subtype' : ''));
+                line.setAttribute('data-name', (parentType ? parentType.label + ' ' : '') + (type.label || ''));
                 line.appendChild(pickBox(typeRows[index], refreshPick));
                 line.appendChild(pick);
                 list.appendChild(line);
@@ -5531,6 +6893,7 @@
         title.appendChild(typeTile(type, 'lg'));
         title.appendChild(el('h3', null, type.label || ''));
         head.appendChild(title);
+        var parentType = parentKeyOf(type) ? typeByKey(parentKeyOf(type)) : null;
         var meta = type.systemType ? t('systemType') : t('schemaFieldCount', (type.fields || []).length);
         if (!type.systemType && type.assetCount) meta += ' · ' + type.assetCount;
         head.appendChild(el('span', 'asset-tree-key', meta));
@@ -5546,6 +6909,7 @@
             }));
         }
         wrap.appendChild(head);
+        if (parentType) wrap.appendChild(el('p', 'asset-tree-hint', t('subtypeOf', parentType.label || parentType.typeKey)));
         if (state.canConfigure) {
             var look = el('div', 'asset-tree-appearance');
             var saveLook = function (patch) {
@@ -5564,6 +6928,23 @@
             look.appendChild(field(t('color'), colors, true));
             look.appendChild(field(t('icon'), icons, true));
             look.appendChild(el('p', 'asset-tree-hint', t('iconHint')));
+            if (!type.location && !subtypesOf(type.typeKey).length) {
+                var parentSelect = el('select');
+                var none = el('option', null, t('parentTypeNone'));
+                none.value = '';
+                parentSelect.appendChild(none);
+                state.types.forEach(function (item) {
+                    if (item.location || parentKeyOf(item) || item.typeKey === type.typeKey) return;
+                    var option = el('option', null, item.label || item.typeKey);
+                    option.value = item.typeKey;
+                    if (option.value === parentKeyOf(type)) option.selected = true;
+                    parentSelect.appendChild(option);
+                });
+                parentSelect.addEventListener('change', function () {
+                    saveLook({ parentTypeKey: parentSelect.value });
+                });
+                look.appendChild(field(t('parentType'), parentSelect, true));
+            }
             if (type.location) {
                 var caption = input('', type.placeCaption || '', false);
                 caption.maxLength = 80;
@@ -5640,6 +7021,27 @@
             fieldRow.setAttribute('data-name', fieldDef.label || '');
             fieldRow.appendChild(el('span', null, fieldDef.label));
             fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
+            var issueLabel = el('label', 'asset-tree-check asset-tree-field-issue');
+            issueLabel.title = t('showOnIssueHint');
+            var issueBox = el('input');
+            issueBox.type = 'checkbox';
+            issueBox.checked = fieldDef.showOnIssue !== false;
+            issueBox.disabled = !state.canConfigure;
+            if (!state.canConfigure) issueBox.setAttribute('data-disabled', '1');
+            issueBox.addEventListener('change', function () {
+                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), {
+                    showOnIssue: issueBox.checked
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300) refreshSchema();
+                    else {
+                        issueBox.checked = !issueBox.checked;
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            });
+            issueLabel.appendChild(issueBox);
+            issueLabel.appendChild(el('span', null, t('showOnIssue')));
+            fieldRow.appendChild(issueLabel);
             if (state.canConfigure) {
                 fieldRow.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
                     ajax('DELETE', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), null, function (status, payload) {
@@ -5663,6 +7065,19 @@
     function typeCreateForm() {
         var form = el('form', 'asset-tree-type-create');
         form.appendChild(field(t('typeLabel'), input('type-label', '', false), true));
+        var parentSelect = el('select');
+        parentSelect.id = 'type-parent';
+        var noneParent = el('option', null, t('parentTypeNone'));
+        noneParent.value = '';
+        parentSelect.appendChild(noneParent);
+        state.types.forEach(function (item) {
+            if (item.location || parentKeyOf(item)) return;
+            var option = el('option', null, item.label || item.typeKey);
+            option.value = item.typeKey;
+            parentSelect.appendChild(option);
+        });
+        var parentField = field(t('parentType'), parentSelect, true);
+        form.appendChild(parentField);
         var locationToggle = el('label', 'asset-tree-check');
         var locationInput = el('input');
         locationInput.type = 'checkbox';
@@ -5705,6 +7120,8 @@
             if (serviceHint) serviceHint.hidden = locationInput.checked;
             captionField.hidden = !locationInput.checked;
             captionHint.hidden = !locationInput.checked;
+            parentField.hidden = locationInput.checked;
+            if (locationInput.checked) parentSelect.value = '';
         });
         var chosen = PALETTE[0];
         var chosenIcon = '';
@@ -5745,7 +7162,8 @@
                 location: place,
                 showInTree: place || treeInput.checked,
                 service: !place && serviceInput.checked,
-                placeCaption: place ? captionInput.value.trim() : ''
+                placeCaption: place ? captionInput.value.trim() : '',
+                parentTypeKey: place ? '' : parentSelect.value
             }, function (status, payload) {
                 if (status >= 200 && status < 300) {
                     state.schemaAdding = false;
@@ -5795,7 +7213,12 @@
     }
 
     function reloadTree(done) {
-        ajax('GET', '/assets?projectKey=' + encodeURIComponent(state.projectKey), null, function (status, payload) {
+        var key = state.projectKey;
+        var token = ++treeToken;
+        ajax('GET', '/assets?projectKey=' + encodeURIComponent(key), null, function (status, payload) {
+            if (token !== treeToken || key !== state.projectKey) {
+                return;
+            }
             if (status !== 200) {
                 state.treeReady = false;
                 state.loading = false;
@@ -5871,6 +7294,15 @@
         applyRights(match);
         state.grants = null;
         state.portalRules = null;
+        state.portalDraft = null;
+        state.flowRules = null;
+        state.flowBook = null;
+        state.flowDraft = null;
+        state.flowProcessId = '';
+        state.flowReady = false;
+        state.flowLoading = false;
+        state.issueTypes = null;
+        state.issueStatuses = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -5896,6 +7328,8 @@
         state.picked = {};
         state.pickScope = '';
         state.bulkErrors = [];
+        state.cardDraft = null;
+        state.cardSelected = '';
         reportToken++;
         state.treeReady = false;
         state.holderUser = null;
@@ -5904,6 +7338,15 @@
         applyRights(project);
         state.grants = null;
         state.portalRules = null;
+        state.portalDraft = null;
+        state.flowRules = null;
+        state.flowBook = null;
+        state.flowDraft = null;
+        state.flowProcessId = '';
+        state.flowReady = false;
+        state.flowLoading = false;
+        state.issueTypes = null;
+        state.issueStatuses = null;
         state.statuses = [];
         state.schemaTypeKey = '';
         state.schemaAdding = false;
@@ -5969,16 +7412,19 @@
         text.value = userKey || '';
         var list = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         text.addEventListener('input', function () {
             hidden.value = '';
             clearTimeout(timer);
             var query = text.value.trim();
             timer = setTimeout(function () {
+                var seq = ++searchSeq;
                 if (query.length < 2) {
                     list.innerHTML = '';
                     return;
                 }
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || text.value.trim() !== query) return;
                     list.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -6038,14 +7484,17 @@
         search.value = state.holderQuery || '';
         var results = el('div', 'asset-tree-user-results');
         var timer = null;
+        var searchSeq = 0;
         search.addEventListener('input', function () {
             state.holderQuery = search.value;
             clearTimeout(timer);
             timer = setTimeout(function () {
                 var query = search.value.trim();
+                var seq = ++searchSeq;
                 results.innerHTML = '';
                 if (query.length < 2) return;
                 ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (seq !== searchSeq || search.value.trim() !== query) return;
                     results.innerHTML = '';
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
@@ -6915,7 +8364,8 @@
                     key: String(asset.id),
                     kind: typeOf(asset.typeKey).location ? 'place' : 'object',
                     label: asset.name,
-                    projectKey: asset.projectKey || state.projectKey
+                    projectKey: asset.projectKey || state.projectKey,
+                    asset: asset
                 };
             })
         }));
@@ -7229,12 +8679,644 @@
         });
     }
 
+    function selectedCardItem() {
+        var id = state.cardSelected;
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === id) return items[i];
+        }
+        return null;
+    }
+
+    function applyItemStyle(node, item) {
+        node.style.left = item.x + 'mm';
+        node.style.top = item.y + 'mm';
+        node.style.width = item.w + 'mm';
+        node.style.height = item.h + 'mm';
+        node.style.fontSize = item.size + 'pt';
+        node.style.color = item.color;
+        node.style.fontFamily = cardFontFamily(item.font);
+        node.style.fontWeight = item.bold ? '700' : '400';
+        node.style.textAlign = item.align || 'left';
+    }
+
+    function clearCardDragMarks() {
+        var ghost = document.getElementById('asset-tree-card-ghost');
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    }
+
+    function pointOnCard(clientX, clientY) {
+        var article = document.querySelector('#asset-tree-app .asset-tree-card-edit .asset-tree-card');
+        if (!article) return null;
+        var rect = article.getBoundingClientRect();
+        if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+        var sheet = cardSheet(cardDraft());
+        return {
+            x: (clientX - rect.left) / rect.width * sheet.w,
+            y: (clientY - rect.top) / rect.height * sheet.h
+        };
+    }
+
+    function fillItemBody(body, item, sample) {
+        while (body.firstChild) body.removeChild(body.firstChild);
+        if (item.kind === 'logo' && item.src) {
+            var img = document.createElement('img');
+            img.alt = '';
+            img.draggable = false;
+            img.src = item.src;
+            body.appendChild(img);
+            return;
+        }
+        if (item.kind === 'picture') {
+            body.appendChild(document.createTextNode(t('cardPicture')));
+            return;
+        }
+        if (item.kind === 'qr') {
+            var payload = item.token === 'asset' ? cardLink(sample) : item.text;
+            var code = '';
+            if (window.AssetTreeQr && typeof window.AssetTreeQr.svg === 'function') {
+                code = window.AssetTreeQr.svg(payload) || '';
+            }
+            if (code) {
+                body.innerHTML = code;
+                return;
+            }
+            body.appendChild(document.createTextNode(t('cardQrAsset')));
+            return;
+        }
+        var text = item.kind === 'text' ? item.text : (cardLineText(sample, item.token) || blockLabel(item.token));
+        body.appendChild(document.createTextNode(text || ''));
+    }
+
+    function paintSelectedItem() {
+        var item = selectedCardItem();
+        if (!item) return;
+        var node = document.querySelector('#asset-tree-app .asset-tree-card-item[data-card-id="' + item.id + '"]');
+        if (!node) return;
+        applyItemStyle(node, item);
+        var body = node.querySelector('.asset-tree-card-body');
+        if (!body || document.activeElement === body) return;
+        if (item.kind === 'text') body.textContent = item.text;
+        else if (item.kind === 'qr' && item.token === 'custom') fillItemBody(body, item, sampleCardAsset());
+    }
+
+    function addCardElement(spec, x, y) {
+        var draft = cardDraft();
+        if (!draft.elements) draft.elements = [];
+        if (draft.elements.length >= 24) {
+            notify(t('cardFull'));
+            return;
+        }
+        if (spec.kind === 'picture' || spec.kind === 'field' || (spec.kind === 'qr' && spec.token === 'asset')) {
+            for (var i = 0; i < draft.elements.length; i++) {
+                var existing = draft.elements[i];
+                if (existing.kind === spec.kind && (spec.kind === 'picture' || existing.token === spec.token)) return;
+            }
+        }
+        var wide = spec.kind === 'qr' || spec.kind === 'logo' || spec.kind === 'picture';
+        var item = {
+            id: cardNewId({}),
+            kind: spec.kind,
+            token: spec.token || '',
+            text: spec.text || '',
+            src: spec.src || '',
+            x: 4,
+            y: 4 + (draft.elements.length % 6) * 3,
+            w: spec.w || (wide ? 22 : 36),
+            h: spec.h || (wide ? 22 : 8),
+            size: spec.size || (spec.kind === 'text' ? 12 : 11),
+            color: spec.color || '#172b4d',
+            font: spec.font || 'sans',
+            bold: spec.bold != null ? !!spec.bold : spec.kind === 'text',
+            align: 'left'
+        };
+        var step = draft.grid || 0;
+        if (x != null && y != null) {
+            item.x = cardSnap(x - item.w / 2, step);
+            item.y = cardSnap(y - item.h / 2, step);
+        } else {
+            item.x = cardSnap(item.x, step);
+            item.y = cardSnap(item.y, step);
+        }
+        var cleaned = cleanElements(draft.elements.concat([item]), draft);
+        if (cleaned.length !== draft.elements.length + 1) return;
+        draft.elements = cleaned;
+        state.cardSelected = cleaned[cleaned.length - 1].id;
+        renderFrame();
+    }
+
+    function removeCardElement(id) {
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].id === id) {
+                items.splice(i, 1);
+                break;
+            }
+        }
+        if (state.cardSelected === id) state.cardSelected = '';
+        renderFrame();
+    }
+
+    function readCardLogo(file, done) {
+        if (!file || String(file.type || '').indexOf('image/') !== 0 || file.type === 'image/svg+xml') {
+            notify(t('cardLogoType'));
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+            var img = new Image();
+            img.onload = function () {
+                var maxPx = 240;
+                var scale = Math.min(1, maxPx / img.width, maxPx / img.height);
+                var width = Math.max(1, Math.round(img.width * scale));
+                var height = Math.max(1, Math.round(img.height * scale));
+                var canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                var context = canvas.getContext('2d');
+                if (!context) {
+                    notify(t('cardLogoType'));
+                    return;
+                }
+                context.drawImage(img, 0, 0, width, height);
+                var url = canvas.toDataURL('image/png');
+                if (!url || url.length > 90000) {
+                    notify(t('cardLogoBig'));
+                    return;
+                }
+                done(url, width, height);
+            };
+            img.onerror = function () { notify(t('cardLogoType')); };
+            img.src = String(reader.result || '');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function chooseCardLogo(replaceId) {
+        var input = document.getElementById('asset-tree-card-logo');
+        if (!input) return;
+        input.setAttribute('data-replace', replaceId || '');
+        input.click();
+    }
+
+    function bindCardItem(node, item) {
+        node.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
+            var target = event.target;
+            var className = target && target.classList;
+            if (className && className.contains('asset-tree-card-x')) return;
+            var resize = className && className.contains('asset-tree-card-resize');
+            var grip = className && className.contains('asset-tree-card-grip');
+            if (state.cardSelected === item.id && item.kind === 'text' && !resize && !grip) return;
+            event.preventDefault();
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var originX = item.x;
+            var originY = item.y;
+            var originW = item.w;
+            var originH = item.h;
+            function ratio() {
+                var rect = node.parentNode.getBoundingClientRect();
+                var sheet = cardSheet(cardDraft());
+                return { x: sheet.w / rect.width, y: sheet.h / rect.height, sheet: sheet };
+            }
+            function move(ev) {
+                if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;
+                var scale = ratio();
+                var step = cardDraft().grid || 0;
+                if (resize) {
+                    var nextW = originW + (ev.clientX - startX) * scale.x;
+                    var nextH = originH + (ev.clientY - startY) * scale.y;
+                    if (item.kind === 'qr') {
+                        var side = Math.max(nextW, nextH);
+                        nextW = side;
+                        nextH = side;
+                    } else if (item.kind === 'logo' && originW > 0) {
+                        nextH = nextW * (originH / originW);
+                    }
+                    item.w = Math.max(4, Math.min(scale.sheet.w, cardSnap(nextW, step)));
+                    item.h = Math.max(4, Math.min(scale.sheet.h, cardSnap(nextH, step)));
+                } else {
+                    item.x = Math.max(0, Math.min(scale.sheet.w - 4, cardSnap(originX + (ev.clientX - startX) * scale.x, step)));
+                    item.y = Math.max(0, Math.min(scale.sheet.h - 4, cardSnap(originY + (ev.clientY - startY) * scale.y, step)));
+                }
+                applyItemStyle(node, item);
+            }
+            function up() {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                var changed = state.cardSelected !== item.id;
+                state.cardSelected = item.id;
+                if (changed) renderFrame();
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+    }
+
+    function bindPaletteDrop(node, spec) {
+        node.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) return;
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var moved = false;
+            function move(ev) {
+                if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 5) return;
+                if (!moved) {
+                    moved = true;
+                    state.cardDrag = spec.kind;
+                    var ghost = el('div', 'asset-tree-card-ghost', spec.label);
+                    ghost.id = 'asset-tree-card-ghost';
+                    document.body.appendChild(ghost);
+                }
+                var ghostNode = document.getElementById('asset-tree-card-ghost');
+                if (ghostNode) {
+                    ghostNode.style.left = (ev.clientX + 12) + 'px';
+                    ghostNode.style.top = (ev.clientY + 12) + 'px';
+                }
+            }
+            function up(ev) {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', up);
+                clearCardDragMarks();
+                state.cardDrag = '';
+                if (!moved) return;
+                state.cardSuppressClick = true;
+                var point = pointOnCard(ev.clientX, ev.clientY);
+                if (point) addCardElement(spec, point.x, point.y);
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+    }
+
+    function cardRemoveButton(onClick) {
+        var remove = el('button', 'asset-tree-card-x', '\u00d7');
+        remove.type = 'button';
+        remove.title = t('cardRemove');
+        remove.setAttribute('aria-label', t('cardRemove'));
+        remove.addEventListener('mousedown', function (event) { event.stopPropagation(); });
+        remove.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            onClick();
+        });
+        return remove;
+    }
+
+    function editorItem(item, sample) {
+        var selected = state.cardSelected === item.id;
+        var node = el('div', 'asset-tree-card-item is-' + item.kind + (selected ? ' is-selected' : ''));
+        node.setAttribute('data-card-id', item.id);
+        node.title = item.kind === 'field' ? blockLabel(item.token) : (item.kind === 'text' ? t('cardCaption') : (item.kind === 'logo' ? t('cardLogo') : (item.kind === 'picture' ? t('cardPicture') : t('cardQr'))));
+        applyItemStyle(node, item);
+        var body = el('div', 'asset-tree-card-body');
+        fillItemBody(body, item, sample);
+        if (item.kind === 'text') {
+            body.contentEditable = 'true';
+            body.addEventListener('input', function () {
+                item.text = body.innerText || '';
+                var area = document.getElementById('asset-tree-card-caption');
+                if (area && document.activeElement !== area) area.value = item.text;
+            });
+            body.addEventListener('mousedown', function (event) {
+                if (state.cardSelected === item.id) event.stopPropagation();
+            });
+        }
+        node.appendChild(body);
+        if (selected) node.appendChild(el('div', 'asset-tree-card-grip'));
+        node.appendChild(el('div', 'asset-tree-card-resize'));
+        node.appendChild(cardRemoveButton(function () { removeCardElement(item.id); }));
+        bindCardItem(node, item);
+        return node;
+    }
+
+    function cardHas(kind, token) {
+        var items = cardDraft().elements || [];
+        for (var i = 0; i < items.length; i++) {
+            if (items[i].kind === kind && items[i].token === token) return true;
+        }
+        return false;
+    }
+
+    function paletteButton(label, spec) {
+        var chip = button(label, 'asset-tree-card-chip', function () {
+            if (state.cardSuppressClick) {
+                state.cardSuppressClick = false;
+                return;
+            }
+            addCardElement(spec, null, null);
+        });
+        if ((cardDraft().elements || []).length >= 24) {
+            chip.disabled = true;
+            return chip;
+        }
+        spec.label = label;
+        bindPaletteDrop(chip, spec);
+        return chip;
+    }
+
+    function renderCardTools(stage) {
+        var item = selectedCardItem();
+        var tools = el('div', 'asset-tree-card-tools');
+        if (!item) {
+            tools.appendChild(el('p', 'asset-tree-hint', t('cardPick')));
+            stage.appendChild(tools);
+            return;
+        }
+        if (item.kind === 'picture') {
+            tools.appendChild(button(t('cardRemove'), 'asset-tree-btn', function () {
+                removeCardElement(item.id);
+            }));
+            stage.appendChild(tools);
+            return;
+        }
+        var font = selectBox('asset-tree-card-font', [
+            { value: 'sans', label: t('cardFontSans') },
+            { value: 'serif', label: t('cardFontSerif') },
+            { value: 'mono', label: t('cardFontMono') }
+        ], item.font);
+        font.addEventListener('change', function () {
+            item.font = font.value;
+            paintSelectedItem();
+        });
+        tools.appendChild(field(t('cardFont'), font));
+        var sizeWrap = el('div', 'asset-tree-card-sizebox');
+        var sizeInput = input('asset-tree-card-fontsize', String(item.size));
+        sizeInput.type = 'number';
+        sizeInput.min = '6';
+        sizeInput.max = '36';
+        sizeInput.addEventListener('input', function () {
+            var next = parseInt(sizeInput.value, 10);
+            if (next >= 6 && next <= 36) {
+                item.size = next;
+                paintSelectedItem();
+            }
+        });
+        sizeWrap.appendChild(button('A\u2212', 'asset-tree-btn', function () {
+            item.size = Math.max(6, item.size - 1);
+            sizeInput.value = String(item.size);
+            paintSelectedItem();
+        }));
+        sizeWrap.appendChild(sizeInput);
+        sizeWrap.appendChild(button('A+', 'asset-tree-btn', function () {
+            item.size = Math.min(36, item.size + 1);
+            sizeInput.value = String(item.size);
+            paintSelectedItem();
+        }));
+        tools.appendChild(field(t('cardTextSize'), sizeWrap));
+        var color = el('input');
+        color.type = 'color';
+        color.value = item.color;
+        color.addEventListener('input', function () {
+            item.color = color.value;
+            paintSelectedItem();
+        });
+        tools.appendChild(field(t('cardColor'), color));
+        var bold = button(t('cardBold'), 'asset-tree-btn' + (item.bold ? ' primary' : ''), function () {
+            item.bold = !item.bold;
+            renderFrame();
+        });
+        tools.appendChild(bold);
+        [['left', 'cardAlignLeft'], ['center', 'cardAlignCenter'], ['right', 'cardAlignRight']].forEach(function (pair) {
+            tools.appendChild(button(t(pair[1]), 'asset-tree-btn' + (item.align === pair[0] ? ' primary' : ''), function () {
+                item.align = pair[0];
+                renderFrame();
+            }));
+        });
+        if (item.kind === 'text') {
+            var area = el('textarea');
+            area.id = 'asset-tree-card-caption';
+            area.rows = 2;
+            area.value = item.text;
+            area.addEventListener('input', function () {
+                item.text = area.value;
+                paintSelectedItem();
+            });
+            tools.appendChild(field(t('cardCaption'), area));
+        }
+        if (item.kind === 'logo') {
+            tools.appendChild(button(t('cardReplaceLogo'), 'asset-tree-btn', function () {
+                chooseCardLogo(item.id);
+            }));
+        }
+        tools.appendChild(button(t('cardRemove'), 'asset-tree-btn', function () {
+            removeCardElement(item.id);
+        }));
+        stage.appendChild(tools);
+    }
+
+    function saveCardDraft() {
+        var draft = cardDraft();
+        setBusy(true);
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/card', {
+            size: draft.size,
+            width: draft.width,
+            height: draft.height,
+            grid: draft.grid,
+            qr: draft.qr,
+            lines: (draft.lines || []).slice(),
+            elements: (draft.elements || []).map(function (item) {
+                return {
+                    id: item.id, kind: item.kind, token: item.token, text: item.text, src: item.src,
+                    x: item.x, y: item.y, w: item.w, h: item.h, size: item.size,
+                    color: item.color, font: item.font, bold: !!item.bold, align: item.align
+                };
+            })
+        }, function (status, payload) {
+            setBusy(false);
+            if (status < 200 || status >= 300 || !payload) {
+                notify((payload && payload.message) || t('errorTitle'));
+                return;
+            }
+            var project = currentProject();
+            if (project) project.card = copyCard(payload);
+            state.cardDraft = null;
+            state.cardSelected = '';
+            notify(t('saved'));
+            renderFrame();
+        });
+    }
+
+    function renderCardSettings(panel) {
+        ensureCardCss();
+        var draft = cardDraft();
+        var sample = sampleCardAsset();
+        var block = el('div', 'asset-tree-settings-block asset-tree-card-builder');
+        block.appendChild(el('p', 'asset-tree-hint', t('cardHint')));
+
+        var palette = el('div', 'asset-tree-card-palette');
+        palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardAdd')));
+        var logoFile = el('input');
+        logoFile.type = 'file';
+        logoFile.id = 'asset-tree-card-logo';
+        logoFile.accept = 'image/png,image/jpeg';
+        logoFile.className = 'asset-tree-import-file';
+        logoFile.addEventListener('change', function () {
+            var chosen = logoFile.files && logoFile.files[0];
+            var replaceId = logoFile.getAttribute('data-replace') || '';
+            logoFile.value = '';
+            if (!chosen) return;
+            readCardLogo(chosen, function (url, pixelWidth, pixelHeight) {
+                var w = 22;
+                var h = Math.max(4, cardRound(w * pixelHeight / pixelWidth));
+                if (replaceId) {
+                    (cardDraft().elements || []).forEach(function (entry) {
+                        if (entry.id !== replaceId) return;
+                        entry.src = url;
+                        entry.w = w;
+                        entry.h = h;
+                    });
+                    cardDraft().elements = cleanElements(cardDraft().elements, cardDraft());
+                    renderFrame();
+                    return;
+                }
+                addCardElement({ kind: 'logo', src: url, w: w, h: h }, null, null);
+            });
+        });
+        palette.appendChild(logoFile);
+        palette.appendChild(paletteButton(t('cardCaption'), { kind: 'text', text: t('cardCaption') }));
+        palette.appendChild(button(t('cardLogo'), 'asset-tree-card-chip', function () {
+            chooseCardLogo('');
+        }));
+        if (!cardHas('qr', 'asset')) {
+            palette.appendChild(paletteButton(t('cardQrAsset'), { kind: 'qr', token: 'asset', w: 28, h: 28 }));
+        }
+        if (!cardHas('picture', '')) {
+            palette.appendChild(paletteButton(t('cardPicture'), { kind: 'picture', w: 28, h: 28 }));
+        }
+        palette.appendChild(el('h3', 'asset-tree-settings-title', t('cardOff')));
+        var unused = [];
+        CARD_BLOCKS.forEach(function (token) {
+            if (!cardHas('field', token)) unused.push(token);
+        });
+        customFields().forEach(function (fieldDef) {
+            var token = 'attr:' + fieldDef.fieldKey;
+            if (!cardHas('field', token)) unused.push(token);
+        });
+        if (!unused.length) palette.appendChild(el('p', 'asset-tree-hint', t('cardPaletteEmpty')));
+        unused.forEach(function (token) {
+            var style = legacyLineStyle(token, draft.size);
+            palette.appendChild(paletteButton(blockLabel(token), {
+                kind: 'field', token: token, w: 36, h: style.h, size: style.size,
+                color: style.color, font: style.font, bold: style.bold
+            }));
+        });
+        block.appendChild(palette);
+
+        var stage = el('div', 'asset-tree-card-stage');
+        var measures = el('div', 'asset-tree-card-measures');
+        var size = selectBox('asset-tree-card-size', [
+            { value: 'card', label: t('cardSizeCard') },
+            { value: 'wide', label: t('cardSizeWide') },
+            { value: 'label', label: t('cardSizeLabel') },
+            { value: 'custom', label: t('cardSizeCustom') }
+        ], draft.size);
+        size.addEventListener('change', function () {
+            var current = cardDraft();
+            if (size.value === 'custom' && current.size !== 'custom') {
+                var sheetNow = cardSheet(current);
+                current.width = sheetNow.w;
+                current.height = sheetNow.h;
+            }
+            current.size = size.value;
+            var nextSheet = cardSheet(current);
+            current.width = nextSheet.w;
+            current.height = nextSheet.h;
+            current.elements = cleanElements(current.elements, current);
+            renderFrame();
+        });
+        measures.appendChild(field(t('cardSize'), size));
+        if (draft.size === 'custom') {
+            var widthInput = input('asset-tree-card-width', String(draft.width));
+            widthInput.type = 'number';
+            widthInput.min = '15';
+            widthInput.max = '210';
+            widthInput.step = '1';
+            widthInput.addEventListener('change', function () {
+                var current = cardDraft();
+                current.width = cardEdge(widthInput.value, 210, current.width);
+                current.elements = cleanElements(current.elements, current);
+                renderFrame();
+            });
+            var heightInput = input('asset-tree-card-height', String(draft.height));
+            heightInput.type = 'number';
+            heightInput.min = '15';
+            heightInput.max = '297';
+            heightInput.step = '1';
+            heightInput.addEventListener('change', function () {
+                var current = cardDraft();
+                current.height = cardEdge(heightInput.value, 297, current.height);
+                current.elements = cleanElements(current.elements, current);
+                renderFrame();
+            });
+            measures.appendChild(field(t('cardWidth'), widthInput));
+            measures.appendChild(field(t('cardHeight'), heightInput));
+        }
+        var grid = selectBox('asset-tree-card-grid', [
+            { value: '0', label: t('cardGridOff') },
+            { value: '1', label: '1 ' + t('cardMm') },
+            { value: '2', label: '2 ' + t('cardMm') },
+            { value: '5', label: '5 ' + t('cardMm') }
+        ], String(draft.grid));
+        grid.addEventListener('change', function () {
+            cardDraft().grid = parseInt(grid.value, 10) || 0;
+            renderFrame();
+        });
+        measures.appendChild(field(t('cardGrid'), grid));
+        stage.appendChild(measures);
+        renderCardTools(stage);
+
+        var sheet = el('div', 'asset-tree-card-sheet');
+        var preview = el('div', 'asset-tree-card-preview asset-tree-card-edit');
+        var article = el('article', 'asset-tree-card is-free' + (draft.grid ? ' is-grid' : ''));
+        var sheetMm = cardSheet(draft);
+        article.style.width = sheetMm.w + 'mm';
+        article.style.height = sheetMm.h + 'mm';
+        if (draft.grid) article.style.backgroundSize = draft.grid + 'mm ' + draft.grid + 'mm';
+        (draft.elements || []).forEach(function (item) {
+            article.appendChild(editorItem(item, sample));
+        });
+        preview.appendChild(article);
+        sheet.appendChild(preview);
+        stage.appendChild(sheet);
+        if (!(draft.elements || []).length) stage.appendChild(el('p', 'asset-tree-hint', t('cardEmpty')));
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('save'), 'asset-tree-btn primary', saveCardDraft));
+        stage.appendChild(actions);
+        block.appendChild(stage);
+        panel.appendChild(block);
+    }
+
+    function fitPortalPanel(panel) {
+        function apply() {
+            if (!panel.parentNode) {
+                window.removeEventListener('resize', apply);
+                return;
+            }
+            var top = panel.getBoundingClientRect().top;
+            var next = Math.max(280, Math.round(window.innerHeight - top - 44));
+            panel.style.height = next + 'px';
+            panel.style.maxHeight = next + 'px';
+            var board = panel.querySelector('.asset-tree-flow-board');
+            var canvas = panel.querySelector('.asset-tree-flow-canvas');
+            if (board && canvas) {
+                var room = board.clientHeight;
+                if (room > 120 && canvas.offsetHeight - room < 40) canvas.style.height = room + 'px';
+            }
+        }
+        if (state.portalFit) window.removeEventListener('resize', state.portalFit);
+        state.portalFit = apply;
+        window.addEventListener('resize', apply);
+        apply();
+    }
+
     function renderSettings() {
         var panel = el('section', 'asset-tree-report');
         var project = currentProject();
         var name = project ? (project.name || project.key) : state.projectKey;
         panel.appendChild(el('h2', null, t('settingsProject', name)));
-        panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
+        if (state.schemaTab !== 'portal') panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
         if (!state.canConfigure && !state.canGrant && !state.canObjects) {
             panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
             return panel;
@@ -7246,6 +9328,7 @@
         if (state.canConfigure) {
             sections.push(['statuses', t('statusSection'), (state.statuses || []).length]);
             sections.push(['types', t('typesSection'), state.types.length]);
+            sections.push(['card', t('cardSection'), null]);
             sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
         }
         if (state.canGrant) {
@@ -7279,10 +9362,13 @@
             tabs.appendChild(tab);
         });
         panel.appendChild(tabs);
+        if (state.schemaTab === 'portal') panel.classList.add('is-portal');
         if (state.schemaTab === 'types') {
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
+        } else if (state.schemaTab === 'card') {
+            renderCardSettings(panel);
         } else if (state.schemaTab === 'exchange') {
             renderExchangeSettings(panel);
         } else if (state.schemaTab === 'portal') {
@@ -7425,13 +9511,531 @@
         return names.join(' / ');
     }
 
+    function cloneFlow(graph) {
+        var copy = { nodes: [], links: [] };
+        ((graph && graph.nodes) || []).forEach(function (node) {
+            copy.nodes.push({
+                id: node.id,
+                kind: node.kind,
+                x: node.x || 0,
+                y: node.y || 0,
+                issueTypeId: node.issueTypeId || '',
+                issueTypeName: node.issueTypeName || '',
+                issueStatusId: node.issueStatusId || '',
+                issueStatusName: node.issueStatusName || '',
+                statusKey: node.statusKey || ''
+            });
+        });
+        ((graph && graph.links) || []).forEach(function (link) {
+            copy.links.push({ from: link.from, to: link.to });
+        });
+        return copy;
+    }
+
+    function cloneBook(book) {
+        var copy = { processes: [] };
+        ((book && book.processes) || []).forEach(function (process) {
+            var graph = cloneFlow(process);
+            copy.processes.push({
+                id: process.id,
+                name: process.name || '',
+                nodes: graph.nodes,
+                links: graph.links
+            });
+        });
+        return copy;
+    }
+
+    function flowNodeId(draft) {
+        var alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        var taken = {};
+        (draft.nodes || []).forEach(function (node) { taken[node.id] = true; });
+        var id = '';
+        var guard = 0;
+        do {
+            id = '';
+            for (var i = 0; i < 8; i++) id += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
+            guard++;
+        } while (taken[id] && guard < 20);
+        return id;
+    }
+
+    function flowFreshId(book) {
+        var nodes = [];
+        ((book && book.processes) || []).forEach(function (process) {
+            nodes.push({ id: process.id });
+            (process.nodes || []).forEach(function (node) { nodes.push(node); });
+        });
+        return flowNodeId({ nodes: nodes });
+    }
+
+    function selectedProcess(book) {
+        var found = null;
+        ((book && book.processes) || []).forEach(function (process) {
+            if (process.id === state.flowProcessId) found = process;
+        });
+        if (!found && book && book.processes && book.processes.length) found = book.processes[0];
+        if (found) state.flowProcessId = found.id;
+        return found;
+    }
+
+    function saveFlowBook(errorNode, done) {
+        var book = state.flowDraft || { processes: [] };
+        var body = {
+            processes: (book.processes || []).map(function (process) {
+                return {
+                    id: process.id,
+                    name: process.name || '',
+                    nodes: process.nodes || [],
+                    links: process.links || []
+                };
+            })
+        };
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/flow-graph', body, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                state.flowBook = payload || { processes: [] };
+                state.flowDraft = cloneBook(state.flowBook);
+                selectedProcess(state.flowDraft);
+                state.flowRules = null;
+                if (done) done();
+                else renderFrame();
+            } else if (errorNode) {
+                errorNode.hidden = false;
+                errorNode.textContent = (payload && payload.message) || t('errorTitle');
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function renderFlowSettings(host) {
+        var block = el('div', 'asset-tree-flow-column');
+        block.appendChild(el('h3', 'asset-tree-settings-title', t('flowSection')));
+        if (!state.flowReady || state.issueTypes === null || state.issueStatuses === null) {
+            block.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            host.appendChild(block);
+            if (state.flowLoading) return;
+            state.flowLoading = true;
+            var projectKey = state.projectKey;
+            var pending = 3;
+            function finish() {
+                pending--;
+                if (pending > 0) return;
+                if (state.projectKey !== projectKey) return;
+                state.flowReady = true;
+                state.flowLoading = false;
+                if (!state.flowDraft) state.flowDraft = cloneBook(state.flowBook);
+                if (state.view === 'settings' && state.schemaTab === 'portal') renderFrame();
+            }
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flow-graph', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                if (status === 200) state.flowBook = payload || { processes: [] };
+                else {
+                    state.flowBook = { processes: [] };
+                    notify((payload && payload.message) || t('errorTitle'));
+                }
+                state.flowDraft = cloneBook(state.flowBook);
+                finish();
+            });
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/issue-types', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                state.issueTypes = status === 200 ? (payload || []) : [];
+                finish();
+            });
+            ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/issue-statuses', null, function (status, payload) {
+                if (state.projectKey !== projectKey) return;
+                state.issueStatuses = status === 200 ? (payload || []) : [];
+                finish();
+            });
+            return;
+        }
+        var book = state.flowDraft || cloneBook(state.flowBook);
+        state.flowDraft = book;
+        var process = selectedProcess(book);
+        var menu = el('div', 'asset-tree-flow-menu');
+        var picker = null;
+        if ((book.processes || []).length) {
+            var pick = el('label', 'asset-tree-jira-field');
+            pick.appendChild(el('span', null, t('flowSection')));
+            picker = el('select', 'asset-tree-text');
+            picker.setAttribute('aria-label', t('flowSection'));
+            (book.processes || []).forEach(function (item) {
+                var option = el('option', null, item.name || t('flowProcessDefault'));
+                option.value = item.id;
+                if (process && item.id === process.id) option.selected = true;
+                picker.appendChild(option);
+            });
+            picker.addEventListener('change', function () {
+                state.flowProcessId = picker.value;
+                renderFrame();
+            });
+            pick.appendChild(picker);
+            menu.appendChild(pick);
+        }
+        var menuActions = el('div', 'asset-tree-flow-menu-actions');
+        menuActions.appendChild(button(t('flowProcessNew'), 'asset-tree-btn', function () {
+            var created = {
+                id: flowFreshId(book),
+                name: t('flowProcessDefault') + (book.processes.length ? ' ' + (book.processes.length + 1) : ''),
+                nodes: [],
+                links: []
+            };
+            book.processes.push(created);
+            state.flowProcessId = created.id;
+            saveFlowBook(null);
+        }));
+        if (process) {
+            menuActions.appendChild(button(t('flowProcessDelete'), 'asset-tree-btn', function () {
+                if (!window.confirm(t('flowProcessDeleteConfirm'))) return;
+                book.processes = (book.processes || []).filter(function (item) { return item.id !== process.id; });
+                state.flowProcessId = book.processes.length ? book.processes[0].id : '';
+                saveFlowBook(null);
+            }));
+        }
+        if (!process) {
+            menu.appendChild(menuActions);
+            block.appendChild(menu);
+            block.appendChild(el('p', 'asset-tree-flow-empty is-static', t('flowProcessEmpty')));
+            host.appendChild(block);
+            return;
+        }
+        var name = input('', process.name || '');
+        name.className = 'asset-tree-text';
+        name.placeholder = t('flowProcessDefault');
+        name.setAttribute('aria-label', t('flowProcessName'));
+        name.addEventListener('input', function () {
+            process.name = name.value.replace(/^\s+|\s+$/g, '');
+            if (picker && picker.selectedIndex >= 0) {
+                picker.options[picker.selectedIndex].textContent = process.name || t('flowProcessDefault');
+            }
+        });
+        var nameRow = el('label', 'asset-tree-jira-field asset-tree-flow-name');
+        nameRow.appendChild(el('span', null, t('flowProcessName')));
+        nameRow.appendChild(name);
+        menu.appendChild(nameRow);
+        menu.appendChild(menuActions);
+        block.appendChild(menu);
+        var tools = el('div', 'asset-tree-flow-tools');
+        function addTool(label, kind) {
+            var tool = button(label, 'asset-tree-btn asset-tree-flow-add', function () {
+                addFlowNode(process, kind);
+                paintFlow(canvas, process, error);
+            });
+            tool.insertBefore(el('span', 'asset-tree-flow-dot is-' + kind), tool.firstChild);
+            tools.appendChild(tool);
+        }
+        addTool(t('flowAddRequest'), 'request');
+        addTool(t('flowAddIssue'), 'issue');
+        addTool(t('flowAddStatus'), 'status');
+        tools.appendChild(el('span', 'asset-tree-hint asset-tree-flow-connect', t('flowConnect')));
+        block.appendChild(tools);
+        var error = el('div', 'asset-tree-form-error');
+        error.hidden = true;
+        var board = el('div', 'asset-tree-flow-board');
+        var canvas = el('div', 'asset-tree-flow-canvas');
+        board.appendChild(canvas);
+        block.appendChild(error);
+        block.appendChild(board);
+        paintFlow(canvas, process, error);
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+            error.hidden = true;
+            saveFlowBook(error);
+        }));
+        block.appendChild(actions);
+        host.appendChild(block);
+    }
+
+    function addFlowNode(draft, kind) {
+        var count = 0;
+        (draft.nodes || []).forEach(function (node) {
+            if (node.kind === kind) count++;
+        });
+        var x = 40;
+        if (kind === 'issue') x = 340;
+        if (kind === 'status') x = 640;
+        draft.nodes.push({
+            id: flowNodeId(draft),
+            kind: kind,
+            x: x,
+            y: 48 + count * 168,
+            issueTypeId: '',
+            issueTypeName: '',
+            issueStatusId: '',
+            issueStatusName: '',
+            statusKey: ''
+        });
+    }
+
+    function flowAccepts(source, target) {
+        if (!source || !target || source.id === target.id) return false;
+        if (source.kind === 'request') return target.kind === 'issue' || target.kind === 'status';
+        if (source.kind === 'issue') return target.kind === 'status';
+        return false;
+    }
+
+    function flowExtent(canvas, draft) {
+        var width = canvas.parentNode && canvas.parentNode.clientWidth > 200 ? canvas.parentNode.clientWidth : 640;
+        var height = canvas.parentNode && canvas.parentNode.clientHeight > 160 ? canvas.parentNode.clientHeight : 240;
+        (draft.nodes || []).forEach(function (node) {
+            width = Math.max(width, (node.x || 0) + 320);
+            height = Math.max(height, (node.y || 0) + 150);
+        });
+        var room = canvas.parentNode ? canvas.parentNode.clientHeight : 0;
+        if (room > 160 && height - room < 28) height = room;
+        return { width: width, height: height };
+    }
+
+    function paintFlow(canvas, draft, error) {
+        while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+        var extent = flowExtent(canvas, draft);
+        var width = extent.width;
+        var height = extent.height;
+        canvas.style.width = width + 'px';
+        canvas.style.height = height + 'px';
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'asset-tree-flow-wires');
+        canvas.appendChild(svg);
+        if (!(draft.nodes || []).length) {
+            canvas.appendChild(el('p', 'asset-tree-flow-empty', t('flowEmpty')));
+        }
+        function nodeById(id) {
+            var found = null;
+            (draft.nodes || []).forEach(function (node) {
+                if (node.id === id) found = node;
+            });
+            return found;
+        }
+        function portPoint(id, side) {
+            var node = nodeById(id);
+            var card = canvas.querySelector('[data-flow-id="' + id + '"]');
+            var x = node ? (node.x || 0) : 0;
+            var y = node ? (node.y || 0) : 0;
+            var width = 256;
+            var height = 120;
+            if (card && card.offsetWidth) {
+                x = card.offsetLeft;
+                y = card.offsetTop;
+                width = card.offsetWidth;
+                height = card.offsetHeight;
+            }
+            return {
+                x: x + (side === 'out' ? width : 0),
+                y: y + Math.round(height / 2)
+            };
+        }
+        function curve(from, to) {
+            var pull = Math.max(48, Math.abs(to.x - from.x) / 2);
+            return 'M ' + from.x + ' ' + from.y + ' C ' + (from.x + pull) + ' ' + from.y + ', ' + (to.x - pull) + ' ' + to.y + ', ' + to.x + ' ' + to.y;
+        }
+        function drawWires(extra) {
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+            var marks = [];
+            (draft.links || []).forEach(function (link) {
+                if (!nodeById(link.from) || !nodeById(link.to)) return;
+                var from = portPoint(link.from, 'out');
+                var to = portPoint(link.to, 'in');
+                var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', curve(from, to));
+                svg.appendChild(path);
+                marks.push({ link: link, x: Math.round((from.x + to.x) / 2), y: Math.round((from.y + to.y) / 2) });
+            });
+            if (extra) {
+                var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('class', 'is-draft');
+                path.setAttribute('d', curve(extra.from, extra.to));
+                svg.appendChild(path);
+            }
+            var old = canvas.querySelectorAll('.asset-tree-flow-cut');
+            for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+            marks.forEach(function (mark) {
+                var cut = button('×', 'asset-tree-flow-cut', function () {
+                    draft.links = (draft.links || []).filter(function (link) {
+                        return !(link.from === mark.link.from && link.to === mark.link.to);
+                    });
+                    paintFlow(canvas, draft, error);
+                });
+                cut.style.left = mark.x + 'px';
+                cut.style.top = (mark.y - 16) + 'px';
+                cut.title = t('flowLinkRemove');
+                cut.setAttribute('aria-label', t('flowLinkRemove'));
+                canvas.appendChild(cut);
+            });
+        }
+        (draft.nodes || []).forEach(function (node) {
+            var card = el('article', 'asset-tree-flow-node is-' + node.kind);
+            card.setAttribute('data-flow-id', node.id);
+            card.style.left = (node.x || 0) + 'px';
+            card.style.top = (node.y || 0) + 'px';
+            var title = t('flowNodeRequest');
+            if (node.kind === 'issue') title = t('flowNodeIssue');
+            if (node.kind === 'status') title = t('flowNodeStatus');
+            var head = el('div', 'asset-tree-flow-head');
+            head.appendChild(el('strong', null, title));
+            var remove = button('×', 'asset-tree-flow-remove', function () {
+                draft.nodes = (draft.nodes || []).filter(function (item) { return item.id !== node.id; });
+                draft.links = (draft.links || []).filter(function (link) {
+                    return link.from !== node.id && link.to !== node.id;
+                });
+                paintFlow(canvas, draft, error);
+            });
+            remove.title = t('flowRemoveNode');
+            remove.setAttribute('aria-label', t('flowRemoveNode'));
+            head.appendChild(remove);
+            card.appendChild(head);
+            var body = el('div', 'asset-tree-flow-body');
+            var select = el('select', 'asset-tree-text');
+            var empty = el('option', null, '—');
+            empty.value = '';
+            select.appendChild(empty);
+            var labelText = t('flowIssueType');
+            if (node.kind === 'status') {
+                labelText = t('flowNodeStatus');
+                select.setAttribute('aria-label', labelText);
+                statusChoices().forEach(function (item) {
+                    var option = el('option', null, item.label);
+                    option.value = item.value;
+                    if (item.value === node.statusKey) option.selected = true;
+                    select.appendChild(option);
+                });
+                select.value = node.statusKey || '';
+                select.addEventListener('change', function () { node.statusKey = select.value; });
+            } else if (node.kind === 'issue') {
+                labelText = t('flowIssueStatus');
+                select.setAttribute('aria-label', labelText);
+                var knownStatus = false;
+                (state.issueStatuses || []).forEach(function (item) {
+                    var option = el('option', null, item.name || item.id);
+                    option.value = item.id;
+                    if (item.id === node.issueStatusId) {
+                        option.selected = true;
+                        knownStatus = true;
+                    }
+                    select.appendChild(option);
+                });
+                if (node.issueStatusId && !knownStatus) {
+                    var missingStatus = el('option', null, node.issueStatusName || node.issueStatusId);
+                    missingStatus.value = node.issueStatusId;
+                    missingStatus.selected = true;
+                    select.appendChild(missingStatus);
+                }
+                select.value = node.issueStatusId || '';
+                select.addEventListener('change', function () { node.issueStatusId = select.value; });
+            } else {
+                select.setAttribute('aria-label', labelText);
+                var known = false;
+                (state.issueTypes || []).forEach(function (item) {
+                    var option = el('option', null, item.name || item.id);
+                    option.value = item.id;
+                    if (item.id === node.issueTypeId) {
+                        option.selected = true;
+                        known = true;
+                    }
+                    select.appendChild(option);
+                });
+                if (node.issueTypeId && !known) {
+                    var missing = el('option', null, node.issueTypeName || node.issueTypeId);
+                    missing.value = node.issueTypeId;
+                    missing.selected = true;
+                    select.appendChild(missing);
+                }
+                select.value = node.issueTypeId || '';
+                select.addEventListener('change', function () { node.issueTypeId = select.value; });
+            }
+            body.appendChild(el('label', 'asset-tree-flow-label', labelText));
+            body.appendChild(select);
+            card.appendChild(body);
+            function attachPort(side) {
+                var port = el('button', 'asset-tree-flow-port is-' + side);
+                port.type = 'button';
+                port.title = t('flowConnect');
+                port.addEventListener('pointerdown', function (event) {
+                    if (side !== 'out') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    var origin = portPoint(node.id, 'out');
+                    function move(ev) {
+                        var rect = canvas.getBoundingClientRect();
+                        drawWires({
+                            from: origin,
+                            to: {
+                                x: ev.clientX - rect.left + canvas.parentNode.scrollLeft,
+                                y: ev.clientY - rect.top + canvas.parentNode.scrollTop
+                            }
+                        });
+                    }
+                    function up(ev) {
+                        window.removeEventListener('pointermove', move);
+                        window.removeEventListener('pointerup', up);
+                        var hit = document.elementFromPoint(ev.clientX, ev.clientY);
+                        var input = null;
+                        while (hit && hit !== canvas) {
+                            if (hit.className && String(hit.className).indexOf('is-in') >= 0) input = hit;
+                            hit = hit.parentNode;
+                        }
+                        var target = input ? input.parentNode : null;
+                        var targetId = target ? target.getAttribute('data-flow-id') : '';
+                        var targetNode = nodeById(targetId);
+                        if (flowAccepts(node, targetNode)) {
+                            var exists = false;
+                            (draft.links || []).forEach(function (link) {
+                                if (link.from === node.id && link.to === targetNode.id) exists = true;
+                            });
+                            if (!exists) draft.links.push({ from: node.id, to: targetNode.id });
+                        }
+                        paintFlow(canvas, draft, error);
+                    }
+                    window.addEventListener('pointermove', move);
+                    window.addEventListener('pointerup', up);
+                });
+                card.appendChild(port);
+            }
+            if (node.kind === 'issue' || node.kind === 'status') attachPort('in');
+            if (node.kind === 'request' || node.kind === 'issue') attachPort('out');
+            head.addEventListener('pointerdown', function (event) {
+                if (event.button !== 0 || (event.target && event.target.tagName === 'BUTTON')) return;
+                event.preventDefault();
+                var startX = event.clientX;
+                var startY = event.clientY;
+                var originX = node.x || 0;
+                var originY = node.y || 0;
+                function move(ev) {
+                    node.x = Math.max(0, Math.min(2400, originX + ev.clientX - startX));
+                    node.y = Math.max(0, Math.min(2400, originY + ev.clientY - startY));
+                    card.style.left = node.x + 'px';
+                    card.style.top = node.y + 'px';
+                    var extent = flowExtent(canvas, draft);
+                    canvas.style.width = extent.width + 'px';
+                    canvas.style.height = extent.height + 'px';
+                    drawWires();
+                }
+                function up() {
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
+                }
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', up);
+            });
+            canvas.appendChild(card);
+        });
+        drawWires();
+    }
+
+    function emptyPortalDraft() {
+        return { id: null, assetId: '', conditions: [{ field: '', option: '' }] };
+    }
+
     function renderPortalSettings(panel) {
-        var block = el('div', 'asset-tree-settings-block');
-        block.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
+        panel.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
+        var layout = el('div', 'asset-tree-settings-block asset-tree-portal-layout');
+        var fields = el('div', 'asset-tree-portal-fields');
+        fields.appendChild(el('h3', 'asset-tree-settings-title', t('portalFieldsTitle')));
+        fields.appendChild(el('p', 'asset-tree-hint', t('portalFieldsHint')));
         if (state.portalRules === null) {
             state.portalRules = [];
-            block.appendChild(el('p', 'asset-tree-hint', t('loading')));
-            panel.appendChild(block);
+            fields.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            layout.appendChild(fields);
+            panel.appendChild(layout);
             var projectKey = state.projectKey;
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/portal-rules', null, function (status, payload) {
                 if (state.view !== 'settings' || state.projectKey !== projectKey) return;
@@ -7442,6 +10046,7 @@
                 }
                 if (state.schemaTab === 'portal') renderFrame();
             });
+            renderFlowSettings(layout);
             return;
         }
         var list = el('div', 'asset-tree-portal-list');
@@ -7449,15 +10054,31 @@
             list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
         }
         state.portalRules.forEach(function (rule) {
-            var row = el('div', 'asset-tree-portal-rule');
-            var text = (rule.conditions || []).map(function (condition) {
-                return (condition.field || '') + ' = ' + (condition.option || '');
-            }).join('  ·  ');
-            row.appendChild(el('span', 'asset-tree-portal-when', text));
-            row.appendChild(el('span', 'asset-tree-portal-target', rule.assetPath || rule.assetName || ''));
-            row.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
+            var card = el('div', 'asset-tree-portal-rule');
+            var when = el('div', 'asset-tree-portal-when');
+            (rule.conditions || []).forEach(function (condition, index) {
+                var line = el('p', null, (index ? t('portalAddCondition') + ' ' : t('portalIf') + ' ')
+                    + (condition.field || '') + ' ' + t('portalEquals') + ' ' + (condition.option || ''));
+                when.appendChild(line);
+            });
+            card.appendChild(when);
+            card.appendChild(el('p', 'asset-tree-portal-target', t('portalThen') + ' ' + (rule.assetPath || rule.assetName || '')));
+            var actions = el('div', 'asset-tree-portal-rule-actions');
+            actions.appendChild(button(t('portalEditRule'), 'asset-tree-btn', function () {
+                state.portalDraft = {
+                    id: rule.id,
+                    assetId: String(rule.assetId || ''),
+                    conditions: (rule.conditions || []).map(function (condition) {
+                        return { field: condition.field || '', option: condition.option || '' };
+                    })
+                };
+                if (!state.portalDraft.conditions.length) state.portalDraft.conditions = [{ field: '', option: '' }];
+                renderFrame();
+            }));
+            actions.appendChild(button(t('deleteType'), 'asset-tree-btn', function () {
                 ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules/' + rule.id, null, function (status, payload) {
                     if (status >= 200 && status < 300) {
+                        if (state.portalDraft && state.portalDraft.id === rule.id) state.portalDraft = emptyPortalDraft();
                         state.portalRules = null;
                         renderFrame();
                     } else {
@@ -7465,30 +10086,38 @@
                     }
                 });
             }));
-            list.appendChild(row);
+            card.appendChild(actions);
+            list.appendChild(card);
         });
-        block.appendChild(list);
+        fields.appendChild(list);
 
-        var conditions = [{ field: '', option: '' }];
+        if (!state.portalDraft) state.portalDraft = emptyPortalDraft();
+        var draft = state.portalDraft;
+        var editing = !!draft.id;
         var conditionBox = el('div', 'asset-tree-portal-conditions');
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
 
         function paintConditions() {
             conditionBox.innerHTML = '';
-            conditions.forEach(function (condition, index) {
+            draft.conditions.forEach(function (condition, index) {
                 var line = el('div', 'asset-tree-portal-condition');
                 var fieldInput = input('', condition.field, false);
+                fieldInput.className = 'asset-tree-text';
                 fieldInput.placeholder = t('portalField');
+                fieldInput.setAttribute('aria-label', t('portalField'));
                 fieldInput.addEventListener('input', function () { condition.field = fieldInput.value; });
                 var optionInput = input('', condition.option, false);
+                optionInput.className = 'asset-tree-text';
                 optionInput.placeholder = t('portalOption');
+                optionInput.setAttribute('aria-label', t('portalOption'));
                 optionInput.addEventListener('input', function () { condition.option = optionInput.value; });
                 line.appendChild(fieldInput);
+                line.appendChild(el('span', 'asset-tree-portal-equals', t('portalEquals')));
                 line.appendChild(optionInput);
-                if (conditions.length > 1) {
+                if (draft.conditions.length > 1) {
                     line.appendChild(button('×', 'asset-tree-btn', function () {
-                        conditions.splice(index, 1);
+                        draft.conditions.splice(index, 1);
                         paintConditions();
                     }));
                 }
@@ -7497,7 +10126,8 @@
         }
         paintConditions();
 
-        var target = el('select');
+        var target = el('select', 'asset-tree-text');
+        target.setAttribute('aria-label', t('portalThen'));
         var emptyOption = el('option', null, '—');
         emptyOption.value = '';
         target.appendChild(emptyOption);
@@ -7508,19 +10138,23 @@
             option.value = String(asset.id);
             target.appendChild(option);
         });
+        target.value = draft.assetId || '';
+        target.addEventListener('change', function () { draft.assetId = target.value; });
 
         var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
         form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
-            if (conditions.length >= 6) return;
-            conditions.push({ field: '', option: '' });
+            if (draft.conditions.length >= 6) return;
+            draft.conditions.push({ field: '', option: '' });
             paintConditions();
         }));
-        form.appendChild(field(t('portalTarget'), target, true));
+        form.appendChild(el('p', 'asset-tree-portal-lead', t('portalThen')));
+        form.appendChild(target);
         form.appendChild(error);
-        form.appendChild(button(t('portalAddRule'), 'asset-tree-btn primary', function () {
+        var submit = button(editing ? t('portalSaveRule') : t('portalAddRule'), 'asset-tree-btn primary', function () {
             var cleaned = [];
-            conditions.forEach(function (condition) {
+            draft.conditions.forEach(function (condition) {
                 var fieldName = condition.field.replace(/^\s+|\s+$/g, '');
                 var optionName = condition.option.replace(/^\s+|\s+$/g, '');
                 if (fieldName && optionName) cleaned.push({ field: fieldName, option: optionName });
@@ -7530,11 +10164,13 @@
                 error.textContent = t('portalConditionRequired');
                 return;
             }
-            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules', {
-                assetId: parseInt(target.value, 10),
-                conditions: cleaned
-            }, function (status, payload) {
+            var body = { assetId: parseInt(target.value, 10), conditions: cleaned };
+            var editingId = draft.id;
+            var method = editingId ? 'PUT' : 'POST';
+            var path = '/projects/' + encodeURIComponent(state.projectKey) + '/portal-rules' + (editingId ? '/' + editingId : '');
+            ajax(method, path, body, function (status, payload) {
                 if (status >= 200 && status < 300) {
+                    state.portalDraft = emptyPortalDraft();
                     state.portalRules = null;
                     renderFrame();
                 } else {
@@ -7542,10 +10178,21 @@
                     error.textContent = (payload && payload.message) || t('errorTitle');
                 }
             });
-        }));
+        });
+        var formActions = el('div', 'asset-tree-inline-actions');
+        formActions.appendChild(submit);
+        if (editing) {
+            formActions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+                state.portalDraft = emptyPortalDraft();
+                renderFrame();
+            }));
+        }
+        form.appendChild(formActions);
         form.addEventListener('submit', function (event) { event.preventDefault(); });
-        block.appendChild(form);
-        panel.appendChild(block);
+        fields.appendChild(form);
+        layout.appendChild(fields);
+        panel.appendChild(layout);
+        renderFlowSettings(layout);
     }
 
     function renderStatusSettings(panel) {

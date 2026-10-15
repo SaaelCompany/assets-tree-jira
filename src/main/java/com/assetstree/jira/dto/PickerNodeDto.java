@@ -11,6 +11,7 @@ public class PickerNodeDto {
     private String objectKey;
     private String typeLabel;
     private String status;
+    private boolean group;
 
     public int getId() {
         return id;
@@ -58,5 +59,13 @@ public class PickerNodeDto {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public boolean getGroup() {
+        return group;
+    }
+
+    public void setGroup(boolean group) {
+        this.group = group;
     }
 }

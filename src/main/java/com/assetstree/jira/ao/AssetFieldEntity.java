@@ -45,6 +45,10 @@ public interface AssetFieldEntity extends Entity {
 
     void setRequired(boolean required);
 
+    boolean isIssueHidden();
+
+    void setIssueHidden(boolean issueHidden);
+
     int getPosition();
 
     void setPosition(int position);

@@ -1,5 +1,7 @@
 package com.assetstree.jira.dto;
 
+import com.assetstree.jira.model.CardLayout;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 
@@ -20,6 +22,8 @@ public class ProjectDto {
     private boolean canTypes;
     private boolean canAssets;
     private boolean canAdmin;
+    private boolean canArrange;
+    private CardLayout card;
 
     public String getKey() {
         return key;
@@ -139,5 +143,21 @@ public class ProjectDto {
 
     public void setCanAdmin(boolean canAdmin) {
         this.canAdmin = canAdmin;
+    }
+
+    public boolean isCanArrange() {
+        return canArrange;
+    }
+
+    public void setCanArrange(boolean canArrange) {
+        this.canArrange = canArrange;
+    }
+
+    public CardLayout getCard() {
+        return card;
+    }
+
+    public void setCard(CardLayout card) {
+        this.card = card;
     }
 }
