@@ -48,12 +48,14 @@ import com.assetstree.jira.ao.AssetIssueLinkEntity;
 import com.assetstree.jira.ao.InventoryMarkEntity;
 import com.assetstree.jira.ao.PortalRuleConditionEntity;
 import com.assetstree.jira.ao.PortalRuleEntity;
+import com.assetstree.jira.ao.ProjectAssetKeyEntity;
 import com.assetstree.jira.ao.ProjectGrantEntity;
 import com.assetstree.jira.ao.ProjectStatusEntity;
 import com.assetstree.jira.ao.ServicePlanEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.AttributeDto;
@@ -114,6 +116,7 @@ import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.AssetKeyRules;
 import com.assetstree.jira.model.ObjectKeys;
 import com.assetstree.jira.model.PlaceHistory;
 import com.assetstree.jira.model.PortalConditionDraft;
@@ -323,6 +326,7 @@ public class AssetServiceImpl implements AssetService {
         meta.setCanConfigure(configurable);
         meta.setCanGrant(grantable);
         attachCards(projects);
+        attachAssetKeys(projects);
         meta.setProjects(projects);
         return meta;
     }
@@ -397,6 +401,9 @@ public class AssetServiceImpl implements AssetService {
         AssetTypeEntity previewType = findType(draft.getTypeKey());
         String createCap = previewType != null && previewType.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
         Project project = requireProjectCap(user, draft.getProjectKey(), createCap);
+        if (storedAssetPrefix(project.getKey()).isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
@@ -1561,6 +1568,9 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final ImportDraft draft) {
         final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        if (storedAssetPrefix(project.getKey()).isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
         final EquipmentSheet.Sheet sheet = equipmentSheet(draft);
         return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
             @Override
@@ -2061,6 +2071,90 @@ public class AssetServiceImpl implements AssetService {
                 return layout;
             }
         });
+    }
+
+    @Override
+    public AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft) {
+        final Project project = requireArrangeProject(user, projectKey);
+        final String prefix = AssetKeyRules.normalize(draft == null ? "" : draft.getAssetKey());
+        String error = AssetKeyRules.invalid(prefix);
+        if (error != null) {
+            throw new AssetException(400, error);
+        }
+        Collection<Project> known = projectManager().getProjects();
+        if (known != null) {
+            for (Project item : known) {
+                if (item != null && item.getKey() != null && prefix.equalsIgnoreCase(item.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.assetKey.project");
+                }
+            }
+        }
+        return ao().executeInTransaction(new TransactionCallback<AssetKeyDto>() {
+            @Override
+            public AssetKeyDto doInTransaction() {
+                ProjectAssetKeyEntity[] rows = ao().find(ProjectAssetKeyEntity.class);
+                ProjectAssetKeyEntity current = null;
+                if (rows != null) {
+                    for (ProjectAssetKeyEntity row : rows) {
+                        if (row.getAssetPrefix() != null && prefix.equalsIgnoreCase(row.getAssetPrefix())
+                                && !ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                            throw new AssetException(400, "asset-tree.error.assetKey.taken");
+                        }
+                        if (current == null && ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                            current = row;
+                        }
+                    }
+                }
+                AssetEntity[] existing = ao().find(AssetEntity.class, Query.select().where("OBJECT_KEY LIKE ?", prefix + "-%"));
+                if (existing != null) {
+                    for (AssetEntity asset : existing) {
+                        if (ObjectKeys.suffix(prefix, asset.getObjectKey()) <= 0) {
+                            continue;
+                        }
+                        if (!ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                            throw new AssetException(400, "asset-tree.error.assetKey.taken");
+                        }
+                    }
+                }
+                if (current != null) {
+                    throw new AssetException(400, "asset-tree.error.assetKey.locked");
+                }
+                ao().create(ProjectAssetKeyEntity.class,
+                        new DBParam("PROJECT_KEY", project.getKey()),
+                        new DBParam("ASSET_PREFIX", prefix));
+                AssetKeyDto saved = new AssetKeyDto();
+                saved.setAssetKey(prefix);
+                return saved;
+            }
+        });
+    }
+
+    private void attachAssetKeys(List<ProjectDto> projects) {
+        Map<String, String> stored = new HashMap<String, String>();
+        try {
+            List<ProjectAssetKeyEntity> rows = ao().executeInTransaction(new TransactionCallback<List<ProjectAssetKeyEntity>>() {
+                @Override
+                public List<ProjectAssetKeyEntity> doInTransaction() {
+                    ProjectAssetKeyEntity[] found = ao().find(ProjectAssetKeyEntity.class);
+                    List<ProjectAssetKeyEntity> list = new ArrayList<ProjectAssetKeyEntity>();
+                    if (found != null) {
+                        Collections.addAll(list, found);
+                    }
+                    return list;
+                }
+            });
+            for (ProjectAssetKeyEntity row : rows) {
+                if (row.getProjectKey() != null && row.getAssetPrefix() != null) {
+                    stored.put(row.getProjectKey(), row.getAssetPrefix());
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Asset keys were not loaded", ex);
+        }
+        for (ProjectDto project : projects) {
+            String prefix = stored.get(project.getKey());
+            project.setAssetKey(prefix == null ? "" : prefix);
+        }
     }
 
     private void attachCards(List<ProjectDto> projects) {
@@ -3303,7 +3397,10 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private String nextKey(String projectKey) {
-        String prefix = ObjectKeys.prefix(projectKey);
+        String prefix = storedAssetPrefix(projectKey);
+        if (prefix.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
         Object created = new Object();
         Object raced = KEY_LOCKS.putIfAbsent(prefix, created);
         Object lock = raced == null ? created : raced;
@@ -3320,6 +3417,17 @@ public class AssetServiceImpl implements AssetService {
             }
         }
         throw new AssetException(500, "asset-tree.error.unexpected");
+    }
+
+    private String storedAssetPrefix(String projectKey) {
+        if (projectKey == null || projectKey.isEmpty()) {
+            return "";
+        }
+        ProjectAssetKeyEntity[] rows = ao().find(ProjectAssetKeyEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (rows == null || rows.length == 0 || rows[0].getAssetPrefix() == null) {
+            return "";
+        }
+        return rows[0].getAssetPrefix();
     }
 
     private AssetCounterEntity counterFor(String prefix) {
@@ -3501,6 +3609,24 @@ public class AssetServiceImpl implements AssetService {
         }
         if (!canSee(user, project)) {
             throw new AssetException(403, "asset-tree.error.project.forbidden");
+        }
+        return project;
+    }
+
+    private Project requireArrangeProject(ApplicationUser user, String projectKey) {
+        requireUser(user);
+        if (projectKey == null || projectKey.trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.project.required");
+        }
+        Project project = project(projectKey.trim());
+        if (project == null) {
+            throw new AssetException(404, "asset-tree.error.project.notFound");
+        }
+        if (!canArrangeTypes(user, project)) {
+            if (!canOpen(user, project)) {
+                throw new AssetException(403, "asset-tree.error.project.forbidden");
+            }
+            throw new AssetException(403, "asset-tree.error.forbidden");
         }
         return project;
     }

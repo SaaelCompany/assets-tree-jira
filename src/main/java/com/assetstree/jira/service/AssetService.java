@@ -3,6 +3,7 @@ package com.assetstree.jira.service;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
@@ -154,6 +155,9 @@ public interface AssetService {
     CardLayout cardLayout(ApplicationUser user, String projectKey);
 
     CardLayout saveCardLayout(ApplicationUser user, String projectKey, CardLayout draft);
+
+    /** Stores the prefix used by future object keys. Keys already issued stay unchanged. */
+    AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 

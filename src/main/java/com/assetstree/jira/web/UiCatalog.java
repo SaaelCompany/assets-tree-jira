@@ -589,7 +589,16 @@ public final class UiCatalog {
             "iconPill",
             "iconPulse",
             "iconCode",
-            "iconWindow"
+            "iconWindow",
+            "assetKeyTitle",
+            "assetKeyHint",
+            "assetKeyLabel",
+            "assetKeyPlaceholder",
+            "assetKeyExample",
+            "assetKeySave",
+            "assetKeyDenied",
+            "assetKeySaved",
+            "assetKeyCurrent"
     };
 
     private UiCatalog() {

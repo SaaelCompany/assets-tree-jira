@@ -338,7 +338,8 @@
 }
 
 .asset-tree-frame:has(.asset-tree-message),
-.asset-tree-frame:has(.asset-tree-empty) {
+.asset-tree-frame:has(.asset-tree-empty),
+.asset-tree-frame:has(.asset-tree-key-setup.is-gate) {
     height: auto;
     min-height: 0;
 }
@@ -356,8 +357,39 @@
 
 .asset-tree-frame > .asset-tree-report,
 .asset-tree-frame > .asset-tree-message,
-.asset-tree-frame > .asset-tree-empty {
+.asset-tree-frame > .asset-tree-empty,
+.asset-tree-frame > .asset-tree-key-setup.is-gate {
     grid-column: 1 / -1;
+}
+
+.asset-tree-key-setup {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 560px;
+    padding: 8px 0 16px;
+}
+
+.asset-tree-key-setup.is-gate {
+    margin: 28px;
+    padding: 0;
+}
+
+.asset-tree-key-setup h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.asset-tree-key-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 220px;
+    color: #6b778c;
+    font-size: 12px;
+    font-weight: 600;
 }
 
 .asset-tree-side {

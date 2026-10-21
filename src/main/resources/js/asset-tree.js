@@ -652,6 +652,30 @@
         return null;
     }
 
+    function projectAssetKey(project) {
+        return project && project.assetKey ? String(project.assetKey).trim() : '';
+    }
+
+    function needsAssetKey() {
+        return !!state.projectKey && !projectAssetKey(currentProject());
+    }
+
+    function assetKeyPreview(raw) {
+        var prefix = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        if (prefix.length > 10) prefix = prefix.slice(0, 10);
+        return prefix;
+    }
+
+    function assetKeyExamplePrefix(prefix) {
+        if (!/^[A-Z][A-Z0-9]{1,9}$/.test(prefix)) return '';
+        for (var i = 0; i < state.projects.length; i++) {
+            var project = state.projects[i];
+            if (String(project.key || '').toUpperCase() === prefix) return '';
+            if (project.key !== state.projectKey && String(project.assetKey || '').toUpperCase() === prefix) return '';
+        }
+        return prefix;
+    }
+
     function haystack(asset) {
         var parts = [asset.name || '', asset.objectKey || '', asset.description || '', asset.typeLabel || '', asset.location || ''];
         if (asset.custodian) {
@@ -1771,6 +1795,10 @@
             frame.appendChild(renderSettings());
             var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
             if (portalPanel) fitPortalPanel(portalPanel);
+            return;
+        }
+        if (state.view === 'all' && needsAssetKey()) {
+            frame.appendChild(renderAssetKeyForm(true));
             return;
         }
         frame.appendChild(renderSide());
@@ -6022,6 +6050,10 @@
     }
 
     function openCreate(parentId, kind, typeKey) {
+        if (needsAssetKey()) {
+            notify(state.canArrange ? t('assetKeyHint') : t('assetKeyDenied'));
+            return;
+        }
         if (kind === 'place' && !state.canPlaces) return;
         if (kind === 'object' && !state.canObjects) return;
         if (!kind && !state.canPlaces && !state.canConfigure) return;
@@ -9311,6 +9343,67 @@
         apply();
     }
 
+    function renderAssetKeyForm(gate) {
+        var project = currentProject();
+        var current = projectAssetKey(project);
+        var box = el('section', 'asset-tree-key-setup' + (gate ? ' is-gate' : ''));
+        box.appendChild(el('h2', null, t('assetKeyTitle')));
+        box.appendChild(el('p', 'asset-tree-hint', current ? t('assetKeyCurrent', current) : t('assetKeyHint')));
+        if (!state.canArrange) {
+            box.appendChild(el('p', 'asset-tree-hint', t('assetKeyDenied')));
+            return box;
+        }
+        var field = el('label', 'asset-tree-key-field');
+        field.appendChild(el('span', null, t('assetKeyLabel')));
+        var input = el('input', 'asset-tree-text');
+        input.type = 'text';
+        input.id = 'asset-tree-asset-key';
+        input.maxLength = 10;
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.placeholder = t('assetKeyPlaceholder');
+        input.value = current;
+        input.setAttribute('aria-label', t('assetKeyLabel'));
+        var example = el('p', 'asset-tree-hint', '');
+        example.id = 'asset-tree-key-example';
+        function refreshExample() {
+            var sample = assetKeyExamplePrefix(assetKeyPreview(input.value));
+            example.textContent = sample ? t('assetKeyExample', sample) : '';
+        }
+        input.addEventListener('input', function () {
+            var next = assetKeyPreview(input.value);
+            if (input.value !== next) input.value = next;
+            refreshExample();
+        });
+        refreshExample();
+        field.appendChild(input);
+        box.appendChild(field);
+        box.appendChild(example);
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('assetKeySave'), 'asset-tree-btn primary', function () {
+            saveAssetKey(input.value);
+        }));
+        box.appendChild(actions);
+        return box;
+    }
+
+    function saveAssetKey(raw) {
+        var prefix = assetKeyPreview(raw);
+        setBusy(true);
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/asset-key', { assetKey: prefix }, function (status, payload) {
+            setBusy(false);
+            if (status < 200 || status >= 300) {
+                notify((payload && payload.message) || t('errorTitle'));
+                return;
+            }
+            var project = currentProject();
+            var saved = (payload && payload.assetKey) || prefix;
+            if (project) project.assetKey = saved;
+            notify(t('assetKeySaved', saved));
+            renderFrame();
+        });
+    }
+
     function renderSettings() {
         var panel = el('section', 'asset-tree-report');
         var project = currentProject();
@@ -9411,6 +9504,10 @@
             }, 60000);
         }));
         actions.appendChild(button(t('exchangeImport'), 'asset-tree-btn primary', function () {
+            if (needsAssetKey()) {
+                notify(state.canArrange ? t('assetKeyHint') : t('assetKeyDenied'));
+                return;
+            }
             var chosen = file.files && file.files[0];
             if (!chosen) {
                 notify(t('exchangePick'));

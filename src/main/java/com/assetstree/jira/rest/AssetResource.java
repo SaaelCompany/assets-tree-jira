@@ -4,6 +4,7 @@ import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
+import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CardLayout;
@@ -573,6 +574,17 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.saveCardLayout(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/asset-key")
+    public Response saveAssetKey(@PathParam("projectKey") final String projectKey, final AssetKeyDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveAssetKey(user(), projectKey, draft)).build();
             }
         });
     }

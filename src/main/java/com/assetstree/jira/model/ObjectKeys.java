@@ -1,8 +1,8 @@
 package com.assetstree.jira.model;
 
 /**
- * Object keys are scoped to a project, the same way issue keys are.
- * STP-1 and IT-1 are different assets. Already issued AST- keys stay as they are.
+ * Object keys already issued stay as they are.
+ * New keys use the asset prefix stored for the project, not the Jira project key.
  */
 public final class ObjectKeys {
     private ObjectKeys() {

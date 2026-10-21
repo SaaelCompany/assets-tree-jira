@@ -11,7 +11,7 @@ public interface AssetCounterEntity extends Entity {
 
     void setNextValue(int nextValue);
 
-    /** Project key this sequence belongs to. Empty on the old shared AST- counter. */
+    /** Asset prefix this sequence belongs to. Empty on the old shared AST- counter. */
     @Indexed
     @StringLength(80)
     String getProjectKey();

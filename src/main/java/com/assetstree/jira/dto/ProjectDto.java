@@ -23,6 +23,7 @@ public class ProjectDto {
     private boolean canAssets;
     private boolean canAdmin;
     private boolean canArrange;
+    private String assetKey;
     private CardLayout card;
 
     public String getKey() {
@@ -151,6 +152,14 @@ public class ProjectDto {
 
     public void setCanArrange(boolean canArrange) {
         this.canArrange = canArrange;
+    }
+
+    public String getAssetKey() {
+        return assetKey;
+    }
+
+    public void setAssetKey(String assetKey) {
+        this.assetKey = assetKey;
     }
 
     public CardLayout getCard() {

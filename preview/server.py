@@ -208,6 +208,7 @@ STATE = {
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
     "cards": {}, "card_images": {},
+    "assetKeys": {}, "ready": False,
 }
 
 
@@ -650,12 +651,12 @@ def ensure_portal_demo():
     ensure_type("test-place", "Площадка", True, "building", 10)
     ensure_type("test-dept", "Отделение", True, "department", 11)
     ensure_type("test-device", "Оборудование", False, "device", 12)
-    place_a = add_asset("TEST", "test-place", "Площадка А", None, "in_use", None, {})
-    place_b = add_asset("TEST", "test-place", "Площадка Б", None, "in_use", None, {})
-    department = add_asset("TEST", "test-dept", "Отделение А", place_a, "in_use", None, {})
-    add_asset("TEST", "test-device", "Аппарат", department, "in_use", None, {})
-    add_asset("TEST", "test-device", "Управляющая компания", department, "in_use", None, {})
-    add_asset("TEST", "test-device", "Принтер Б", place_b, "in_use", None, {})
+    place_a = add_asset("TEST", "test-place", "Площадка А", None, "in_use", None, {}, "TEST-1")
+    place_b = add_asset("TEST", "test-place", "Площадка Б", None, "in_use", None, {}, "TEST-2")
+    department = add_asset("TEST", "test-dept", "Отделение А", place_a, "in_use", None, {}, "TEST-3")
+    add_asset("TEST", "test-device", "Аппарат", department, "in_use", None, {}, "TEST-4")
+    add_asset("TEST", "test-device", "Управляющая компания", department, "in_use", None, {}, "TEST-5")
+    add_asset("TEST", "test-device", "Принтер Б", place_b, "in_use", None, {}, "TEST-6")
     STATE["portal_rules"] = [
         {"id": 1, "assetId": place_a, "position": 1, "conditions": [{"field": "Площадка", "option": "Пункт А"}]},
         {"id": 2, "assetId": place_b, "position": 2, "conditions": [{"field": "Площадка", "option": "Пункт Б"}]},
@@ -716,16 +717,17 @@ def copy_name(base, word, taken):
     return stem[:255]
 
 
-def object_prefix(project):
-    raw = (project or "").strip().upper()
-    prefix = "".join(ch for ch in raw if ch.isalnum())
-    if not prefix:
-        prefix = "AST"
-    return prefix[:20]
+ASSET_KEY = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+
+
+def asset_prefix(project):
+    return (STATE.get("assetKeys") or {}).get(project) or ""
 
 
 def next_object_key(project):
-    prefix = object_prefix(project)
+    prefix = asset_prefix(project)
+    if not prefix:
+        return None
     head = prefix + "-"
     highest = 0
     for asset in STATE["assets"].values():
@@ -735,11 +737,40 @@ def next_object_key(project):
     return "%s-%s" % (prefix, highest + 1)
 
 
-def add_asset(project, type_key, name, parent, status, custodian, values):
+def save_asset_key(project_key, body, text):
+    if project_key not in {item["key"] for item in PROJECTS}:
+        return 400, {"message": text["asset-tree.error.project.required"]}
+    if asset_prefix(project_key):
+        return 400, {"message": text.get("asset-tree.error.assetKey.locked", "Locked")}
+    prefix = ((body or {}).get("assetKey") or "").strip().upper()
+    if not prefix:
+        return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
+    if not ASSET_KEY.match(prefix):
+        return 400, {"message": text.get("asset-tree.error.assetKey.format", "Format")}
+    if prefix in {item["key"].upper() for item in PROJECTS}:
+        return 400, {"message": text.get("asset-tree.error.assetKey.project", "Project")}
+    for key, stored in (STATE.get("assetKeys") or {}).items():
+        if key != project_key and str(stored).upper() == prefix:
+            return 400, {"message": text.get("asset-tree.error.assetKey.taken", "Taken")}
+    head = prefix + "-"
+    for asset in STATE["assets"].values():
+        object_key = str(asset.get("objectKey") or "")
+        if asset.get("projectKey") == project_key:
+            continue
+        if len(object_key) > len(head) and object_key.upper().startswith(head) and object_key[len(head):].isdigit():
+            return 400, {"message": text.get("asset-tree.error.assetKey.taken", "Taken")}
+    STATE.setdefault("assetKeys", {})[project_key] = prefix
+    return 200, {"assetKey": prefix}
+
+
+def add_asset(project, type_key, name, parent, status, custodian, values, object_key=None):
+    key = object_key or next_object_key(project)
+    if not key:
+        return None
     asset_id = STATE["seq"]
     STATE["seq"] += 1
     STATE["assets"][asset_id] = {
-        "id": asset_id, "objectKey": next_object_key(project), "projectKey": project, "name": name,
+        "id": asset_id, "objectKey": key, "projectKey": project, "name": name,
         "description": "", "typeKey": type_key, "status": status, "parentId": parent,
         "sortOrder": asset_id, "custodianKey": custodian, "created": "2026-09-26T09:00:00Z",
         "updated": "2026-09-26T09:00:00Z", "values": values, "offeredTypes": [],
@@ -748,7 +779,15 @@ def add_asset(project, type_key, name, parent, status, custodian, values):
 
 
 def seed():
-    return
+    if STATE.get("ready"):
+        return
+    STATE["ready"] = True
+    STATE["types"]["stp-place"] = {
+        "typeKey": "stp-place", "projectKey": "STP", "baseKey": "place", "label": "Площадка",
+        "color": "#0052CC", "icon": "building", "systemType": False, "location": True,
+        "showInTree": True, "service": False, "sortOrder": 1, "fields": [],
+    }
+    add_asset("STP", "stp-place", "Усть-Лабинск", None, "in_use", None, {}, "STP-1")
 
 
 def normalize_parent(parent_id):
@@ -1968,7 +2007,13 @@ def import_rows(project_key, headers, records, text):
                     log_place(to_place, "place_in", existing)
             updated += 1
         else:
+            if not asset_prefix(project_key):
+                errors.append({"row": row_number, "message": text.get("asset-tree.error.assetKey.required", "Key")})
+                continue
             asset_id = add_asset(project_key, kind["typeKey"], name, parent, status_key, custodian, {})
+            if not asset_id:
+                errors.append({"row": row_number, "message": text.get("asset-tree.error.assetKey.required", "Key")})
+                continue
             STATE["assets"][asset_id]["description"] = description
             by_key[STATE["assets"][asset_id]["objectKey"].lower()] = STATE["assets"][asset_id]
             log_activity(asset_id, "created", "", "", name)
@@ -3025,12 +3070,12 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.1",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.3",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
-                "projects": [dict(project_rights(), key=item["key"], name=item["name"], card=card_for(item["key"])) for item in PROJECTS],
+                "projects": [dict(project_rights(), key=item["key"], name=item["name"], card=card_for(item["key"]), assetKey=asset_prefix(item["key"])) for item in PROJECTS],
             }
         if path == "/assets" and method == "GET":
             project_key = (query.get("projectKey") or [""])[0]
@@ -3094,6 +3139,11 @@ setTimeout(function () {
             if match.group(1) == "7":
                 return 404, {"message": text["asset-tree.error.project.notFound"]}
             return 200, {"projectKey": "TEST"}
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/asset-key", path)
+        if match and method == "PUT":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return save_asset_key(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/card", path)
         if match and method in ("GET", "PUT"):
             if match.group(1) not in {item["key"] for item in PROJECTS}:
@@ -3665,6 +3715,8 @@ setTimeout(function () {
         project_key = body.get("projectKey")
         if project_key not in {item["key"] for item in PROJECTS}:
             return 400, {"message": text["asset-tree.error.project.required"]}
+        if not asset_prefix(project_key):
+            return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
         type_key = (body.get("typeKey") or "").strip()
         row = type_row(type_key)
         if not row or row["projectKey"] != project_key:
@@ -3683,6 +3735,8 @@ setTimeout(function () {
         if not status_known(project_key, status, text):
             return 400, {"message": text["asset-tree.error.status"]}
         asset_id = add_asset(project_key, type_key, body["name"].strip(), parent_id, status, custodian, values)
+        if not asset_id:
+            return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
         STATE["assets"][asset_id]["description"] = body.get("description") or ""
         log_activity(asset_id, "created", "", "", body["name"].strip())
         log_place(place_container(parent_id), "place_add", STATE["assets"][asset_id])
@@ -3695,6 +3749,8 @@ setTimeout(function () {
         row = type_row(asset["typeKey"])
         if not row or row.get("location"):
             return 400, {"message": text.get("asset-tree.error.copy", "Only equipment can be copied.")}
+        if not asset_prefix(asset["projectKey"]):
+            return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
         taken = {item["name"] for item in STATE["assets"].values() if item["projectKey"] == asset["projectKey"]}
         name = copy_name(asset["name"], text.get("asset-tree.ui.copyWord", "copy"), taken)
         parent_id = normalize_parent(asset.get("parentId"))
@@ -3703,6 +3759,8 @@ setTimeout(function () {
             canonical(asset.get("status") or "in_use"), asset.get("custodianKey"),
             dict(asset.get("values") or {}),
         )
+        if not new_id:
+            return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
         STATE["assets"][new_id]["description"] = asset.get("description") or ""
         log_activity(new_id, "created", "", "", name)
         log_place(place_container(parent_id), "place_add", STATE["assets"][new_id])
