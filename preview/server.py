@@ -757,7 +757,7 @@ def save_project_view(project_key, body, text):
             key = (raw or "").strip()
             if not key or key == "name" or key in picked:
                 continue
-            if key not in VIEW_BASE and not re.fullmatch(r"attr:[a-z][a-z0-9-]{0,39}", key):
+            if key not in VIEW_BASE and not re.fullmatch(r"attr:[a-z][a-z0-9-]{0,39}(:[a-z][a-z0-9-]{0,39})?", key):
                 return 400, {"message": text.get("asset-tree.error.view.columns", "Columns")}
             picked.append(key)
         view["columns"] = picked
@@ -3127,7 +3127,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.8",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.9",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3483,6 +3483,24 @@ setTimeout(function () {
         match = re.fullmatch(r"/types/([a-z0-9-]+)/fields", path)
         if match and method == "POST":
             return self.add_field(match.group(1), self.read_json(), text)
+        match = re.fullmatch(r"/types/([a-z0-9-]+)/field-order", path)
+        if match and method == "PUT":
+            row = STATE["types"].get(match.group(1))
+            if not row:
+                return 404, {"message": text["asset-tree.error.type.notFound"]}
+            wanted = (self.read_json() or {}).get("fieldKeys") or []
+            by_key = {field["fieldKey"]: field for field in row["fields"]}
+            ordered = [by_key.pop(key) for key in wanted if key in by_key]
+            ordered += [field for field in row["fields"] if field["fieldKey"] in by_key]
+            for index, field in enumerate(ordered):
+                field["position"] = index
+            row["fields"] = ordered
+            return 200, [{
+                "fieldKey": field["fieldKey"], "label": label_of(field["label"], text), "kind": field["kind"],
+                "required": field["required"], "position": field["position"],
+                "showOnIssue": field["showOnIssue"] if "showOnIssue" in field else True,
+                "options": field.get("options") or [],
+            } for field in ordered]
         match = re.fullmatch(r"/types/([a-z0-9-]+)/fields/([a-z0-9-]+)", path)
         if match and method == "PUT":
             row = STATE["types"].get(match.group(1))

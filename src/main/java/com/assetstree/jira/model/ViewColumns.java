@@ -16,7 +16,7 @@ public final class ViewColumns {
     public static final int MAX_STORED = 450;
     public static final List<String> BASE = Collections.unmodifiableList(Arrays.asList(
             "key", "type", "status", "custodian", "location", "description", "created", "updated"));
-    private static final Pattern ATTR = Pattern.compile("^attr:[a-z][a-z0-9-]{0,39}$");
+    private static final Pattern ATTR = Pattern.compile("^attr:[a-z][a-z0-9-]{0,39}(:[a-z][a-z0-9-]{0,39})?$");
 
     private ViewColumns() {
     }

@@ -748,11 +748,13 @@
         var seen = {};
         state.types.forEach(function (type) {
             (type.fields || []).forEach(function (field) {
-                if (!field.fieldKey || seen[field.fieldKey]) return;
-                seen[field.fieldKey] = true;
+                var name = String(field.label || '').trim().toLowerCase();
+                if (!field.fieldKey || !name || seen[name]) return;
+                seen[name] = true;
                 fields.push({
-                    key: 'attr:' + field.fieldKey,
+                    key: 'attr:' + type.typeKey + ':' + field.fieldKey,
                     label: field.label,
+                    attrName: name,
                     kind: field.kind || 'text',
                     options: fieldOptions(field)
                 });
@@ -789,6 +791,13 @@
     function attrRecord(asset, key) {
         var fieldKey = key.slice(5);
         var attrs = asset.attributes || [];
+        var spec = fieldSpec(key);
+        if (spec.attrName) {
+            for (var j = 0; j < attrs.length; j++) {
+                if (String(attrs[j].name || '').trim().toLowerCase() === spec.attrName) return attrs[j];
+            }
+            return null;
+        }
         for (var i = 0; i < attrs.length; i++) {
             if (attrs[i].fieldKey === fieldKey || attrs[i].name === fieldKey) return attrs[i];
         }
@@ -2951,7 +2960,10 @@
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
             return section;
         }
-        var groupColumns = tableColumns(['type']);
+        var groupColumns = tableColumns(['type']).filter(function (key) {
+            var column = typeFieldColumn(key);
+            return !column || kids.some(function (child) { return child.typeKey === column.type.typeKey; });
+        });
         section.appendChild(selectableTable(kids.map(function (child) {
             return [
                 nameCell(child, function () {
@@ -2959,7 +2971,7 @@
                     selectAsset(child.id);
                 })
             ].concat(groupColumns.map(function (key) { return columnCell(child, key); }));
-        }), [t('name')].concat(groupColumns.map(columnLabel)), {
+        }), [t('name')].concat(columnHeaders(groupColumns)), {
             scope: 'group:' + group.placeId + ':' + group.typeKey,
             rows: kids.map(function (child) {
                 return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey, asset: child };
@@ -3455,7 +3467,7 @@
         var columns = tableColumns([]);
         var showField = state.sortKey && state.sortKey.indexOf('attr:') === 0 && columns.indexOf(state.sortKey) < 0;
         if (showField) columns = columns.concat([state.sortKey]);
-        var headers = [t('name')].concat(columns.map(columnLabel));
+        var headers = [t('name')].concat(columnHeaders(columns));
         if (remote) headers.push(t('project'));
         section.appendChild(selectableTable(kids.map(function (child) {
             var nested = childrenOf(child.id).length;
@@ -3471,6 +3483,7 @@
             ];
             columns.forEach(function (key) {
                 if (key === 'status' && nested && !projectFiltering() && !remote) cells.push(t('childCount', nested));
+                else if (showField && key === state.sortKey) cells.push(attributeText(attrRecord(child, key)));
                 else cells.push(columnCell(child, key));
             });
             if (remote) cells.push(child.projectName || child.projectKey || '');
@@ -3493,17 +3506,43 @@
     var DEFAULT_COLUMNS = ['key', 'type', 'status', 'custodian'];
     var BASE_COLUMNS = ['key', 'type', 'status', 'custodian', 'location', 'description', 'created', 'updated'];
 
-    function columnLabel(key) {
+    function typeFieldColumn(key) {
+        var parts = key.split(':');
+        if (parts.length !== 3 || parts[0] !== 'attr') return null;
+        for (var i = 0; i < state.types.length; i++) {
+            var type = state.types[i];
+            if (type.typeKey !== parts[1]) continue;
+            var fields = type.fields || [];
+            for (var j = 0; j < fields.length; j++) {
+                if (fields[j].fieldKey === parts[2]) return { type: type, field: fields[j] };
+            }
+        }
+        return null;
+    }
+
+    function columnLabel(key, withType) {
         if (key === 'key') return t('keyLabel');
         if (key === 'location') return t('columnLocation');
+        var column = typeFieldColumn(key);
+        if (column) return withType ? column.field.label + ' \u00b7 ' + column.type.label : column.field.label;
         if (key.indexOf('attr:') === 0) return fieldSpec(key).label;
         return t(key);
     }
 
+    function columnHeaders(columns) {
+        var labels = columns.map(function (key) { return columnLabel(key); });
+        return columns.map(function (key, index) {
+            var clash = labels.some(function (label, other) { return other !== index && label === labels[index]; });
+            return clash && typeFieldColumn(key) ? columnLabel(key, true) : labels[index];
+        });
+    }
+
     function columnChoices() {
         var keys = BASE_COLUMNS.slice();
-        filterFields().forEach(function (field) {
-            if (field.key.indexOf('attr:') === 0) keys.push(field.key);
+        state.types.forEach(function (type) {
+            (type.fields || []).forEach(function (field) {
+                if (field.fieldKey) keys.push('attr:' + type.typeKey + ':' + field.fieldKey);
+            });
         });
         return keys;
     }
@@ -3533,6 +3572,15 @@
             return text.length > 120 ? text.slice(0, 117) + '...' : text;
         }
         if (key === 'created' || key === 'updated') return asset[key] ? stamp(asset[key]) : '';
+        var column = typeFieldColumn(key);
+        if (column) {
+            if (asset.typeKey !== column.type.typeKey) return '';
+            var attrs = asset.attributes || [];
+            for (var i = 0; i < attrs.length; i++) {
+                if (attrs[i].fieldKey === column.field.fieldKey) return attributeText(attrs[i]);
+            }
+            return '';
+        }
         if (key.indexOf('attr:') === 0) return attributeText(attrRecord(asset, key));
         return '';
     }
@@ -3577,7 +3625,7 @@
                         item.className = box.checked ? '' : 'is-off';
                     });
                     label.appendChild(box);
-                    label.appendChild(el('span', null, columnLabel(key)));
+                    label.appendChild(el('span', null, columnLabel(key, true)));
                     item.appendChild(label);
                     var up = button('\u2191', 'asset-tree-btn', function () {
                         if (index === 0) return;
@@ -7253,7 +7301,19 @@
         }
         wrap.appendChild(fieldTools);
         var fields = el('div', 'asset-tree-schema-scroll asset-tree-field-list');
-        (type.fields || []).forEach(function (fieldDef) {
+        var fieldOrder = (type.fields || []).map(function (fieldDef) { return fieldDef.fieldKey; });
+        function moveField(index, delta) {
+            var target = index + delta;
+            if (target < 0 || target >= fieldOrder.length) return;
+            var next = fieldOrder.slice();
+            var moved = next.splice(index, 1)[0];
+            next.splice(target, 0, moved);
+            ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/field-order', { fieldKeys: next }, function (status, payload) {
+                if (status >= 200 && status < 300) refreshSchema();
+                else notify((payload && payload.message) || t('errorTitle'));
+            });
+        }
+        (type.fields || []).forEach(function (fieldDef, fieldIndex) {
             var fieldRow = el('div', 'asset-tree-type-field');
             fieldRow.setAttribute('data-name', fieldDef.label || '');
             fieldRow.appendChild(el('span', null, fieldDef.label));
@@ -7280,6 +7340,16 @@
             issueLabel.appendChild(el('span', null, t('showOnIssue')));
             fieldRow.appendChild(issueLabel);
             if (state.canConfigure) {
+                var fieldUp = button('\u2191', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, -1); });
+                fieldUp.title = t('moveUp');
+                fieldUp.setAttribute('aria-label', t('moveUp'));
+                fieldUp.disabled = fieldIndex === 0;
+                var fieldDown = button('\u2193', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, 1); });
+                fieldDown.title = t('moveDown');
+                fieldDown.setAttribute('aria-label', t('moveDown'));
+                fieldDown.disabled = fieldIndex === fieldOrder.length - 1;
+                fieldRow.appendChild(fieldUp);
+                fieldRow.appendChild(fieldDown);
                 fieldRow.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
                     ajax('DELETE', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), null, function (status, payload) {
                         if (status >= 200 && status < 300) refreshSchema();

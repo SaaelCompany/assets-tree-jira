@@ -57,6 +57,7 @@ import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
 import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.model.ViewColumns;
 import com.assetstree.jira.dto.AssetListDto;
@@ -1136,6 +1137,47 @@ public class AssetServiceImpl implements AssetService {
                 field.setIssueHidden(!draft.getShowOnIssue().booleanValue());
                 field.save();
                 return toFieldDto(field, i18n());
+            }
+        });
+    }
+
+    @Override
+    public List<FieldDto> reorderFields(ApplicationUser user, final String typeKey, final FieldOrderDto order) {
+        if (order == null) {
+            throw new AssetException(400, "asset-tree.error.field.notFound");
+        }
+        return ao().executeInTransaction(new TransactionCallback<List<FieldDto>>() {
+            @Override
+            public List<FieldDto> doInTransaction() {
+                AssetTypeEntity type = findType(typeKey);
+                if (type == null) {
+                    throw new AssetException(404, "asset-tree.error.type.notFound");
+                }
+                requireConfigurableProject(user, type.getProjectKey());
+                AssetFieldEntity[] existing = fields(type.getTypeKey());
+                Map<String, AssetFieldEntity> byKey = new LinkedHashMap<String, AssetFieldEntity>();
+                for (AssetFieldEntity field : existing) {
+                    byKey.put(field.getFieldKey(), field);
+                }
+                List<AssetFieldEntity> ordered = new ArrayList<AssetFieldEntity>();
+                for (String key : order.getFieldKeys()) {
+                    AssetFieldEntity field = byKey.remove(key);
+                    if (field != null) {
+                        ordered.add(field);
+                    }
+                }
+                ordered.addAll(byKey.values());
+                I18nHelper i18n = i18n();
+                List<FieldDto> result = new ArrayList<FieldDto>();
+                for (int i = 0; i < ordered.size(); i++) {
+                    AssetFieldEntity field = ordered.get(i);
+                    if (field.getPosition() != i) {
+                        field.setPosition(i);
+                        field.save();
+                    }
+                    result.add(toFieldDto(field, i18n));
+                }
+                return result;
             }
         });
     }

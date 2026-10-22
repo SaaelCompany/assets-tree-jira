@@ -4,6 +4,7 @@ import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
@@ -90,6 +91,8 @@ public interface AssetService {
     FieldDto updateField(ApplicationUser user, String typeKey, String fieldKey, FieldDraft draft);
 
     void deleteField(ApplicationUser user, String typeKey, String fieldKey);
+
+    List<FieldDto> reorderFields(ApplicationUser user, String typeKey, FieldOrderDto order);
 
     List<StatusDto> listStatuses(ApplicationUser user, String projectKey);
 

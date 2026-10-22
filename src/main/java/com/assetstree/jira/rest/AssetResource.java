@@ -5,6 +5,7 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
@@ -371,6 +372,17 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.updateField(user(), typeKey, fieldKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("types/{typeKey}/field-order")
+    public Response reorderFields(@PathParam("typeKey") final String typeKey, final FieldOrderDto order) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.reorderFields(user(), typeKey, order)).build();
             }
         });
     }

@@ -19,6 +19,25 @@ public class ViewColumnsTest {
     }
 
     @Test
+    public void keepsSameFieldKeyOfDifferentTypesApart() {
+        List<String> clean = ViewColumns.clean(Arrays.asList("attr:server:field", "attr:laptop:field", "attr:server:field-2"));
+        assertEquals(Arrays.asList("attr:server:field", "attr:laptop:field", "attr:server:field-2"), clean);
+        assertEquals(clean, ViewColumns.split(ViewColumns.join(clean)));
+    }
+
+    @Test
+    public void rejectsBrokenFieldColumns() {
+        for (String bad : Arrays.asList("attr:server:", "attr::field", "attr:server:field:x", "attr:Server:field")) {
+            try {
+                ViewColumns.clean(Arrays.asList(bad));
+                fail(bad);
+            } catch (AssetException ex) {
+                assertEquals(400, ex.getStatus());
+            }
+        }
+    }
+
+    @Test
     public void rejectsUnknownColumns() {
         try {
             ViewColumns.clean(Arrays.asList("key", "password"));

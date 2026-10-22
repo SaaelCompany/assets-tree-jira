@@ -3727,6 +3727,13 @@ a.asset-tree-url {
     white-space: nowrap;
 }
 
+.asset-tree-field-list .asset-tree-field-move {
+    flex: 0 0 auto;
+    min-width: 30px;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
 .asset-tree-grant {
     display: flex;
     flex-direction: column;
