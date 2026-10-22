@@ -382,6 +382,14 @@
     font-weight: 500;
 }
 
+#asset-tree-app .asset-tree-key-edit {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    font-size: 16px;
+    line-height: 1;
+}
+
 .asset-tree-key-field {
     display: flex;
     flex-direction: column;
@@ -1321,6 +1329,8 @@ a.asset-tree-url {
 }
 
 .asset-tree-dialog {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+    color: #172b4d;
     width: min(560px, 100%);
     max-height: min(720px, 100%);
     overflow-x: hidden;

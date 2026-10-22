@@ -598,7 +598,9 @@ public final class UiCatalog {
             "assetKeySave",
             "assetKeyDenied",
             "assetKeySaved",
-            "assetKeyCurrent"
+            "assetKeyCurrent",
+            "assetKeyEdit",
+            "assetKeyChangeHint"
     };
 
     private UiCatalog() {

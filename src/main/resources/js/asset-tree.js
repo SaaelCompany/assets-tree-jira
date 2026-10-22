@@ -1660,6 +1660,13 @@
         }
         actions.appendChild(projectLabel);
         actions.appendChild(projectPicker);
+        if (state.canArrange && projectAssetKey(currentProject())) {
+            var keyEdit = button('\u270E', 'asset-tree-btn asset-tree-key-edit', openAssetKeyEdit);
+            keyEdit.id = 'asset-tree-key-edit';
+            keyEdit.title = t('assetKeyEdit', projectAssetKey(currentProject()));
+            keyEdit.setAttribute('aria-label', keyEdit.title);
+            actions.appendChild(keyEdit);
+        }
         if (state.view === 'all') {
             var search = el('input', 'asset-tree-search');
             search.type = 'search';
@@ -9387,7 +9394,58 @@
         return box;
     }
 
-    function saveAssetKey(raw) {
+    function openAssetKeyEdit() {
+        var current = projectAssetKey(currentProject());
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('assetKeyTitle')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('assetKeyChangeHint', current)));
+            var form = el('form');
+            var field = el('label', 'asset-tree-key-field');
+            field.appendChild(el('span', null, t('assetKeyLabel')));
+            var input = el('input', 'asset-tree-text');
+            input.type = 'text';
+            input.id = 'asset-tree-asset-key-edit';
+            input.maxLength = 10;
+            input.autocomplete = 'off';
+            input.spellcheck = false;
+            input.placeholder = t('assetKeyPlaceholder');
+            input.value = current;
+            field.appendChild(input);
+            form.appendChild(field);
+            var example = el('p', 'asset-tree-hint', '');
+            function refreshExample() {
+                var sample = assetKeyExamplePrefix(assetKeyPreview(input.value));
+                example.textContent = sample ? t('assetKeyExample', sample) : '';
+            }
+            input.addEventListener('input', function () {
+                var next = assetKeyPreview(input.value);
+                if (input.value !== next) input.value = next;
+                refreshExample();
+            });
+            refreshExample();
+            form.appendChild(example);
+            var actions = el('div', 'asset-tree-dialog-actions');
+            var save = button(t('assetKeySave'), 'asset-tree-btn primary', function () {
+                if (assetKeyPreview(input.value) === current) {
+                    closeModal();
+                    return;
+                }
+                saveAssetKey(input.value, closeModal);
+            });
+            actions.appendChild(save);
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            form.appendChild(actions);
+            form.addEventListener('submit', function (event) {
+                event.preventDefault();
+                save.click();
+            });
+            dialog.appendChild(form);
+        });
+        var focus = document.getElementById('asset-tree-asset-key-edit');
+        if (focus) focus.select();
+    }
+
+    function saveAssetKey(raw, done) {
         var prefix = assetKeyPreview(raw);
         setBusy(true);
         ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/asset-key', { assetKey: prefix }, function (status, payload) {
@@ -9399,8 +9457,9 @@
             var project = currentProject();
             var saved = (payload && payload.assetKey) || prefix;
             if (project) project.assetKey = saved;
+            if (done) done();
+            mount();
             notify(t('assetKeySaved', saved));
-            renderFrame();
         });
     }
 

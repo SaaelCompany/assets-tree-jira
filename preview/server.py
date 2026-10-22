@@ -740,8 +740,6 @@ def next_object_key(project):
 def save_asset_key(project_key, body, text):
     if project_key not in {item["key"] for item in PROJECTS}:
         return 400, {"message": text["asset-tree.error.project.required"]}
-    if asset_prefix(project_key):
-        return 400, {"message": text.get("asset-tree.error.assetKey.locked", "Locked")}
     prefix = ((body or {}).get("assetKey") or "").strip().upper()
     if not prefix:
         return 400, {"message": text.get("asset-tree.error.assetKey.required", "Key")}
@@ -3070,7 +3068,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.3",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.4",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

@@ -2116,12 +2116,14 @@ public class AssetServiceImpl implements AssetService {
                         }
                     }
                 }
-                if (current != null) {
-                    throw new AssetException(400, "asset-tree.error.assetKey.locked");
+                if (current == null) {
+                    ao().create(ProjectAssetKeyEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ASSET_PREFIX", prefix));
+                } else if (!prefix.equals(current.getAssetPrefix())) {
+                    current.setAssetPrefix(prefix);
+                    current.save();
                 }
-                ao().create(ProjectAssetKeyEntity.class,
-                        new DBParam("PROJECT_KEY", project.getKey()),
-                        new DBParam("ASSET_PREFIX", prefix));
                 AssetKeyDto saved = new AssetKeyDto();
                 saved.setAssetKey(prefix);
                 return saved;
