@@ -1785,8 +1785,6 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
-            var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
-            if (portalPanel) fitPortalPanel(portalPanel);
             return;
         }
         if (state.view === 'all' && needsAssetKey()) {
@@ -9747,29 +9745,6 @@
         panel.appendChild(block);
     }
 
-    function fitPortalPanel(panel) {
-        function apply() {
-            if (!panel.parentNode) {
-                window.removeEventListener('resize', apply);
-                return;
-            }
-            var top = panel.getBoundingClientRect().top;
-            var next = Math.max(280, Math.round(window.innerHeight - top - 44));
-            panel.style.height = next + 'px';
-            panel.style.maxHeight = next + 'px';
-            var board = panel.querySelector('.asset-tree-flow-board');
-            var canvas = panel.querySelector('.asset-tree-flow-canvas');
-            if (board && canvas) {
-                var room = board.clientHeight;
-                if (room > 120 && canvas.offsetHeight - room < 40) canvas.style.height = room + 'px';
-            }
-        }
-        if (state.portalFit) window.removeEventListener('resize', state.portalFit);
-        state.portalFit = apply;
-        window.addEventListener('resize', apply);
-        apply();
-    }
-
     function renderAssetKeyForm(gate) {
         var project = currentProject();
         var current = projectAssetKey(project);
@@ -10673,15 +10648,17 @@
     function renderPortalSettings(panel) {
         panel.appendChild(el('p', 'asset-tree-hint', t('portalSectionHint')));
         renderPortalCustomers(panel);
-        var layout = el('div', 'asset-tree-settings-block asset-tree-portal-layout');
+        var layout = el('div', 'asset-tree-settings-block asset-tree-portal-section');
         var fields = el('div', 'asset-tree-portal-fields');
         fields.appendChild(el('h3', 'asset-tree-settings-title', t('portalFieldsTitle')));
         fields.appendChild(el('p', 'asset-tree-hint', t('portalFieldsHint')));
+        var flowSection = el('div', 'asset-tree-settings-block asset-tree-portal-section asset-tree-portal-flow');
         if (state.portalRules === null) {
             state.portalRules = [];
             fields.appendChild(el('p', 'asset-tree-hint', t('loading')));
             layout.appendChild(fields);
             panel.appendChild(layout);
+            panel.appendChild(flowSection);
             var projectKey = state.projectKey;
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/portal-rules', null, function (status, payload) {
                 if (state.view !== 'settings' || state.projectKey !== projectKey) return;
@@ -10692,10 +10669,11 @@
                 }
                 if (state.schemaTab === 'portal') renderFrame();
             });
-            renderFlowSettings(layout);
+            renderFlowSettings(flowSection);
             return;
         }
         var list = el('div', 'asset-tree-portal-list');
+        list.appendChild(el('p', 'asset-tree-section-title', t('portalRulesSaved')));
         if (!state.portalRules.length) {
             list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
         }
@@ -10788,6 +10766,7 @@
         target.addEventListener('change', function () { draft.assetId = target.value; });
 
         var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(el('p', 'asset-tree-section-title', editing ? t('portalRuleEditing') : t('portalRuleNew')));
         form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
         form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
@@ -10838,7 +10817,8 @@
         fields.appendChild(form);
         layout.appendChild(fields);
         panel.appendChild(layout);
-        renderFlowSettings(layout);
+        panel.appendChild(flowSection);
+        renderFlowSettings(flowSection);
     }
 
     function portalChoices() {
@@ -10859,7 +10839,7 @@
 
     function renderPortalCustomers(panel) {
         var project = currentProject();
-        var block = el('div', 'asset-tree-settings-block asset-tree-portal-mine');
+        var block = el('div', 'asset-tree-settings-block asset-tree-portal-section asset-tree-portal-mine');
         block.appendChild(el('h3', 'asset-tree-settings-title', t('portalMineTitle')));
         block.appendChild(el('p', 'asset-tree-hint', t('portalMineHint')));
         var row = el('label', 'asset-tree-check-row');
