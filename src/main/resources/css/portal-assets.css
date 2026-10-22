@@ -4,6 +4,22 @@ a.asset-tree-pa-navlink {
     cursor: pointer;
 }
 
+a.asset-tree-pa-navlink.is-copy {
+    display: inline-flex;
+    align-items: center;
+    box-sizing: border-box;
+    margin-right: 8px;
+    text-decoration: none;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+a.asset-tree-pa-navlink.is-copy:hover,
+a.asset-tree-pa-navlink.is-copy:focus {
+    filter: brightness(0.94);
+    text-decoration: none;
+}
+
 a.asset-tree-pa-navlink.is-standalone {
     display: inline-flex;
     align-items: center;
@@ -214,7 +230,7 @@ h2.asset-tree-pa-profile-title {
 
 dl.asset-tree-pa-details {
     display: grid;
-    grid-template-columns: minmax(120px, 200px) 1fr;
+    grid-template-columns: minmax(110px, 170px) minmax(0, 1fr);
     gap: 4px 16px;
     margin: 10px 0 0 34px;
     padding: 0;
@@ -243,7 +259,8 @@ a.asset-tree-pa-link {
 }
 
 .asset-tree-pa-profile {
-    margin: 32px 0 0;
+    clear: both;
+    margin: 28px 0 24px;
     font-size: 14px;
     line-height: 20px;
 }
@@ -264,4 +281,25 @@ h2.asset-tree-pa-profile-title {
     dl.asset-tree-pa-details dd + dt {
         margin-top: 6px;
     }
+}
+
+/* The profile panel is narrow: labels go above values, like the profile fields above it. */
+.asset-tree-pa-profile dl.asset-tree-pa-details {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    margin: 8px 0 0;
+}
+
+.asset-tree-pa-profile dl.asset-tree-pa-details dt {
+    margin-top: 8px;
+    font-weight: 400;
+    line-height: 16px;
+}
+
+.asset-tree-pa-profile dl.asset-tree-pa-details dt:first-child {
+    margin-top: 0;
+}
+
+.asset-tree-pa-profile .asset-tree-pa-item {
+    padding: 12px;
 }

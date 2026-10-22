@@ -168,6 +168,7 @@ public final class UiCatalog {
             "portalMineToggle",
             "portalMineFields",
             "portalMineFieldsHint",
+            "portalRoleCustodian",
             "portalFieldsTitle",
             "portalFieldsHint",
             "portalIf",

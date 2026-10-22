@@ -1076,7 +1076,7 @@ def portal_assets(user_key, text):
             if asset["projectKey"] != project["key"]:
                 continue
             dto = asset_dto(asset, text, False)
-            role = text["asset-tree.ui.custodian"] if asset.get("custodianKey") == user_key else None
+            role = text["asset-tree.ui.portalRoleCustodian"] if asset.get("custodianKey") == user_key else None
             if not role:
                 for attr in dto["attributes"]:
                     if attr["kind"] == "user" and attr["value"] == user_key:
@@ -3197,20 +3197,30 @@ p { color: #5d6b82; }
 
     PORTAL_HEADER = """<header id="header" role="banner" class="cv-header">
 <a class="cv-help-center-link" href="/servicedesk/customer/portals">Центр поддержки</a>
-<ul class="cv-header-items">
-<li class="cv-header-item"><a class="cv-requests-link" href="/servicedesk/customer/user/requests">Запросы</a></li>
-<li class="cv-header-item"><a class="cv-profile-link" href="/servicedesk/customer/user/profile">%s</a></li>
-</ul>
+<div class="cv-header-right">
+<div class="cv-requests-wrap"><button type="button" class="cv-requests-button" aria-haspopup="true">Запросы <span class="cv-count">8</span></button></div>
+<a class="cv-avatar" href="/servicedesk/customer/user/profile" title="%s"></a>
+</div>
 </header>"""
 
     PORTAL_STYLE = """<style>
-body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
-.cv-header { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 24px; background: #0747a6; }
-.cv-header a { color: #fff; text-decoration: none; font-weight: 500; }
-.cv-header-items { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.cv-header-item a { display: inline-block; padding: 6px 10px; border-radius: 3px; }
-.cv-header-item a:hover { background: rgba(255,255,255,.15); }
-main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
+body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; font-size: 14px; }
+.cv-header { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 8px; background: #205081; }
+.cv-help-center-link { color: #fff; text-decoration: none; font-weight: 600; font-size: 12px; }
+.cv-header-right { display: flex; align-items: center; }
+.cv-requests-button { height: 30px; padding: 0 12px; border: 0; border-radius: 15px; background: #ebecf0; color: #172b4d; font-size: 12px; cursor: pointer; }
+.cv-count { display: inline-block; min-width: 14px; margin-left: 4px; padding: 0 4px; border-radius: 8px; background: #dfe1e6; font-size: 11px; }
+.cv-avatar { display: inline-block; width: 30px; height: 30px; margin-left: 6px; border-radius: 50%%; background: #c1c7d0; border: 2px solid #fff; box-sizing: border-box; }
+.cv-band { position: absolute; top: 40px; left: 0; right: 0; height: 100px; background: #205081; z-index: -1; }
+#content-wrapper { position: relative; max-width: 400px; margin: 0 auto; padding-top: 0; }
+.cv-page { margin-top: 0; padding: 24px 40px; background: #fff; border: 1px solid #dfe1e6; border-radius: 3px; }
+.cv-profile-cols { display: flex; gap: 24px; }
+.cv-profile-main { flex: 1 1 auto; }
+.cv-profile-side { flex: 0 0 140px; padding-top: 32px; font-size: 12px; }
+.cv-profile-side a { display: block; color: #0052cc; text-decoration: none; }
+.cv-label { margin: 12px 0 2px; color: #6b778c; font-size: 12px; }
+.cv-heading { margin: 16px 0 4px; font-size: 12px; font-weight: 600; }
+.cv-powered { margin: 24px 0 0; color: #6b778c; font-size: 10px; text-align: center; }
 </style>"""
 
     def serve_customer(self, path, query):
@@ -3222,16 +3232,25 @@ main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid
             user = self.preview_user()
         person = USERS[user]
         if path.endswith("/profile"):
-            body = "<h1>Профиль</h1><div class=\"cv-profile\"><p><b>%s</b></p><p>%s</p></div>" % (person["displayName"], person["email"])
+            body = """<div class="cv-page"><div class="cv-profile-cols"><div class="cv-profile-main">
+<div><a href="/servicedesk/customer/portals" style="font-size:12px;color:#0052cc">Центр поддержки</a><h1 style="margin:0;font-size:18px">%s</h1></div>
+<div class="cv-label">Вход с помощью</div><div>%s</div>
+<div class="cv-heading">Мой профиль</div>
+<div class="cv-label">Имя</div><div>%s</div>
+<div class="cv-label">Отправлять уведомления на адрес</div><div>%s</div>
+<div class="cv-heading">Настройки</div>
+<div class="cv-label">Язык</div><div>русский (Россия) [По умолчанию]</div>
+</div><div class="cv-profile-side"><b>Параметры</b><a href="#">Редактировать профиль</a><a href="#">Изменить пароль</a></div></div>
+<div class="cv-powered">Работает на базе Jira Service Management</div></div>""" % (person["displayName"], user, person["displayName"], person["email"])
         elif path.endswith("/requests"):
-            body = "<h1>Запросы</h1><p>Здесь список заявок клиента.</p>"
+            body = "<div class=\"cv-page\"><h1>Запросы</h1><p>Здесь список заявок клиента.</p></div>"
         else:
-            body = "<h1>Центр поддержки</h1><p>Выберите портал.</p>"
+            body = "<div class=\"cv-page\"><h1>Центр поддержки</h1><p>Выберите портал.</p></div>"
         html = """<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Портал</title>%s
 <link rel="stylesheet" href="/download/resources/asset-tree/portal-assets.css">
 <script src="/download/resources/asset-tree/portal-assets.js"></script>
-</head><body>%s<main id="content-wrapper">%s</main></body></html>""" % (self.PORTAL_STYLE, self.PORTAL_HEADER % person["displayName"], body)
+</head><body>%s<div class="cv-band"></div><main id="content-wrapper">%s</main></body></html>""" % (self.PORTAL_STYLE, self.PORTAL_HEADER % person["displayName"], body)
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8", cookie)
 
     def serve_portal(self, path):
@@ -3548,7 +3567,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.12",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.13",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

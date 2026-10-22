@@ -2337,6 +2337,9 @@ public class AssetServiceImpl implements AssetService {
             if (role == null) {
                 continue;
             }
+            if (holder.equals(row.getCustodianKey())) {
+                role = labels.getText("asset-tree.ui.portalRoleCustodian");
+            }
             PortalAssetDto item = new PortalAssetDto();
             item.setName(row.getName());
             item.setRole(role);

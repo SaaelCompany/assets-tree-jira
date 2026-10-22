@@ -22,7 +22,7 @@
             loading: 'Загрузка…',
             empty: 'За вами пока не числится оборудование.',
             error: 'Не удалось загрузить оборудование. Обновите страницу.',
-            role: 'Числится как',
+            role: 'Вы указаны как',
             count: function (n) { return n + ' ' + plural(n, 'позиция', 'позиции', 'позиций'); }
         },
         en: {
@@ -33,7 +33,7 @@
             loading: 'Loading…',
             empty: 'No equipment is registered to you yet.',
             error: 'Could not load the equipment. Refresh the page.',
-            role: 'Registered as',
+            role: 'You are listed as',
             count: function (n) { return n + (n === 1 ? ' item' : ' items'); }
         }
     };
@@ -290,29 +290,52 @@
 
     /* ---------- header link ---------- */
 
+    function cleanText(node) {
+        return (node.textContent || '').replace(/\d+/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase();
+    }
+
+    function visible(node) {
+        if (!node || !node.getBoundingClientRect) return false;
+        var box = node.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+    }
+
+    function nearTop(node) {
+        var box = node.getBoundingClientRect();
+        return box.height > 0 && box.top + (window.pageYOffset || 0) < 120;
+    }
+
+    /* The Requests control in the portal header: a link on older portals, a pill button with a counter on newer ones. */
     function requestsLink() {
-        var links = document.querySelectorAll('a[href*="/servicedesk/customer/user/requests"]');
-        for (var i = 0; i < links.length; i++) {
-            if (inHeader(links[i])) return links[i];
+        var words = /^(запросы|мои запросы|requests|my requests)$/;
+        var nodes = document.querySelectorAll('a, button');
+        var byHref = null;
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            if (node.id === NAV_ID || !visible(node) || !nearTop(node)) continue;
+            if (words.test(cleanText(node))) return node;
+            if (!byHref && (node.getAttribute('href') || '').indexOf('/servicedesk/customer/user/requests') >= 0) byHref = node;
         }
-        var words = /^(запросы|мои запросы|requests|my requests)$/i;
-        var candidates = document.querySelectorAll('header a, header button, #header a, #header button, .cv-header a, .cv-header button');
-        for (var j = 0; j < candidates.length; j++) {
-            var text = (candidates[j].textContent || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
-            if (words.test(text)) return candidates[j];
+        return byHref;
+    }
+
+    function headerNode() {
+        var nodes = document.querySelectorAll('#header, header[role="banner"], .cv-header, header');
+        for (var i = 0; i < nodes.length; i++) {
+            if (visible(nodes[i])) return nodes[i];
         }
         return null;
     }
 
-    function headerNode() {
-        return document.querySelector('#header, header[role="banner"], .cv-header, header');
-    }
-
-    function inHeader(node) {
-        var header = headerNode();
-        if (header && header.contains(node)) return true;
-        var box = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
-        return !!(box && box.height > 0 && box.top < 120);
+    function copyLook(from, to) {
+        var style = window.getComputedStyle ? window.getComputedStyle(from) : null;
+        if (!style) return;
+        ['background-color', 'color', 'border-top-width', 'border-top-style', 'border-top-color', 'border-radius',
+            'padding-left', 'padding-right', 'font-size', 'font-weight', 'font-family', 'height', 'line-height', 'box-shadow']
+            .forEach(function (name) {
+                var value = style.getPropertyValue(name);
+                if (value) to.style.setProperty(name.replace('border-top-', 'border-'), value);
+            });
     }
 
     function profileHref() {
@@ -336,23 +359,31 @@
         if (document.getElementById(NAV_ID)) return;
         var anchor = requestsLink();
         if (anchor) {
-            var item = anchor.parentNode && anchor.parentNode.tagName && anchor.parentNode.tagName.toLowerCase() === 'li'
-                ? anchor.parentNode : null;
-            var link = navLink((anchor.className ? anchor.className + ' ' : '') + 'asset-tree-pa-navlink');
-            link.removeAttribute('aria-haspopup');
-            if (item) {
-                var li = el('li', item.className);
-                li.appendChild(link);
-                item.parentNode.insertBefore(li, item.nextSibling);
-            } else {
-                anchor.parentNode.insertBefore(link, anchor.nextSibling);
+            var target = anchor;
+            while (target.parentNode && target.parentNode !== document.body
+                && target.parentNode.children.length === 1 && !target.parentNode.matches('header, #header, nav, ul')) {
+                target = target.parentNode;
             }
-            return;
+            var link = navLink('asset-tree-pa-navlink is-copy');
+            copyLook(anchor, link);
+            if (target.parentNode.tagName.toLowerCase() === 'ul') {
+                var li = el('li', target.className);
+                li.appendChild(link);
+                target.parentNode.insertBefore(li, target);
+                if (visible(link)) return;
+                li.parentNode.removeChild(li);
+            } else {
+                target.parentNode.insertBefore(link, target);
+                if (visible(link)) return;
+                link.parentNode.removeChild(link);
+            }
         }
         var header = headerNode();
         if (header) {
-            header.appendChild(navLink('asset-tree-pa-navlink is-standalone'));
-            return;
+            var standalone = navLink('asset-tree-pa-navlink is-standalone');
+            header.appendChild(standalone);
+            if (visible(standalone)) return;
+            header.removeChild(standalone);
         }
         document.body.appendChild(navLink('asset-tree-pa-navlink is-floating'));
     }
@@ -367,13 +398,53 @@
         return document.querySelector('.cv-profile, #profile-page, .cv-page-content, #content-wrapper, main, [role="main"], #main');
     }
 
+    function smallestWithText(pattern) {
+        var nodes = document.body.getElementsByTagName('*');
+        var found = null;
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            if (node.id === PROFILE_ID || (node.closest && node.closest('#' + PROFILE_ID))) continue;
+            var text = (node.textContent || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+            if (text.length > 80 || !pattern.test(text)) continue;
+            if (!found || found.contains(node)) found = node;
+        }
+        return found;
+    }
+
+    /* Puts the block after the profile fields and before the "Powered by" line, inside the same white panel. */
+    function profileSpot() {
+        var footer = smallestWithText(/^(работает на базе|powered by)/i);
+        var heading = smallestWithText(/^(мой профиль|my profile|настройки|preferences)$/i);
+        if (footer && heading) {
+            var common = heading.parentNode;
+            while (common && !common.contains(footer)) common = common.parentNode;
+            if (common) {
+                var before = footer;
+                while (before.parentNode !== common) before = before.parentNode;
+                var after = heading;
+                while (after.parentNode !== common) after = after.parentNode;
+                if (after !== before) return { parent: common, before: before };
+            }
+        }
+        if (footer && footer.parentNode) {
+            var top = footer;
+            var host = profileHost();
+            while (top.parentNode && top.parentNode !== host && top.parentNode !== document.body
+                && top.parentNode.children.length === 1) {
+                top = top.parentNode;
+            }
+            return { parent: top.parentNode, before: top };
+        }
+        var fallback = profileHost();
+        return fallback ? { parent: fallback, before: null } : null;
+    }
+
     function ensureProfile() {
         if (!onProfile() || !data) return;
         var existing = document.getElementById(PROFILE_ID);
-        var host = profileHost();
-        if (existing && host && host.contains(existing)) return;
-        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-        if (!host) return;
+        if (existing && document.body.contains(existing)) return;
+        var spot = profileSpot();
+        if (!spot || !spot.parent) return;
         var section = el('section', 'asset-tree-pa-profile');
         section.id = PROFILE_ID;
         var heading = el('h2', 'asset-tree-pa-profile-title', t('title'));
@@ -382,7 +453,7 @@
         var body = el('div', 'asset-tree-pa-body');
         renderList(body, data);
         section.appendChild(body);
-        host.appendChild(section);
+        spot.parent.insertBefore(section, spot.before);
     }
 
     /* ---------- boot ---------- */
