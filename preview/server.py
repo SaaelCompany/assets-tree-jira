@@ -1025,9 +1025,97 @@ def next_object_key(project):
 VIEW_BASE = ("key", "type", "status", "custodian", "location", "description", "created", "updated")
 
 
+PORTAL_DEFAULT = ["key", "type", "status", "location"]
+
+
 def project_view(project_key):
     view = (STATE.get("views") or {}).get(project_key) or {}
-    return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or [])}
+    return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or []),
+            "portalMine": bool(view.get("portalMine")), "portalFields": list(view.get("portalFields") or PORTAL_DEFAULT)}
+
+
+def save_portal_view(project_key, body, text):
+    body = body or {}
+    view = STATE.setdefault("views", {}).setdefault(project_key, {})
+    if body.get("enabled") is not None:
+        view["portalMine"] = bool(body.get("enabled"))
+    if body.get("fields") is not None:
+        picked = []
+        for raw in body.get("fields") or []:
+            key = (raw or "").strip()
+            if not key or key in ("name", "custodian") or key in picked:
+                continue
+            if key not in VIEW_BASE and not re.fullmatch(r"attr:[a-z][a-z0-9-]{0,39}(:[a-z][a-z0-9-]{0,39})?", key):
+                return 400, {"message": text.get("asset-tree.error.view.columns", "Columns")}
+            picked.append(key)
+        view["portalFields"] = picked
+    current = project_view(project_key)
+    return 200, {"enabled": current["portalMine"], "fields": current["portalFields"]}
+
+
+def portal_assets(user_key, text):
+    groups = []
+    enabled = False
+    for project in PROJECTS:
+        view = project_view(project["key"])
+        if not view["portalMine"]:
+            continue
+        enabled = True
+        ensure_statuses(project["key"], text)
+        statuses = {row["statusKey"]: row for row in STATE["statuses"].get(project["key"], [])}
+        names = {}
+        for key in view["portalFields"]:
+            if key.startswith("attr:"):
+                parts = key.split(":")
+                row = STATE["types"].get(parts[1]) if len(parts) == 3 else None
+                for field in (row or {}).get("fields", []):
+                    if field["fieldKey"] == parts[-1]:
+                        names[key] = field["label"].strip().lower()
+        items = []
+        for asset in STATE["assets"].values():
+            if asset["projectKey"] != project["key"]:
+                continue
+            dto = asset_dto(asset, text, False)
+            role = text["asset-tree.ui.custodian"] if asset.get("custodianKey") == user_key else None
+            if not role:
+                for attr in dto["attributes"]:
+                    if attr["kind"] == "user" and attr["value"] == user_key:
+                        role = attr["name"]
+                        break
+            if not role:
+                continue
+            item = {"name": asset["name"], "role": role, "typeLabel": dto["typeLabel"], "color": dto["color"],
+                    "icon": dto["icon"], "details": []}
+
+            def add(label, kind, value):
+                if value and str(value).strip():
+                    item["details"].append({"name": label, "kind": kind, "value": value, "displayValue": value})
+            for key in view["portalFields"]:
+                if key == "key":
+                    item["objectKey"] = asset["objectKey"]
+                elif key == "status":
+                    row = statuses.get(dto["status"]) or {}
+                    item["statusLabel"] = row.get("label") or dto["status"]
+                    item["statusCategory"] = row.get("category") or ""
+                elif key == "type":
+                    add(text["asset-tree.ui.type"], "text", dto["typeLabel"])
+                elif key == "location":
+                    add(text["asset-tree.ui.columnLocation"], "text", dto["location"])
+                elif key == "description":
+                    add(text["asset-tree.ui.description"], "textarea", asset["description"])
+                elif key in ("created", "updated"):
+                    add(text["asset-tree.ui." + key], "text", asset[key][:10])
+                elif key in names:
+                    for attr in dto["attributes"]:
+                        if attr["name"].strip().lower() == names[key]:
+                            add(attr["name"], attr["kind"], attr["displayValue"])
+                            break
+            items.append(item)
+        if items:
+            items.sort(key=lambda item: item["name"].lower())
+            groups.append({"projectKey": project["key"], "projectName": project["name"], "assets": items})
+    groups.sort(key=lambda group: group["projectName"].lower())
+    return {"enabled": enabled, "projects": groups}
 
 
 def save_project_view(project_key, body, text):
@@ -2952,6 +3040,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve_page(query)
         if path == "/issue":
             return self.serve_issue(query)
+        if path in ("/servicedesk/customer/user/profile", "/servicedesk/customer/user/requests", "/servicedesk/customer/portals"):
+            return self.serve_customer(path, query)
         if path == "/portal" or re.fullmatch(r"/servicedesk/customer/portal/\d+/create/\d+", path):
             return self.serve_portal(path)
         if path.startswith("/rest/servicedeskapi/portals/") or path.startswith("/rest/servicedeskapi/servicedesk/"):
@@ -3003,6 +3093,7 @@ class Handler(BaseHTTPRequestHandler):
                 .replace("@@TITLE@@", text.get("asset-tree.ui.title", "Asset tree"))
                 .replace("@@CSS@@", "/download/resources/asset-tree/asset-tree.css")
                 .replace("@@QR@@", "/download/resources/asset-tree/qr-code.js")
+                .replace("@@ICONS@@", "/download/resources/asset-tree/type-icons.js")
                 .replace("@@JS@@", "/download/resources/asset-tree/asset-tree.js")
                 .replace("@@REST@@", "/rest/asset-tree/1.0")
                 .replace("@@PROJECT@@", project)
@@ -3098,6 +3189,50 @@ p { color: #5d6b82; }
 <script src="/download/resources/asset-tree/issue-panel.js"></script>
 </body></html>""" % (issue["issueKey"], issue["issueKey"], issue["issueId"], issue["issueKey"])
         self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8")
+
+    def preview_user(self):
+        cookie = self.headers.get("Cookie") or ""
+        match = re.search(r"(?:^|;\s*)preview_user=([a-z0-9_-]+)", cookie)
+        return match.group(1) if match and match.group(1) in USERS else "ivanov"
+
+    PORTAL_HEADER = """<header id="header" role="banner" class="cv-header">
+<a class="cv-help-center-link" href="/servicedesk/customer/portals">Центр поддержки</a>
+<ul class="cv-header-items">
+<li class="cv-header-item"><a class="cv-requests-link" href="/servicedesk/customer/user/requests">Запросы</a></li>
+<li class="cv-header-item"><a class="cv-profile-link" href="/servicedesk/customer/user/profile">%s</a></li>
+</ul>
+</header>"""
+
+    PORTAL_STYLE = """<style>
+body { margin: 0; background: #f4f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172b4d; }
+.cv-header { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 24px; background: #0747a6; }
+.cv-header a { color: #fff; text-decoration: none; font-weight: 500; }
+.cv-header-items { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.cv-header-item a { display: inline-block; padding: 6px 10px; border-radius: 3px; }
+.cv-header-item a:hover { background: rgba(255,255,255,.15); }
+main { max-width: 720px; margin: 32px auto; background: white; border: 1px solid #dfe1e6; border-radius: 3px; padding: 20px; }
+</style>"""
+
+    def serve_customer(self, path, query):
+        user = (query.get("as") or [""])[0]
+        cookie = {}
+        if user in USERS:
+            cookie = {"Set-Cookie": "preview_user=%s; Path=/" % user}
+        else:
+            user = self.preview_user()
+        person = USERS[user]
+        if path.endswith("/profile"):
+            body = "<h1>Профиль</h1><div class=\"cv-profile\"><p><b>%s</b></p><p>%s</p></div>" % (person["displayName"], person["email"])
+        elif path.endswith("/requests"):
+            body = "<h1>Запросы</h1><p>Здесь список заявок клиента.</p>"
+        else:
+            body = "<h1>Центр поддержки</h1><p>Выберите портал.</p>"
+        html = """<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>Портал</title>%s
+<link rel="stylesheet" href="/download/resources/asset-tree/portal-assets.css">
+<script src="/download/resources/asset-tree/portal-assets.js"></script>
+</head><body>%s<main id="content-wrapper">%s</main></body></html>""" % (self.PORTAL_STYLE, self.PORTAL_HEADER % person["displayName"], body)
+        self.respond(200, html.encode("utf-8"), "text/html; charset=utf-8", cookie)
 
     def serve_portal(self, path):
         ensure_portal_demo()
@@ -3413,7 +3548,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.11",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.12",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3487,6 +3622,13 @@ setTimeout(function () {
             if match.group(1) not in {item["key"] for item in PROJECTS}:
                 return 400, {"message": text["asset-tree.error.project.required"]}
             return save_asset_key(match.group(1), self.read_json(), text)
+        if path == "/portal/my-assets" and method == "GET":
+            return 200, portal_assets(self.preview_user(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-view", path)
+        if match and method == "PUT":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return save_portal_view(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/view", path)
         if match and method == "PUT":
             if match.group(1) not in {item["key"] for item in PROJECTS}:

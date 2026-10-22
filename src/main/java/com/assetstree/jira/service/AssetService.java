@@ -32,7 +32,9 @@ import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.dto.PortalAssetsDto;
 import com.assetstree.jira.dto.PortalRuleDto;
+import com.assetstree.jira.dto.PortalViewDto;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
@@ -166,6 +168,12 @@ public interface AssetService {
     AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft);
 
     ProjectViewDto saveProjectView(ApplicationUser user, String projectKey, ProjectViewDto draft);
+
+    /** Turns the customer list on the portal on or off and picks what it shows. */
+    PortalViewDto savePortalView(ApplicationUser user, String projectKey, PortalViewDto draft);
+
+    /** Equipment the user holds in every project that shows it on the portal. Needs no project permission. */
+    PortalAssetsDto portalAssets(ApplicationUser user);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 

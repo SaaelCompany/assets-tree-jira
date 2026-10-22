@@ -28,6 +28,8 @@ public class ProjectDto {
     private String assetKey;
     private boolean treeObjects;
     private List<String> columns = new ArrayList<String>();
+    private boolean portalMine;
+    private List<String> portalFields = new ArrayList<String>();
     private CardLayout card;
 
     public String getKey() {
@@ -180,6 +182,22 @@ public class ProjectDto {
 
     public void setColumns(List<String> columns) {
         this.columns = columns;
+    }
+
+    public boolean isPortalMine() {
+        return portalMine;
+    }
+
+    public void setPortalMine(boolean portalMine) {
+        this.portalMine = portalMine;
+    }
+
+    public List<String> getPortalFields() {
+        return portalFields;
+    }
+
+    public void setPortalFields(List<String> portalFields) {
+        this.portalFields = portalFields;
     }
 
     public CardLayout getCard() {

@@ -36,6 +36,7 @@ public class AssetPageServlet extends HttpServlet {
         String title = i18n.getText("asset-tree.ui.title");
         String css = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-tree.css?v=" + PluginInfo.VERSION;
         String qr = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/qr-code.js?v=" + PluginInfo.VERSION;
+        String icons = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/type-icons.js?v=" + PluginInfo.VERSION;
         String js = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-tree.js?v=" + PluginInfo.VERSION;
         String rest = contextPath + "/rest/asset-tree/1.0";
         String project = request.getParameter("project");
@@ -45,6 +46,7 @@ public class AssetPageServlet extends HttpServlet {
                 .replace("@@TITLE@@", escape(title))
                 .replace("@@CSS@@", escape(css))
                 .replace("@@QR@@", escape(qr))
+                .replace("@@ICONS@@", escape(icons))
                 .replace("@@JS@@", escape(js))
                 .replace("@@REST@@", escape(rest))
                 .replace("@@PROJECT@@", escape(project == null ? "" : project))

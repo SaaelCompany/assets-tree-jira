@@ -59,6 +59,7 @@ import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
+import com.assetstree.jira.model.PortalCard;
 import com.assetstree.jira.model.ViewColumns;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
@@ -83,7 +84,11 @@ import com.assetstree.jira.dto.IssueContextDto;
 import com.assetstree.jira.dto.IssueRefDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.PickerNodeDto;
+import com.assetstree.jira.dto.PortalAssetDto;
+import com.assetstree.jira.dto.PortalAssetGroupDto;
+import com.assetstree.jira.dto.PortalAssetsDto;
 import com.assetstree.jira.dto.PortalRuleDto;
+import com.assetstree.jira.dto.PortalViewDto;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.dto.ReportBucketDto;
 import com.assetstree.jira.dto.ReportDto;
@@ -2232,6 +2237,183 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
+    @Override
+    public PortalViewDto savePortalView(ApplicationUser user, String projectKey, PortalViewDto draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Boolean enabled = draft == null ? null : draft.getEnabled();
+        final List<String> fields = draft == null || draft.getFields() == null ? null : PortalCard.clean(draft.getFields());
+        return ao().executeInTransaction(new TransactionCallback<PortalViewDto>() {
+            @Override
+            public PortalViewDto doInTransaction() {
+                ProjectViewEntity row = viewRow(project.getKey());
+                if (row == null) {
+                    row = ao().create(ProjectViewEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("TREE_MODE", Integer.valueOf(0)));
+                }
+                if (enabled != null) {
+                    row.setPortalMine(Integer.valueOf(enabled.booleanValue() ? 1 : 0));
+                }
+                if (fields != null) {
+                    row.setPortalFields(ViewColumns.join(fields));
+                }
+                row.save();
+                PortalViewDto saved = new PortalViewDto();
+                saved.setEnabled(Boolean.valueOf(portalShown(row)));
+                saved.setFields(PortalCard.effective(row.getPortalFields()));
+                return saved;
+            }
+        });
+    }
+
+    @Override
+    public PortalAssetsDto portalAssets(final ApplicationUser user) {
+        requireUser(user);
+        final String holder = user.getKey();
+        return ao().executeInTransaction(new TransactionCallback<PortalAssetsDto>() {
+            @Override
+            public PortalAssetsDto doInTransaction() {
+                Map<Long, Project> projects = new LinkedHashMap<Long, Project>();
+                Map<Long, String> stored = new HashMap<Long, String>();
+                ProjectViewEntity[] views = ao().find(ProjectViewEntity.class);
+                if (views != null) {
+                    for (ProjectViewEntity view : views) {
+                        if (!portalShown(view)) {
+                            continue;
+                        }
+                        Project project = project(view.getProjectKey());
+                        if (project == null || projects.containsKey(project.getId())) {
+                            continue;
+                        }
+                        projects.put(project.getId(), project);
+                        stored.put(project.getId(), view.getPortalFields());
+                    }
+                }
+                PortalAssetsDto result = new PortalAssetsDto();
+                result.setEnabled(!projects.isEmpty());
+                for (Project project : projects.values()) {
+                    PortalAssetGroupDto group = portalGroup(project, PortalCard.effective(stored.get(project.getId())), holder);
+                    if (!group.getAssets().isEmpty()) {
+                        result.getProjects().add(group);
+                    }
+                }
+                Collections.sort(result.getProjects(), new Comparator<PortalAssetGroupDto>() {
+                    @Override
+                    public int compare(PortalAssetGroupDto left, PortalAssetGroupDto right) {
+                        return left.getProjectName().compareToIgnoreCase(right.getProjectName());
+                    }
+                });
+                return result;
+            }
+        });
+    }
+
+    private static boolean portalShown(ProjectViewEntity row) {
+        Integer mode = row.getPortalMine();
+        return mode != null && mode.intValue() == 1;
+    }
+
+    /** Types, statuses and field names all come from this project, so equal keys in other projects never mix. */
+    private PortalAssetGroupDto portalGroup(Project project, List<String> keys, String holder) {
+        PortalAssetGroupDto group = new PortalAssetGroupDto();
+        group.setProjectKey(project.getKey());
+        group.setProjectName(project.getName() == null ? project.getKey() : project.getName());
+        AssetEntity[] rows = assetsIn(project.getKey());
+        if (rows == null || rows.length == 0) {
+            return group;
+        }
+        List<AssetTypeDto> typeList = typeDtos(project.getKey(), rows);
+        Map<String, AssetTypeDto> types = indexTypes(typeList);
+        Map<Integer, AssetEntity> index = indexAssets(rows);
+        Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
+        Map<String, StatusDto> statuses = new HashMap<String, StatusDto>();
+        for (StatusDto status : statusDtos(project.getKey(), null)) {
+            statuses.put(status.getStatusKey(), status);
+        }
+        I18nHelper labels = i18n();
+        for (AssetEntity row : rows) {
+            AssetTypeDto type = types.get(row.getTypeKey());
+            String role = holderRole(row, attributes.get(row.getID()), type, holder);
+            if (role == null) {
+                continue;
+            }
+            PortalAssetDto item = new PortalAssetDto();
+            item.setName(row.getName());
+            item.setRole(role);
+            item.setTypeLabel(type == null ? row.getTypeKey() : type.getLabel());
+            item.setColor(type == null ? "#5D6B82" : type.getColor());
+            item.setIcon(type == null ? TypeIcons.DEFAULT_OBJECT : type.getIcon());
+            List<AttributeDto> values = attributeDtos(type, attributes.get(row.getID()));
+            for (String key : keys) {
+                if ("key".equals(key)) {
+                    item.setObjectKey(row.getObjectKey());
+                } else if ("status".equals(key)) {
+                    String statusKey = Statuses.canonical(row.getStatus());
+                    StatusDto status = statuses.get(statusKey);
+                    item.setStatusLabel(status == null || status.getLabel() == null ? statusKey : status.getLabel());
+                    item.setStatusCategory(status == null ? "" : status.getCategory());
+                } else if ("type".equals(key)) {
+                    addDetail(item, labels.getText("asset-tree.ui.type"), FieldKinds.TEXT, item.getTypeLabel());
+                } else if ("location".equals(key)) {
+                    addDetail(item, labels.getText("asset-tree.ui.columnLocation"), FieldKinds.TEXT, location(row, index));
+                } else if ("description".equals(key)) {
+                    addDetail(item, labels.getText("asset-tree.ui.description"), FieldKinds.TEXTAREA, row.getDescription());
+                } else if ("created".equals(key)) {
+                    addDetail(item, labels.getText("asset-tree.ui.created"), FieldKinds.TEXT, format(row.getCreated()));
+                } else if ("updated".equals(key)) {
+                    addDetail(item, labels.getText("asset-tree.ui.updated"), FieldKinds.TEXT, format(row.getUpdated()));
+                } else if (key.startsWith("attr:")) {
+                    String name = portalFieldName(typeList, key);
+                    for (AttributeDto value : values) {
+                        if (PortalCard.sameField(name, value.getName())) {
+                            addDetail(item, value.getName(), value.getKind(), value.getDisplayValue());
+                            break;
+                        }
+                    }
+                }
+            }
+            group.getAssets().add(item);
+        }
+        Collections.sort(group.getAssets(), new Comparator<PortalAssetDto>() {
+            @Override
+            public int compare(PortalAssetDto left, PortalAssetDto right) {
+                String a = left.getName() == null ? "" : left.getName();
+                String b = right.getName() == null ? "" : right.getName();
+                return a.compareToIgnoreCase(b);
+            }
+        });
+        return group;
+    }
+
+    private static String portalFieldName(List<AssetTypeDto> types, String key) {
+        String[] parts = key.split(":");
+        String typeKey = parts.length == 3 ? parts[1] : null;
+        String fieldKey = parts[parts.length - 1];
+        for (AssetTypeDto type : types) {
+            if (type == null || type.getFields() == null || (typeKey != null && !typeKey.equals(type.getTypeKey()))) {
+                continue;
+            }
+            for (FieldDto field : type.getFields()) {
+                if (fieldKey.equals(field.getFieldKey())) {
+                    return field.getLabel();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void addDetail(PortalAssetDto item, String label, String kind, String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return;
+        }
+        AttributeDto detail = new AttributeDto();
+        detail.setName(label);
+        detail.setKind(kind);
+        detail.setValue(value);
+        detail.setDisplayValue(value);
+        item.getDetails().add(detail);
+    }
+
     private ProjectViewEntity viewRow(String projectKey) {
         ProjectViewEntity[] rows = ao().find(ProjectViewEntity.class);
         if (rows != null) {
@@ -2267,6 +2449,8 @@ public class AssetServiceImpl implements AssetService {
             ProjectViewEntity row = stored.get(project.getKey());
             project.setTreeObjects(row != null && row.getTreeMode() == 1);
             project.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
+            project.setPortalMine(row != null && portalShown(row));
+            project.setPortalFields(PortalCard.effective(row == null ? null : row.getPortalFields()));
         }
     }
 

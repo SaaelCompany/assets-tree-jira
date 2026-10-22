@@ -97,6 +97,7 @@
     <web-resource key="asset-tree-web" name="Asset Tree Page Resources">
         <resource type="download" name="asset-tree.css" location="css/asset-tree.css"/>
         <resource type="download" name="qr-code.js" location="js/qr-code.js"/>
+        <resource type="download" name="type-icons.js" location="js/type-icons.js"/>
         <resource type="download" name="asset-tree.js" location="js/asset-tree.js"/>
     </web-resource>
 
@@ -117,6 +118,12 @@
         <context>customerportal</context>
         <resource type="download" name="asset-field.css" location="css/asset-field.css"/>
         <resource type="download" name="asset-field.js" location="js/asset-field.js"/>
+    </web-resource>
+
+    <web-resource key="asset-tree-portal" name="Asset Tree Customer Assets">
+        <resource type="download" name="portal-assets.css" location="css/portal-assets.css"/>
+        <resource type="download" name="portal-assets.js" location="js/portal-assets.js"/>
+        <resource type="download" name="type-icons.js" location="js/type-icons.js"/>
     </web-resource>
 
     <listener key="asset-tree-flow-listener" name="Asset Tree Flow Listener" class="com.assetstree.jira.event.AssetFlowListener">

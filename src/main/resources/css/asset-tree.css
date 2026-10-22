@@ -5485,6 +5485,38 @@ a.asset-tree-url {
     display: none;
 }
 
+/* Customer assets on the portal (settings, Portal tab) */
+#asset-tree-app .asset-tree-report > .asset-tree-settings-block.asset-tree-portal-mine {
+    flex: 0 0 auto;
+    max-width: none;
+    margin: 12px 0 4px;
+    padding: 0;
+}
+
+#asset-tree-app .asset-tree-portal-mine .asset-tree-check-row {
+    margin: 8px 0;
+}
+
+#asset-tree-app .asset-tree-portal-mine-fields[hidden] {
+    display: none;
+}
+
+#asset-tree-app .asset-tree-portal-mine-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    margin-top: 8px;
+}
+
+#asset-tree-app .asset-tree-portal-mine-choice {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink);
+    font-size: 14px;
+    cursor: pointer;
+}
+
 /* ------------------------------------------------------------------
    Unified look. One style for buttons, fields, headings, labels and
    dialogs across the page, the settings and every dialog, following

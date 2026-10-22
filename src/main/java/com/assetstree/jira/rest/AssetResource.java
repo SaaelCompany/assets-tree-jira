@@ -4,6 +4,7 @@ import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
+import com.assetstree.jira.dto.PortalViewDto;
 import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
@@ -577,6 +578,28 @@ public class AssetResource {
                 PortalProjectDto dto = new PortalProjectDto();
                 dto.setProjectKey(projectKey);
                 return Response.ok(dto).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("portal/my-assets")
+    public Response portalAssets() {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.portalAssets(user())).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/portal-view")
+    public Response savePortalView(@PathParam("projectKey") final String projectKey, final PortalViewDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.savePortalView(user(), projectKey, draft)).build();
             }
         });
     }

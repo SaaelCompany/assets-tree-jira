@@ -32,4 +32,19 @@ public interface ProjectViewEntity extends Entity {
     String getColumnList();
 
     void setColumnList(String columnList);
+
+    /**
+     * 1 — customers see equipment held by them on the portal. Null on rows saved before 1.3.12.
+     */
+    Integer getPortalMine();
+
+    void setPortalMine(Integer portalMine);
+
+    /**
+     * Comma-separated keys of what the portal shows about each item; empty keeps the built-in set.
+     */
+    @StringLength(450)
+    String getPortalFields();
+
+    void setPortalFields(String portalFields);
 }

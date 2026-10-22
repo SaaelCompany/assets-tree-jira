@@ -45,6 +45,12 @@ public final class PortalPageMarkup {
                 + "\"><script src=\"" + escape(base)
                 + "/download/resources/" + PluginInfo.KEY
                 + ":asset-tree-field/asset-field.js?v=" + PluginInfo.VERSION
+                + "\"></script><link rel=\"stylesheet\" href=\"" + escape(base)
+                + "/download/resources/" + PluginInfo.KEY
+                + ":asset-tree-portal/portal-assets.css?v=" + PluginInfo.VERSION
+                + "\"><script src=\"" + escape(base)
+                + "/download/resources/" + PluginInfo.KEY
+                + ":asset-tree-portal/portal-assets.js?v=" + PluginInfo.VERSION
                 + "\"></script>";
         return html.getBytes(StandardCharsets.UTF_8);
     }

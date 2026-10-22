@@ -41,7 +41,7 @@ public class TypeIconsTest {
 
     @Test
     public void pageScriptDrawsEveryKeyAndEachHasALabel() throws IOException {
-        String script = new String(Files.readAllBytes(Paths.get("src/main/resources/js/asset-tree.js")), StandardCharsets.UTF_8);
+        String script = new String(Files.readAllBytes(Paths.get("src/main/resources/js/type-icons.js")), StandardCharsets.UTF_8);
         Matcher matcher = Pattern.compile("\\{ key: '([a-z0-9]+)', g: '([a-z]+)', d: '").matcher(script);
         Set<String> drawn = new HashSet<String>();
         while (matcher.find()) {
