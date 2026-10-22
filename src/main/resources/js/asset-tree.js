@@ -10680,13 +10680,19 @@
         state.portalRules.forEach(function (rule) {
             var card = el('div', 'asset-tree-portal-rule');
             var when = el('div', 'asset-tree-portal-when');
-            (rule.conditions || []).forEach(function (condition, index) {
-                var line = el('p', null, (index ? t('portalAddCondition') + ' ' : t('portalIf') + ' ')
-                    + (condition.field || '') + ' ' + t('portalEquals') + ' ' + (condition.option || ''));
+            (rule.conditions || []).forEach(function (condition) {
+                var line = el('p', 'asset-tree-portal-cond');
+                line.appendChild(el('span', 'asset-tree-portal-cond-field', condition.field || ''));
+                line.appendChild(el('span', 'asset-tree-portal-equals', '='));
+                line.appendChild(el('span', null, condition.option || ''));
                 when.appendChild(line);
             });
             card.appendChild(when);
-            card.appendChild(el('p', 'asset-tree-portal-target', t('portalThen') + ' ' + (rule.assetPath || rule.assetName || '')));
+            var target = el('p', 'asset-tree-portal-target');
+            target.appendChild(el('span', 'asset-tree-portal-arrow', '→'));
+            target.appendChild(el('span', null, rule.assetPath || rule.assetName || ''));
+            target.title = t('portalThen');
+            card.appendChild(target);
             var actions = el('div', 'asset-tree-portal-rule-actions');
             actions.appendChild(button(t('portalEditRule'), 'asset-tree-btn', function () {
                 state.portalDraft = {
@@ -10769,7 +10775,7 @@
         form.appendChild(el('p', 'asset-tree-section-title', editing ? t('portalRuleEditing') : t('portalRuleNew')));
         form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
-        form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
+        form.appendChild(button('+ ' + t('portalAddCondition'), 'asset-tree-btn subtle', function () {
             if (draft.conditions.length >= 6) return;
             draft.conditions.push({ field: '', option: '' });
             paintConditions();
