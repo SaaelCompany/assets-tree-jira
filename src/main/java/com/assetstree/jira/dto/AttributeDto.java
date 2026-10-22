@@ -11,6 +11,7 @@ public class AttributeDto {
     private boolean required;
     private boolean showOnIssue;
     private String value;
+    private String displayValue;
 
     public AttributeDto() {
     }
@@ -67,5 +68,13 @@ public class AttributeDto {
 
     public void setValue(String value) {
         this.value = value;
+    }
+
+    public String getDisplayValue() {
+        return displayValue;
+    }
+
+    public void setDisplayValue(String displayValue) {
+        this.displayValue = displayValue;
     }
 }

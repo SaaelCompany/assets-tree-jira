@@ -682,7 +682,7 @@
             parts.push(asset.custodian.displayName || '', asset.custodian.email || '', asset.custodian.department || '');
         }
         (asset.attributes || []).forEach(function (attribute) {
-            parts.push(attribute.name || '', attribute.value || '');
+            parts.push(attribute.name || '', attribute.value || '', attribute.displayValue || '');
             if (attribute.kind === 'date' && attribute.value) parts.push(formatFieldDate(attribute.value));
         });
         return parts.join('\n').toLowerCase();
@@ -786,15 +786,18 @@
         return t('opContains');
     }
 
-    function attrRaw(asset, key) {
+    function attrRecord(asset, key) {
         var fieldKey = key.slice(5);
         var attrs = asset.attributes || [];
         for (var i = 0; i < attrs.length; i++) {
-            if (attrs[i].fieldKey === fieldKey || attrs[i].name === fieldKey) {
-                return attrs[i].value || '';
-            }
+            if (attrs[i].fieldKey === fieldKey || attrs[i].name === fieldKey) return attrs[i];
         }
-        return '';
+        return null;
+    }
+
+    function attrRaw(asset, key) {
+        var found = attrRecord(asset, key);
+        return found ? (found.value || '') : '';
     }
 
     function fieldRaw(asset, key) {
@@ -848,6 +851,7 @@
         var wanted = String(label || '').trim().toLowerCase();
         var found = false;
         var raw = '';
+        var shown = '';
         (asset.attributes || []).forEach(function (attribute) {
             var name = String(attribute.name || '').trim().toLowerCase();
             var named = wanted && name === wanted;
@@ -855,9 +859,12 @@
             if (!named && !keyed) return;
             found = true;
             var value = String(attribute.value || '').trim();
-            if (value && !raw) raw = value;
+            if (value && !raw) {
+                raw = value;
+                shown = attribute.displayValue || '';
+            }
         });
-        return { found: found, raw: raw };
+        return { found: found, raw: raw, shown: shown };
     }
 
     function attrGroupPasses(asset, rule) {
@@ -904,8 +911,8 @@
 
     function compareByField(left, right, key) {
         var kind = fieldSpec(key).kind;
-        var av = fieldRaw(left, key);
-        var bv = fieldRaw(right, key);
+        var av = kind === 'user' ? attributeText(attrRecord(left, key)) : fieldRaw(left, key);
+        var bv = kind === 'user' ? attributeText(attrRecord(right, key)) : fieldRaw(right, key);
         if (kind === 'date') {
             return String(av).localeCompare(String(bv));
         }
@@ -1378,6 +1385,7 @@
         var raw = attribute && attribute.value ? String(attribute.value) : '';
         if (!raw) return '';
         var kind = attribute.kind;
+        if (kind === 'user') return attribute.displayValue || raw;
         if (kind === 'date') return formatFieldDate(raw);
         if (kind === 'selects' || kind === 'checks' || kind === 'labels' || kind === 'version') {
             return splitStored(raw).join(', ');
@@ -1475,7 +1483,7 @@
             host.innerHTML = '';
             host.removeAttribute('role');
             host.tabIndex = -1;
-            var control = fieldControl(fieldSchema(asset, attribute), attribute.value || '', false);
+            var control = fieldControl(fieldSchema(asset, attribute), attribute.value || '', false, attribute.displayValue);
             host.appendChild(control);
             var typed = attribute.kind === 'labels' || attribute.kind === 'url' || attribute.kind === 'version';
             if (!typed) {
@@ -3525,10 +3533,7 @@
             return text.length > 120 ? text.slice(0, 117) + '...' : text;
         }
         if (key === 'created' || key === 'updated') return asset[key] ? stamp(asset[key]) : '';
-        if (key.indexOf('attr:') === 0) {
-            var raw = attrRaw(asset, key);
-            return fieldSpec(key).kind === 'date' && raw ? formatFieldDate(raw) : raw;
-        }
+        if (key.indexOf('attr:') === 0) return attributeText(attrRecord(asset, key));
         return '';
     }
 
@@ -5277,7 +5282,8 @@
             var attrs = asset.attributes || [];
             for (var i = 0; i < attrs.length; i++) {
                 if (attrs[i] && String(attrs[i].fieldKey || '').toLowerCase() === fieldKey) {
-                    return String(attrs[i].value || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+                    var line = attrs[i].kind === 'user' ? attributeText(attrs[i]) : attrs[i].value;
+                    return String(line || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
                 }
             }
             return '';
@@ -6209,7 +6215,7 @@
         return box;
     }
 
-    function fieldControl(fieldDef, value, disabled) {
+    function fieldControl(fieldDef, value, disabled, label) {
         var kind = (fieldDef && fieldDef.kind) || 'text';
         var options = fieldOptions(fieldDef);
         if (kind === 'textarea') {
@@ -6217,7 +6223,7 @@
             area.classList.add('asset-tree-field-value');
             return area;
         }
-        if (kind === 'user') return userBox(value || '', !!disabled);
+        if (kind === 'user') return userBox(value || '', !!disabled, label);
         if (kind === 'date') {
             var date = input('', value || '', !!disabled);
             date.type = 'date';
@@ -7618,19 +7624,21 @@
     function renderSchema(container, typeKey, values) {
         container.innerHTML = '';
         var byKey = {};
+        var labels = {};
         (values || []).forEach(function (item) {
             byKey[item.fieldKey || item.name] = item.value || '';
+            labels[item.fieldKey || item.name] = item.displayValue || '';
         });
         fieldsOf(typeKey).forEach(function (fieldDef) {
             var current = byKey[fieldDef.fieldKey] || '';
-            var control = fieldControl(fieldDef, current, !state.canEdit);
+            var control = fieldControl(fieldDef, current, !state.canEdit, labels[fieldDef.fieldKey]);
             var wrap = field(fieldDef.label + (fieldDef.required ? ' *' : ''), control, true);
             wrap.setAttribute('data-field-key', fieldDef.fieldKey);
             container.appendChild(wrap);
         });
     }
 
-    function userBox(userKey, disabled) {
+    function userBox(userKey, disabled, label) {
         var box = el('div', 'asset-tree-userbox');
         var hidden = el('input');
         hidden.type = 'hidden';
@@ -7640,7 +7648,7 @@
         text.type = 'search';
         text.placeholder = t('custodianSearch');
         text.disabled = !!disabled;
-        text.value = userKey || '';
+        text.value = userKey ? (label || userKey) : '';
         var list = el('div', 'asset-tree-user-results');
         var timer = null;
         var searchSeq = 0;
@@ -8087,7 +8095,7 @@
         var key = chartBucketKey(raw, dim.kind);
         return {
             key: key,
-            label: key ? (dim.kind === 'date' ? formatFieldDate(raw) : attributeText({ kind: dim.kind, value: raw })) : t('chartUnset'),
+            label: key ? (dim.kind === 'date' ? formatFieldDate(raw) : attributeText({ kind: dim.kind, value: raw, displayValue: grouped.shown })) : t('chartUnset'),
             raw: raw
         };
     }

@@ -252,7 +252,7 @@
         card.appendChild(el('strong', null, asset.name || ''));
         (asset.attributes || []).forEach(function (attr) {
             if (!attr || !attr.name || attr.showOnIssue === false) return;
-            card.appendChild(cardRow(attr.name, attr.value || ''));
+            card.appendChild(cardRow(attr.name, attr.displayValue || attr.value || ''));
         });
         var person = asset.custodian && asset.custodian.displayName ? asset.custodian.displayName : '';
         if (person) card.appendChild(cardRow(t(i18n, 'custodian'), person));

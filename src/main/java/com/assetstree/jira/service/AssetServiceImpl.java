@@ -4877,7 +4877,9 @@ public class AssetServiceImpl implements AssetService {
             dto.setKind(field.getKind());
             dto.setRequired(field.isRequired());
             dto.setShowOnIssue(field.isShowOnIssue());
-            dto.setValue(values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "");
+            String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
+            dto.setValue(value);
+            dto.setDisplayValue(FieldKinds.USER.equals(field.getKind()) ? userLabel(value) : value);
             result.add(dto);
         }
         return result;
@@ -4982,6 +4984,21 @@ public class AssetServiceImpl implements AssetService {
             }
         }
         return "";
+    }
+
+    private String userLabel(String userKey) {
+        if (userKey == null || userKey.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            ApplicationUser user = userManager().getUserByKey(userKey.trim());
+            if (user != null && user.getDisplayName() != null && !user.getDisplayName().isEmpty()) {
+                return user.getDisplayName();
+            }
+        } catch (RuntimeException ex) {
+            log.debug("User {} was not resolved", userKey, ex);
+        }
+        return userKey;
     }
 
     private String displayName(String userKey) {

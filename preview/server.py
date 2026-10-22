@@ -1138,6 +1138,8 @@ def asset_dto(asset, text, with_issues):
             "required": field["required"],
             "showOnIssue": field["showOnIssue"] if "showOnIssue" in field else True,
             "value": asset["values"].get(field["fieldKey"], ""),
+            "displayValue": (USERS.get(asset["values"].get(field["fieldKey"], "")) or {}).get("displayName") or asset["values"].get(field["fieldKey"], "")
+            if field["kind"] == "user" else asset["values"].get(field["fieldKey"], ""),
         })
     holder = USERS.get(asset.get("custodianKey") or "")
     dto = {
@@ -3125,7 +3127,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.7",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.8",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

@@ -35,7 +35,7 @@
             <strong>$textutils.htmlEncode($asset.name)</strong>
             #foreach($attr in $asset.attributes)
               #if($attr.showOnIssue && $attr.name && $attr.name != "")
-                <div class="asset-tree-panel-card-row"><span>$textutils.htmlEncode($attr.name)</span><span>$textutils.htmlEncode($!attr.value)</span></div>
+                <div class="asset-tree-panel-card-row"><span>$textutils.htmlEncode($attr.name)</span><span>#if($attr.displayValue)$textutils.htmlEncode($attr.displayValue)#else$textutils.htmlEncode($!attr.value)#end</span></div>
               #end
             #end
             #if($i18n && $asset.custodian && $asset.custodian.displayName && $asset.custodian.displayName != "")
