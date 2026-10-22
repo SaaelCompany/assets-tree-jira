@@ -1462,11 +1462,9 @@ public class AssetServiceImpl implements AssetService {
                 if (!canWrite(user, project) && !canEditIssue(user, issue)) {
                     throw new AssetException(403, "asset-tree.error.forbidden");
                 }
-                int linked = ao().count(AssetIssueLinkEntity.class,
-                        Query.select().where("ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId));
-                ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId);
-                if (linked > 0) {
-                    applyRemovedFlow(user, asset, issue);
+                String before = dropLink(assetId, issueId);
+                if (before != null) {
+                    applyRemovedFlow(user, asset, issue, before);
                 }
                 return null;
             }
@@ -2652,7 +2650,24 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private void applyRemovedFlow(ApplicationUser user, AssetEntity asset, Issue issue) {
+    /** Deletes the link and returns the status the asset had when it was linked, or null when there was no link. */
+    private String dropLink(int assetId, long issueId) {
+        AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class,
+                Query.select().where("ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId));
+        if (links == null || links.length == 0) {
+            return null;
+        }
+        String before = "";
+        for (AssetIssueLinkEntity link : links) {
+            if (before.isEmpty() && link.getStatusBefore() != null) {
+                before = link.getStatusBefore().trim();
+            }
+        }
+        ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId);
+        return before;
+    }
+
+    private void applyRemovedFlow(ApplicationUser user, AssetEntity asset, Issue issue, String statusBefore) {
         if (asset == null || issue == null || issue.getProjectObject() == null || isLocation(asset)) {
             return;
         }
@@ -2667,6 +2682,9 @@ public class AssetServiceImpl implements AssetService {
         String typeId = issue.getIssueType() == null || issue.getIssueType().getId() == null
                 ? "" : issue.getIssueType().getId().trim();
         String next = FlowBook.removedStatus(FlowBook.read(stored.getBody()), typeId);
+        if (FlowBook.RESTORE.equals(next)) {
+            next = statusBefore == null || statusBefore.isEmpty() ? null : statusBefore;
+        }
         if (next == null || !knownStatusKeys(projectKey).contains(next)
                 || next.equals(Statuses.canonical(asset.getStatus()))) {
             return;
@@ -2841,11 +2859,9 @@ public class AssetServiceImpl implements AssetService {
                 ao().executeInTransaction(new TransactionCallback<Void>() {
                     @Override
                     public Void doInTransaction() {
-                        int linked = ao().count(AssetIssueLinkEntity.class,
-                                Query.select().where("ASSET_ID = ? AND ISSUE_ID = ?", previous, issue.getId()));
-                        ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", previous, issue.getId());
-                        if (linked > 0) {
-                            applyRemovedFlow(user, ao().get(AssetEntity.class, previous.intValue()), issue);
+                        String before = dropLink(previous.intValue(), issue.getId().longValue());
+                        if (before != null) {
+                            applyRemovedFlow(user, ao().get(AssetEntity.class, previous.intValue()), issue, before);
                         }
                         return null;
                     }
@@ -2960,7 +2976,8 @@ public class AssetServiceImpl implements AssetService {
                 }
                 ao().create(AssetIssueLinkEntity.class,
                         new DBParam("ASSET_ID", assetId),
-                        new DBParam("ISSUE_ID", issue.getId()));
+                        new DBParam("ISSUE_ID", issue.getId()),
+                        new DBParam("STATUS_BEFORE", Statuses.canonical(asset.getStatus())));
                 return toIssue(issue);
             }
         });

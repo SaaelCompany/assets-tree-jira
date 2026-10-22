@@ -15,4 +15,9 @@ public interface AssetIssueLinkEntity extends Entity {
     long getIssueId();
 
     void setIssueId(long issueId);
+
+    /** Equipment status when the asset joined the request; empty for links made before 1.3.11. */
+    String getStatusBefore();
+
+    void setStatusBefore(String statusBefore);
 }

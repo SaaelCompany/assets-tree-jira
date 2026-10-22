@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
  * graph is read as one process. The first process that matches a request wins.
  */
 public final class FlowBook {
+    /** Removed-status value that brings back the status the equipment had before it joined the request. */
+    public static final String RESTORE = "_restore";
     private static final Pattern ID = Pattern.compile("[a-z0-9]{4,16}");
     private static final int MAX_PROCESSES = 20;
     private static final int NAME = 80;

@@ -63,6 +63,14 @@ public class FlowBookTest {
         assertNull(FlowBook.removedStatus(Arrays.asList(repair), "10009"));
     }
 
+    @Test
+    public void restoreSurvivesTheRoundTrip() {
+        FlowProcessDto back = process("proc1", "Вернуть", request("req1", "10001"));
+        back.setRemovedStatus(FlowBook.RESTORE);
+        List<FlowProcessDto> processes = FlowBook.read(FlowBook.write(Arrays.asList(back)));
+        assertEquals(FlowBook.RESTORE, FlowBook.removedStatus(processes, "10001"));
+    }
+
     private static FlowProcessDto process(String id, String name, Object... items) {
         FlowProcessDto process = new FlowProcessDto();
         process.setId(id);
