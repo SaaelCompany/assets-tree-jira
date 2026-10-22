@@ -1031,7 +1031,152 @@ PORTAL_DEFAULT = ["key", "type", "status", "location"]
 def project_view(project_key):
     view = (STATE.get("views") or {}).get(project_key) or {}
     return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or []),
-            "portalMine": bool(view.get("portalMine")), "portalFields": list(view.get("portalFields") or PORTAL_DEFAULT)}
+            "portalMine": bool(view.get("portalMine")), "portalFields": list(view.get("portalFields") or PORTAL_DEFAULT),
+            "labs": [lab for lab in LABS if lab in (view.get("labs") or [])]}
+
+
+LABS = ("schedule", "map", "reports", "lifecycle")
+
+
+def lab_on(project_key, lab):
+    return lab in project_view(project_key)["labs"]
+
+
+def lab_off(text):
+    return 404, {"message": text.get("asset-tree.error.lab.off", "Off")}
+
+
+def save_labs(project_key, body, text):
+    picked = [lab for lab in LABS if lab in ((body or {}).get("labs") or [])]
+    STATE.setdefault("views", {}).setdefault(project_key, {})["labs"] = picked
+    return 200, {"labs": picked}
+
+
+def lab_body(body, text, limit):
+    raw = ((body or {}).get("body") or "").strip() or "{}"
+    if len(raw) > limit:
+        return None, (400, {"message": text.get("asset-tree.error.lab.size", "Size")})
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        parsed = None
+    if not isinstance(parsed, dict):
+        return None, (400, {"message": text.get("asset-tree.error.lab.body", "Body")})
+    return raw, None
+
+
+def lab_doc_dto(project_key, kind, ref):
+    row = STATE.setdefault("labdocs", {}).get((project_key, kind, ref))
+    return {"kind": kind, "ref": ref, "body": row["body"] if row else "{}",
+            "updated": row["updated"] if row else None, "updatedBy": row["by"] if row else None}
+
+
+def store_lab_doc(project_key, kind, ref, body):
+    STATE.setdefault("labdocs", {})[(project_key, kind, ref)] = {"body": body, "updated": now_stamp(), "by": "Иванов Сергей"}
+
+
+def write_off_dto(row):
+    asset = STATE["assets"].get(row["assetId"]) or {}
+    def name(key):
+        return (USERS.get(key) or {}).get("displayName", key or "")
+    return {"id": row["id"], "assetId": row["assetId"], "assetName": asset.get("name", ""), "objectKey": asset.get("objectKey", ""),
+            "state": row["state"], "reason": row["reason"], "requestedBy": row["requestedBy"], "requestedByName": name(row["requestedBy"]),
+            "requested": row["requested"], "decidedBy": row.get("decidedBy") or "", "decidedByName": name(row.get("decidedBy")) if row.get("decidedBy") else "",
+            "decided": row.get("decided"), "note": row.get("note") or "", "statusKey": row.get("statusKey") or ""}
+
+
+def life_dto(asset):
+    rows = [row for row in STATE.setdefault("writeoffs", []) if row["assetId"] == asset["id"]]
+    latest = rows[-1] if rows else None
+    return {"assetId": asset["id"], "body": lab_doc_dto(asset["projectKey"], "life", asset["id"])["body"],
+            "writeOff": write_off_dto(latest) if latest else None, "canDecide": True}
+
+
+def pending_write_off(asset_id):
+    for row in STATE.setdefault("writeoffs", []):
+        if row["assetId"] == asset_id and row["state"] == "pending":
+            return row
+    return None
+
+
+def labs_api(method, path, body, text, user):
+    match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/labs", path)
+    if match and method == "PUT":
+        return save_labs(match.group(1), body, text)
+    match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/lab/([a-z]+)", path)
+    if match and method in ("GET", "PUT"):
+        project_key, kind = match.group(1), match.group(2)
+        if kind not in ("schedule", "map", "reports") or not lab_on(project_key, kind):
+            return lab_off(text)
+        if method == "PUT":
+            raw, error = lab_body(body, text, 2000000)
+            if error:
+                return error
+            store_lab_doc(project_key, kind, 0, raw)
+        return 200, lab_doc_dto(project_key, kind, 0)
+    match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/(life|writeoffs)", path)
+    if match and method == "GET":
+        project_key = match.group(1)
+        if not lab_on(project_key, "lifecycle"):
+            return lab_off(text)
+        if match.group(2) == "life":
+            return 200, [dict(lab_doc_dto(project_key, "life", ref)) for (key, kind, ref) in STATE.setdefault("labdocs", {}) if key == project_key and kind == "life"]
+        rows = [row for row in STATE.setdefault("writeoffs", []) if row["projectKey"] == project_key and row["assetId"] in STATE["assets"]]
+        return 200, [write_off_dto(row) for row in reversed(rows)]
+    match = re.fullmatch(r"/assets/(\d+)/(life|writeoff|writeoff/decision)", path)
+    if not match:
+        return None
+    asset = STATE["assets"].get(int(match.group(1)))
+    if not asset:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    if not lab_on(asset["projectKey"], "lifecycle"):
+        return lab_off(text)
+    action = match.group(2)
+    if action == "life" and method == "GET":
+        return 200, life_dto(asset)
+    if action == "life" and method == "PUT":
+        raw, error = lab_body(body, text, 20000)
+        if error:
+            return error
+        store_lab_doc(asset["projectKey"], "life", asset["id"], raw)
+        return 200, life_dto(asset)
+    if action == "writeoff" and method == "POST":
+        reason = ((body or {}).get("reason") or "").strip()[:450]
+        if not reason:
+            return 400, {"message": text.get("asset-tree.error.writeoff.reason", "Reason")}
+        if pending_write_off(asset["id"]):
+            return 409, {"message": text.get("asset-tree.error.writeoff.pending", "Pending")}
+        rows = STATE.setdefault("writeoffs", [])
+        rows.append({"id": len(rows) + 1, "assetId": asset["id"], "projectKey": asset["projectKey"], "state": "pending",
+                     "reason": reason, "requestedBy": user, "requested": now_stamp()})
+        record_activity(asset["id"], "writeoff_request", "", "", reason, user)
+        return 200, life_dto(asset)
+    if action == "writeoff" and method == "DELETE":
+        row = pending_write_off(asset["id"])
+        if not row:
+            return 409, {"message": text.get("asset-tree.error.writeoff.none", "None")}
+        row.update({"state": "cancelled", "decidedBy": user, "decided": now_stamp()})
+        record_activity(asset["id"], "writeoff_cancelled", "", "", "", user)
+        return 200, life_dto(asset)
+    if action == "writeoff/decision" and method == "POST":
+        row = pending_write_off(asset["id"])
+        if not row:
+            return 409, {"message": text.get("asset-tree.error.writeoff.none", "None")}
+        approve = bool((body or {}).get("approve"))
+        status = None
+        if approve:
+            status = canonical((body or {}).get("statusKey") or "")
+            if not status or not status_known(asset["projectKey"], status, text):
+                return 400, {"message": text["asset-tree.error.status"]}
+        note = ((body or {}).get("note") or "").strip()[:450]
+        row.update({"state": "approved" if approve else "rejected", "decidedBy": user, "decided": now_stamp(), "note": note, "statusKey": status or ""})
+        record_activity(asset["id"], "writeoff_approved" if approve else "writeoff_rejected", "", "", note, user)
+        if status and status != asset.get("status"):
+            log_activity(asset["id"], "status", "", asset.get("status"), status, user)
+            asset["status"] = status
+            asset["updated"] = now_stamp()
+        return 200, life_dto(asset)
+    return None
 
 
 def save_portal_view(project_key, body, text):
@@ -3086,7 +3231,7 @@ class Handler(BaseHTTPRequestHandler):
         view = (query.get("view") or ["all"])[0]
         if view == "dashboard":
             view = "all"
-        if view not in ("all", "mine", "search", "settings"):
+        if view not in ("all", "mine", "search", "settings", "schedule", "map", "reports"):
             view = "all"
         html = (template
                 .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
@@ -3094,6 +3239,8 @@ class Handler(BaseHTTPRequestHandler):
                 .replace("@@CSS@@", "/download/resources/asset-tree/asset-tree.css")
                 .replace("@@QR@@", "/download/resources/asset-tree/qr-code.js")
                 .replace("@@ICONS@@", "/download/resources/asset-tree/type-icons.js")
+                .replace("@@LABS_CSS@@", "/download/resources/asset-tree/asset-labs.css")
+                .replace("@@LABS@@", "/download/resources/asset-tree/asset-labs.js")
                 .replace("@@JS@@", "/download/resources/asset-tree/asset-tree.js")
                 .replace("@@REST@@", "/rest/asset-tree/1.0")
                 .replace("@@PROJECT@@", project)
@@ -3567,7 +3714,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.17",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.18",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3643,6 +3790,10 @@ setTimeout(function () {
             return save_asset_key(match.group(1), self.read_json(), text)
         if path == "/portal/my-assets" and method == "GET":
             return 200, portal_assets(self.preview_user(), text)
+        if re.fullmatch(r"/projects/[A-Za-z0-9]+/(labs|lab/[a-z]+|life|writeoffs)|/assets/\d+/(life|writeoff|writeoff/decision)", path):
+            handled = labs_api(method, path, self.read_json() if method in ("PUT", "POST") else None, text, self.preview_user())
+            if handled is not None:
+                return handled
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-view", path)
         if match and method == "PUT":
             if match.group(1) not in {item["key"] for item in PROJECTS}:

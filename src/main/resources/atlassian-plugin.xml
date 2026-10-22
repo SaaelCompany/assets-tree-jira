@@ -98,7 +98,9 @@
 
     <web-resource key="asset-tree-web" name="Asset Tree Page Resources">
         <resource type="download" name="asset-tree.css" location="css/asset-tree.css"/>
+        <resource type="download" name="asset-labs.css" location="css/asset-labs.css"/>
         <resource type="download" name="qr-code.js" location="js/qr-code.js"/>
+        <resource type="download" name="asset-labs.js" location="js/asset-labs.js"/>
         <resource type="download" name="type-icons.js" location="js/type-icons.js"/>
         <resource type="download" name="asset-tree.js" location="js/asset-tree.js"/>
     </web-resource>

@@ -37,6 +37,8 @@ public class AssetPageServlet extends HttpServlet {
         String css = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-tree.css?v=" + PluginInfo.VERSION;
         String qr = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/qr-code.js?v=" + PluginInfo.VERSION;
         String icons = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/type-icons.js?v=" + PluginInfo.VERSION;
+        String labsCss = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-labs.css?v=" + PluginInfo.VERSION;
+        String labs = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-labs.js?v=" + PluginInfo.VERSION;
         String js = contextPath + "/download/resources/" + PluginInfo.KEY + ":asset-tree-web/asset-tree.js?v=" + PluginInfo.VERSION;
         String rest = contextPath + "/rest/asset-tree/1.0";
         String project = request.getParameter("project");
@@ -47,6 +49,8 @@ public class AssetPageServlet extends HttpServlet {
                 .replace("@@CSS@@", escape(css))
                 .replace("@@QR@@", escape(qr))
                 .replace("@@ICONS@@", escape(icons))
+                .replace("@@LABS_CSS@@", escape(labsCss))
+                .replace("@@LABS@@", escape(labs))
                 .replace("@@JS@@", escape(js))
                 .replace("@@REST@@", escape(rest))
                 .replace("@@PROJECT@@", escape(project == null ? "" : project))
@@ -97,7 +101,8 @@ public class AssetPageServlet extends HttpServlet {
         if ("dashboard".equals(value)) {
             return "all";
         }
-        if ("mine".equals(value) || "search".equals(value) || "settings".equals(value)) {
+        if ("mine".equals(value) || "search".equals(value) || "settings".equals(value)
+                || "schedule".equals(value) || "map".equals(value) || "reports".equals(value)) {
             return value;
         }
         return "all";

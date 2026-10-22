@@ -77,7 +77,7 @@
         editing: false,
         detail: null,
         typeGroup: null,
-        schemaTab: 'statuses',
+        schemaTab: 'project',
         importResult: null,
         schemaTypeKey: '',
         schemaAdding: false,
@@ -100,18 +100,32 @@
     var fieldCache = null;
     var treeToken = 0;
     var noticeTimer = null;
+    var labs = null;
 
     function normalizeView(raw) {
         var value = String(raw || '').toLowerCase();
-        if (value === 'mine' || value === 'settings') {
+        if (value === 'mine' || value === 'settings' || isLabsView(value)) {
             return value;
         }
         return 'all';
     }
 
+    function isLabsView(view) {
+        return view === 'schedule' || view === 'map' || view === 'reports';
+    }
+
+    function labsViewOn(view) {
+        if (!labs) return false;
+        return labs.views().some(function (item) { return item.view === view; });
+    }
+
     function viewTitle(view) {
         if (view === 'mine') return t('menuMine');
         if (view === 'settings') return t('menuSettings');
+        if (isLabsView(view) && labs) {
+            var found = labs.views().filter(function (item) { return item.view === view; })[0];
+            if (found) return found.label;
+        }
         return t('menuAll');
     }
 
@@ -1556,6 +1570,9 @@
             { view: 'mine', label: t('menuMine') },
             { view: 'all', label: t('tabAssets') }
         ];
+        if (labs && state.projectKey) {
+            labs.views().forEach(function (item) { items.push(item); });
+        }
         if (state.canManage) {
             items.push({ view: 'settings', label: t('menuSettings') });
         }
@@ -1572,6 +1589,9 @@
     }
 
     function showView(view) {
+        if (view !== state.view && labs && !labs.leaving()) {
+            return;
+        }
         if (view === 'mine') {
             var entering = state.view !== 'mine';
             state.view = 'mine';
@@ -1637,12 +1657,17 @@
             projectPicker.appendChild(option);
         });
         projectPicker.addEventListener('change', function () {
+            if (labs && !labs.leaving()) {
+                projectPicker.value = state.projectKey;
+                return;
+            }
             switchProject(projectPicker.value);
         });
         if (state.projects.length < 2) {
             projectLabel.hidden = true;
             projectPicker.hidden = true;
         }
+        if (labs) labs.topActions(actions);
         actions.appendChild(projectLabel);
         actions.appendChild(projectPicker);
         if (state.canArrange && projectAssetKey(currentProject())) {
@@ -1727,7 +1752,7 @@
         notice.id = 'asset-tree-notice';
         app.appendChild(notice);
 
-        var frame = el('div', 'asset-tree-frame ' + (state.view === 'all' ? 'is-split' : 'is-plain'));
+        var frame = el('div', 'asset-tree-frame ' + (state.view === 'all' ? 'is-split' : 'is-plain') + (isLabsView(state.view) ? ' is-labs' : ''));
         frame.id = 'asset-tree-frame';
         app.appendChild(frame);
         var modal = el('div');
@@ -1785,6 +1810,16 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
+            return;
+        }
+        if (isLabsView(state.view)) {
+            if (labsViewOn(state.view)) {
+                labs.render(state.view, frame);
+                return;
+            }
+            state.view = 'all';
+            rememberView('all');
+            mount();
             return;
         }
         if (state.view === 'all' && needsAssetKey()) {
@@ -4741,6 +4776,8 @@
         if (item.action === 'place_in') return t('actPlaceIn');
         if (item.action === 'place_out') return t('actPlaceOut');
         if (item.action === 'service_due') return t('actServiceDue');
+        var labsVerb = labs ? labs.activityVerb(item.action) : null;
+        if (labsVerb) return labsVerb;
         return t('actUpdated');
     }
 
@@ -5758,6 +5795,11 @@
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
         var service = serviceBlock(asset);
         if (service) main.appendChild(service);
+        if (labs) {
+            labs.cardBlocks(state.detail && state.detail.id === asset.id ? state.detail : asset).forEach(function (block) {
+                main.appendChild(block);
+            });
+        }
         main.appendChild(descriptionModule(asset, true));
         main.appendChild(fileBlock(asset));
 
@@ -9913,6 +9955,9 @@
             return panel;
         }
         var sections = [];
+        if (state.canArrange || state.canConfigure) {
+            sections.push(['project', t('projectSection'), null]);
+        }
         if (state.canObjects) {
             sections.push(['exchange', t('exchangeSection'), null]);
         }
@@ -9954,7 +9999,9 @@
         });
         panel.appendChild(tabs);
         if (state.schemaTab === 'portal') panel.classList.add('is-portal');
-        if (state.schemaTab === 'types') {
+        if (state.schemaTab === 'project') {
+            renderProjectSettings(panel);
+        } else if (state.schemaTab === 'types') {
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
@@ -9970,6 +10017,93 @@
             renderStatusSettings(panel);
         }
         return panel;
+    }
+
+    function renderProjectSettings(panel) {
+        var wrap = el('div', 'asset-tree-project-settings');
+        wrap.appendChild(el('p', 'asset-tree-hint', t('projectHint')));
+        var keyBlock = el('div', 'asset-tree-settings-block asset-tree-project-section');
+        keyBlock.appendChild(renderAssetKeyForm(false));
+        wrap.appendChild(keyBlock);
+        if (state.canArrange && projectAssetKey(currentProject())) {
+            var treeBlock = el('div', 'asset-tree-settings-block asset-tree-project-section');
+            treeBlock.appendChild(el('h3', 'asset-tree-settings-title', t('projectTreeTitle')));
+            var treeRow = el('label', 'asset-tree-check-row asset-tree-tree-objects');
+            var tree = el('input');
+            tree.type = 'checkbox';
+            tree.id = 'asset-tree-project-tree-objects';
+            tree.checked = treeObjectsOn();
+            tree.addEventListener('change', function () {
+                saveProjectView({ treeObjects: tree.checked }, function () {
+                    invalidate();
+                    renderFrame();
+                });
+            });
+            treeRow.appendChild(tree);
+            var treeText = el('span');
+            treeText.appendChild(el('strong', null, t('treeObjects')));
+            treeText.appendChild(el('span', 'asset-tree-hint', t('treeObjectsHint')));
+            treeRow.appendChild(treeText);
+            treeBlock.appendChild(treeRow);
+            wrap.appendChild(treeBlock);
+        }
+        if (state.canConfigure && labs) {
+            wrap.appendChild(labs.settingsBlock(mount));
+        }
+        panel.appendChild(wrap);
+    }
+
+    function openAssetFromLabs(id) {
+        if (labs && !labs.leaving()) return;
+        state.view = 'all';
+        state.dirty = false;
+        state.editing = false;
+        rememberView('all');
+        ensureTree(function () {
+            state.loading = false;
+            mount();
+            if (byId()[id]) selectAsset(id, true);
+        });
+    }
+
+    function redrawCardFromLabs(id) {
+        if (state.view !== 'all' || state.selectedId !== id || state.editing) return;
+        var current = state.detail && state.detail.id === id ? state.detail : byId()[id];
+        if (current && document.getElementById('asset-tree-detail')) showDetail(current, false);
+    }
+
+    function reloadAssetsFromLabs(done) {
+        reloadTree(function () {
+            renderFrame();
+            if (state.view === 'all' && state.selectedId && byId()[state.selectedId]) selectAsset(state.selectedId, true);
+            if (done) done();
+        });
+    }
+
+    function refreshLabsTop() {
+        if (!labs) return;
+        var old = app.querySelector('.asset-labs-approvals');
+        var holder = old ? old.parentNode : app.querySelector('.asset-tree-actions');
+        if (old) old.parentNode.removeChild(old);
+        if (!holder) return;
+        var marker = holder.firstChild;
+        var scratch = el('div');
+        labs.topActions(scratch);
+        while (scratch.firstChild) holder.insertBefore(scratch.firstChild, marker);
+    }
+
+    function startLabs() {
+        if (labs || !window.AssetTreeLabs) return;
+        labs = window.AssetTreeLabs({
+            state: state, t: t, ajax: ajax, el: el, button: button, notify: notify,
+            openModal: openModal, closeModal: closeModal, currentProject: currentProject,
+            byId: byId, typeFor: typeFor, typeOf: typeOf, typeTile: typeTile,
+            statusLabel: statusLabel, statusColor: statusColor, statusChoices: statusChoices, lozenge: lozenge,
+            isFolder: isFolder, mayEdit: mayEdit, initials: initials,
+            formatDate: formatDate, formatFieldDate: formatFieldDate, moduleBlock: moduleBlock,
+            renderFrame: renderFrame, showView: showView, openAsset: openAssetFromLabs,
+            redrawCard: redrawCardFromLabs, reloadAssets: reloadAssetsFromLabs, refreshTop: refreshLabsTop
+        });
     }
 
     function renderExchangeSettings(panel) {
@@ -11376,6 +11510,7 @@
     }
 
     function boot() {
+        startLabs();
         state.loading = true;
         state.error = null;
         renderFrame();
