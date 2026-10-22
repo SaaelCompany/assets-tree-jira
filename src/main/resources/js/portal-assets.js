@@ -5,32 +5,22 @@
     if ((window.location.pathname || '').indexOf('/servicedesk/customer/') < 0) return;
     if (/\/servicedesk\/customer\/user\/(login|signup|forgotpassword|resetpassword)/.test(window.location.pathname)) return;
 
-    var HASH = '#my-assets';
-    var NAV_ID = 'asset-tree-pa-nav';
     var PROFILE_ID = 'asset-tree-pa-profile';
     var ownScript = currentScriptSrc();
     var data = null;
+    var requested = false;
     var iconsWanted = false;
-    var dialog = null;
 
     var TEXT = {
         ru: {
-            nav: 'Активы',
             title: 'Мои активы',
-            lead: 'Оборудование, которое числится за вами.',
-            close: 'Закрыть',
-            loading: 'Загрузка…',
             empty: 'За вами пока не числится оборудование.',
             error: 'Не удалось загрузить оборудование. Обновите страницу.',
             role: 'Вы указаны как',
             count: function (n) { return n + ' ' + plural(n, 'позиция', 'позиции', 'позиций'); }
         },
         en: {
-            nav: 'Assets',
             title: 'My assets',
-            lead: 'Equipment registered to you.',
-            close: 'Close',
-            loading: 'Loading…',
             empty: 'No equipment is registered to you yet.',
             error: 'Could not load the equipment. Refresh the page.',
             role: 'You are listed as',
@@ -237,157 +227,6 @@
         });
     }
 
-    /* ---------- dialog ---------- */
-
-    function closeDialog() {
-        if (!dialog) return;
-        if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
-        dialog = null;
-        document.removeEventListener('keydown', onKey, true);
-        if (window.location.hash === HASH && window.history && window.history.replaceState) {
-            window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
-        }
-    }
-
-    function onKey(event) {
-        if (event.key === 'Escape' || event.keyCode === 27) closeDialog();
-    }
-
-    function openDialog() {
-        if (dialog) return;
-        dialog = el('div', 'asset-tree-pa-backdrop');
-        var box = el('div', 'asset-tree-pa-dialog');
-        box.setAttribute('role', 'dialog');
-        box.setAttribute('aria-modal', 'true');
-        box.setAttribute('aria-label', t('title'));
-        var head = el('div', 'asset-tree-pa-dialog-head');
-        head.appendChild(el('h2', null, t('title')));
-        var close = el('button', 'asset-tree-pa-close');
-        close.type = 'button';
-        close.setAttribute('aria-label', t('close'));
-        close.title = t('close');
-        close.textContent = '×';
-        close.addEventListener('click', closeDialog);
-        head.appendChild(close);
-        box.appendChild(head);
-        box.appendChild(el('p', 'asset-tree-pa-lead', t('lead')));
-        var body = el('div', 'asset-tree-pa-body');
-        body.appendChild(el('p', 'asset-tree-pa-message', t('loading')));
-        box.appendChild(body);
-        dialog.appendChild(box);
-        dialog.addEventListener('mousedown', function (event) {
-            if (event.target === dialog) closeDialog();
-        });
-        document.body.appendChild(dialog);
-        document.addEventListener('keydown', onKey, true);
-        close.focus();
-        load(function (payload) {
-            if (payload) data = payload;
-            if (!dialog) return;
-            renderList(body, payload);
-        });
-    }
-
-    /* ---------- header link ---------- */
-
-    function cleanText(node) {
-        return (node.textContent || '').replace(/\d+/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').toLowerCase();
-    }
-
-    function visible(node) {
-        if (!node || !node.getBoundingClientRect) return false;
-        var box = node.getBoundingClientRect();
-        return box.width > 0 && box.height > 0;
-    }
-
-    function nearTop(node) {
-        var box = node.getBoundingClientRect();
-        return box.height > 0 && box.top + (window.pageYOffset || 0) < 120;
-    }
-
-    /* The Requests control in the portal header: a link on older portals, a pill button with a counter on newer ones. */
-    function requestsLink() {
-        var words = /^(запросы|мои запросы|requests|my requests)$/;
-        var nodes = document.querySelectorAll('a, button');
-        var byHref = null;
-        for (var i = 0; i < nodes.length; i++) {
-            var node = nodes[i];
-            if (node.id === NAV_ID || !visible(node) || !nearTop(node)) continue;
-            if (words.test(cleanText(node))) return node;
-            if (!byHref && (node.getAttribute('href') || '').indexOf('/servicedesk/customer/user/requests') >= 0) byHref = node;
-        }
-        return byHref;
-    }
-
-    function headerNode() {
-        var nodes = document.querySelectorAll('#header, header[role="banner"], .cv-header, header');
-        for (var i = 0; i < nodes.length; i++) {
-            if (visible(nodes[i])) return nodes[i];
-        }
-        return null;
-    }
-
-    function copyLook(from, to) {
-        var style = window.getComputedStyle ? window.getComputedStyle(from) : null;
-        if (!style) return;
-        ['background-color', 'color', 'border-top-width', 'border-top-style', 'border-top-color', 'border-radius',
-            'padding-left', 'padding-right', 'font-size', 'font-weight', 'font-family', 'height', 'line-height', 'box-shadow']
-            .forEach(function (name) {
-                var value = style.getPropertyValue(name);
-                if (value) to.style.setProperty(name.replace('border-top-', 'border-'), value);
-            });
-    }
-
-    function profileHref() {
-        return contextPath() + '/servicedesk/customer/user/profile' + HASH;
-    }
-
-    function navLink(className) {
-        var link = el('a', className, t('nav'));
-        link.id = NAV_ID;
-        link.href = profileHref();
-        link.addEventListener('click', function (event) {
-            if (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1) return;
-            event.preventDefault();
-            event.stopPropagation();
-            openDialog();
-        });
-        return link;
-    }
-
-    function ensureNav() {
-        if (document.getElementById(NAV_ID)) return;
-        var anchor = requestsLink();
-        if (anchor) {
-            var target = anchor;
-            while (target.parentNode && target.parentNode !== document.body
-                && target.parentNode.children.length === 1 && !target.parentNode.matches('header, #header, nav, ul')) {
-                target = target.parentNode;
-            }
-            var link = navLink('asset-tree-pa-navlink is-copy');
-            copyLook(anchor, link);
-            if (target.parentNode.tagName.toLowerCase() === 'ul') {
-                var li = el('li', target.className);
-                li.appendChild(link);
-                target.parentNode.insertBefore(li, target);
-                if (visible(link)) return;
-                li.parentNode.removeChild(li);
-            } else {
-                target.parentNode.insertBefore(link, target);
-                if (visible(link)) return;
-                link.parentNode.removeChild(link);
-            }
-        }
-        var header = headerNode();
-        if (header) {
-            var standalone = navLink('asset-tree-pa-navlink is-standalone');
-            header.appendChild(standalone);
-            if (visible(standalone)) return;
-            header.removeChild(standalone);
-        }
-        document.body.appendChild(navLink('asset-tree-pa-navlink is-floating'));
-    }
-
     /* ---------- profile section ---------- */
 
     function onProfile() {
@@ -458,10 +297,23 @@
 
     /* ---------- boot ---------- */
 
+    /* The portal is a single-page app, so the profile can open without a page load. */
     function apply() {
-        if (!data || !data.enabled || !document.body) return;
-        ensureNav();
-        ensureProfile();
+        if (!document.body || !onProfile()) return;
+        if (data) {
+            if (data.enabled) ensureProfile();
+            return;
+        }
+        if (requested) return;
+        requested = true;
+        load(function (payload) {
+            if (!payload) {
+                requested = false;
+                return;
+            }
+            data = payload;
+            if (data.enabled) ensureProfile();
+        });
     }
 
     function watch() {
@@ -480,13 +332,8 @@
             }).observe(document.body, { childList: true, subtree: true });
         }
         apply();
-        if (data && data.enabled && window.location.hash === HASH) openDialog();
     }
 
-    load(function (payload) {
-        if (!payload || !payload.enabled) return;
-        data = payload;
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch);
-        else watch();
-    });
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch);
+    else watch();
 })();
