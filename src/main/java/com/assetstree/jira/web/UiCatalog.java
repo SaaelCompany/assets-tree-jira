@@ -615,6 +615,11 @@ public final class UiCatalog {
             "columnsTitle",
             "columnsHint",
             "columnsReset",
+            "columnsShown",
+            "columnsAdd",
+            "columnsSearch",
+            "columnsAllTypes",
+            "columnsRemove",
             "moveUp",
             "moveDown"
     };

@@ -464,6 +464,63 @@
     padding: 0 6px;
 }
 
+.asset-tree-columns-head {
+    margin: 14px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #5e6c84;
+    text-transform: uppercase;
+}
+
+.asset-tree-columns-name {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+
+.asset-tree-columns-name > span:first-child {
+    flex: 0 0 auto;
+}
+
+.asset-tree-columns-types {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: #6b778c;
+}
+
+.asset-tree-columns li.is-fixed {
+    color: #6b778c;
+}
+
+.asset-tree-columns li.is-empty {
+    color: #6b778c;
+    justify-content: center;
+}
+
+.asset-tree-columns-tools {
+    display: flex;
+    gap: 8px;
+}
+
+.asset-tree-columns-tools input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.asset-tree-columns-tools select {
+    flex: 0 1 200px;
+    min-width: 0;
+}
+
+.asset-tree-columns-pick {
+    max-height: 220px;
+}
+
 .asset-tree-side {
     display: flex;
     flex-direction: column;

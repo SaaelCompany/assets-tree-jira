@@ -749,15 +749,24 @@
         state.types.forEach(function (type) {
             (type.fields || []).forEach(function (field) {
                 var name = String(field.label || '').trim().toLowerCase();
-                if (!field.fieldKey || !name || seen[name]) return;
-                seen[name] = true;
-                fields.push({
+                if (!field.fieldKey || !name) return;
+                if (seen[name]) {
+                    if (seen[name].typeKeys.indexOf(type.typeKey) < 0) {
+                        seen[name].typeKeys.push(type.typeKey);
+                        seen[name].typeLabels.push(type.label);
+                    }
+                    return;
+                }
+                seen[name] = {
                     key: 'attr:' + type.typeKey + ':' + field.fieldKey,
                     label: field.label,
                     attrName: name,
                     kind: field.kind || 'text',
-                    options: fieldOptions(field)
-                });
+                    options: fieldOptions(field),
+                    typeKeys: [type.typeKey],
+                    typeLabels: [type.label]
+                };
+                fields.push(seen[name]);
             });
         });
         fieldCache = fields;
@@ -2961,8 +2970,7 @@
             return section;
         }
         var groupColumns = tableColumns(['type']).filter(function (key) {
-            var column = typeFieldColumn(key);
-            return !column || kids.some(function (child) { return child.typeKey === column.type.typeKey; });
+            return key.indexOf('attr:') !== 0 || kids.some(function (child) { return !!attrRecord(child, key); });
         });
         section.appendChild(selectableTable(kids.map(function (child) {
             return [
@@ -3483,7 +3491,6 @@
             ];
             columns.forEach(function (key) {
                 if (key === 'status' && nested && !projectFiltering() && !remote) cells.push(t('childCount', nested));
-                else if (showField && key === state.sortKey) cells.push(attributeText(attrRecord(child, key)));
                 else cells.push(columnCell(child, key));
             });
             if (remote) cells.push(child.projectName || child.projectKey || '');
@@ -3520,40 +3527,47 @@
         return null;
     }
 
-    function columnLabel(key, withType) {
+    function columnLabel(key) {
         if (key === 'key') return t('keyLabel');
         if (key === 'location') return t('columnLocation');
-        var column = typeFieldColumn(key);
-        if (column) return withType ? column.field.label + ' \u00b7 ' + column.type.label : column.field.label;
         if (key.indexOf('attr:') === 0) return fieldSpec(key).label;
         return t(key);
     }
 
     function columnHeaders(columns) {
-        var labels = columns.map(function (key) { return columnLabel(key); });
-        return columns.map(function (key, index) {
-            var clash = labels.some(function (label, other) { return other !== index && label === labels[index]; });
-            return clash && typeFieldColumn(key) ? columnLabel(key, true) : labels[index];
-        });
+        return columns.map(columnLabel);
+    }
+
+    function attrColumns() {
+        return filterFields().filter(function (field) { return field.key.indexOf('attr:') === 0; });
+    }
+
+    function canonicalColumn(key) {
+        if (key.indexOf('attr:') !== 0) return key;
+        var column = typeFieldColumn(key);
+        if (!column) return null;
+        var name = String(column.field.label || '').trim().toLowerCase();
+        var fields = attrColumns();
+        for (var i = 0; i < fields.length; i++) {
+            if (fields[i].attrName === name) return fields[i].key;
+        }
+        return null;
     }
 
     function columnChoices() {
-        var keys = BASE_COLUMNS.slice();
-        state.types.forEach(function (type) {
-            (type.fields || []).forEach(function (field) {
-                if (field.fieldKey) keys.push('attr:' + type.typeKey + ':' + field.fieldKey);
-            });
-        });
-        return keys;
+        return BASE_COLUMNS.concat(attrColumns().map(function (field) { return field.key; }));
     }
 
     function tableColumns(skip) {
         var project = currentProject();
         var saved = project && project.columns && project.columns.length ? project.columns : DEFAULT_COLUMNS;
         var known = columnChoices();
-        return saved.filter(function (key) {
-            return known.indexOf(key) >= 0 && skip.indexOf(key) < 0;
+        var result = [];
+        saved.forEach(function (raw) {
+            var key = canonicalColumn(raw);
+            if (key && known.indexOf(key) >= 0 && skip.indexOf(key) < 0 && result.indexOf(key) < 0) result.push(key);
         });
+        return result;
     }
 
     function columnCell(asset, key) {
@@ -3572,15 +3586,6 @@
             return text.length > 120 ? text.slice(0, 117) + '...' : text;
         }
         if (key === 'created' || key === 'updated') return asset[key] ? stamp(asset[key]) : '';
-        var column = typeFieldColumn(key);
-        if (column) {
-            if (asset.typeKey !== column.type.typeKey) return '';
-            var attrs = asset.attributes || [];
-            for (var i = 0; i < attrs.length; i++) {
-                if (attrs[i].fieldKey === column.field.fieldKey) return attributeText(attrs[i]);
-            }
-            return '';
-        }
         if (key.indexOf('attr:') === 0) return attributeText(attrRecord(asset, key));
         return '';
     }
@@ -3589,70 +3594,132 @@
         return button(t('columns'), 'asset-tree-btn', openColumnsDialog);
     }
 
+    function columnTypesText(key) {
+        var spec = fieldSpec(key);
+        return spec.typeLabels ? spec.typeLabels.join(', ') : '';
+    }
+
     function openColumnsDialog() {
         var order = tableColumns([]);
-        columnChoices().forEach(function (key) {
-            if (order.indexOf(key) < 0) order.push(key);
-        });
-        var shown = {};
-        tableColumns([]).forEach(function (key) { shown[key] = true; });
+        var query = '';
+        var typeFilter = '';
         openModal(function (dialog) {
             dialog.appendChild(el('h2', null, t('columnsTitle')));
             dialog.appendChild(el('p', 'asset-tree-hint', t('columnsHint')));
+            dialog.appendChild(el('h3', 'asset-tree-columns-head', t('columnsShown')));
             var list = el('ul', 'asset-tree-columns');
             dialog.appendChild(list);
-            function paint() {
+            dialog.appendChild(el('h3', 'asset-tree-columns-head', t('columnsAdd')));
+            var tools = el('div', 'asset-tree-columns-tools');
+            var search = el('input');
+            search.type = 'search';
+            search.placeholder = t('columnsSearch');
+            search.setAttribute('aria-label', t('columnsSearch'));
+            search.addEventListener('input', function () {
+                query = search.value.trim().toLowerCase();
+                paintPick();
+            });
+            tools.appendChild(search);
+            var typeSelect = el('select');
+            typeSelect.setAttribute('aria-label', t('type'));
+            var anyType = el('option', null, t('columnsAllTypes'));
+            anyType.value = '';
+            typeSelect.appendChild(anyType);
+            state.types.forEach(function (type) {
+                if (!(type.fields || []).length) return;
+                var option = el('option', null, type.label);
+                option.value = type.typeKey;
+                typeSelect.appendChild(option);
+            });
+            typeSelect.addEventListener('change', function () {
+                typeFilter = typeSelect.value;
+                paintPick();
+            });
+            tools.appendChild(typeSelect);
+            dialog.appendChild(tools);
+            var pick = el('ul', 'asset-tree-columns asset-tree-columns-pick');
+            dialog.appendChild(pick);
+
+            function nameBlock(key) {
+                var block = el('span', 'asset-tree-columns-name');
+                block.appendChild(el('span', null, columnLabel(key)));
+                var types = key.indexOf('attr:') === 0 ? columnTypesText(key) : '';
+                if (types) {
+                    var hint = el('span', 'asset-tree-columns-types', types);
+                    hint.title = types;
+                    block.appendChild(hint);
+                }
+                return block;
+            }
+
+            function paintShown() {
                 list.innerHTML = '';
                 var fixed = el('li', 'is-fixed');
-                var fixedLabel = el('label');
-                var fixedBox = el('input');
-                fixedBox.type = 'checkbox';
-                fixedBox.checked = true;
-                fixedBox.disabled = true;
-                fixedLabel.appendChild(fixedBox);
-                fixedLabel.appendChild(el('span', null, t('name')));
-                fixed.appendChild(fixedLabel);
+                fixed.appendChild(nameBlock('name'));
                 list.appendChild(fixed);
                 order.forEach(function (key, index) {
-                    var item = el('li', shown[key] ? null : 'is-off');
+                    var item = el('li');
                     item.setAttribute('data-column', key);
-                    var label = el('label');
-                    var box = el('input');
-                    box.type = 'checkbox';
-                    box.checked = !!shown[key];
-                    box.addEventListener('change', function () {
-                        shown[key] = box.checked;
-                        item.className = box.checked ? '' : 'is-off';
-                    });
-                    label.appendChild(box);
-                    label.appendChild(el('span', null, columnLabel(key, true)));
-                    item.appendChild(label);
+                    item.appendChild(nameBlock(key));
                     var up = button('\u2191', 'asset-tree-btn', function () {
-                        if (index === 0) return;
                         order.splice(index, 1);
                         order.splice(index - 1, 0, key);
-                        paint();
+                        paintShown();
                     });
                     up.title = t('moveUp');
                     up.disabled = index === 0;
                     var down = button('\u2193', 'asset-tree-btn', function () {
-                        if (index === order.length - 1) return;
                         order.splice(index, 1);
                         order.splice(index + 1, 0, key);
-                        paint();
+                        paintShown();
                     });
                     down.title = t('moveDown');
                     down.disabled = index === order.length - 1;
+                    var drop = button('\u00d7', 'asset-tree-btn asset-tree-columns-drop', function () {
+                        order.splice(index, 1);
+                        paintShown();
+                        paintPick();
+                    });
+                    drop.title = t('columnsRemove');
+                    drop.setAttribute('aria-label', t('columnsRemove'));
                     item.appendChild(up);
                     item.appendChild(down);
+                    item.appendChild(drop);
                     list.appendChild(item);
                 });
             }
-            paint();
+
+            function paintPick() {
+                pick.innerHTML = '';
+                var count = 0;
+                columnChoices().forEach(function (key) {
+                    if (order.indexOf(key) >= 0) return;
+                    var spec = key.indexOf('attr:') === 0 ? fieldSpec(key) : null;
+                    if (typeFilter && (!spec || spec.typeKeys.indexOf(typeFilter) < 0)) return;
+                    var text = (columnLabel(key) + ' ' + (spec ? columnTypesText(key) : '')).toLowerCase();
+                    if (query && text.indexOf(query) < 0) return;
+                    var item = el('li');
+                    item.setAttribute('data-column', key);
+                    item.appendChild(nameBlock(key));
+                    var add = button('+', 'asset-tree-btn', function () {
+                        order.push(key);
+                        paintShown();
+                        paintPick();
+                    });
+                    add.title = t('columnsAdd');
+                    add.setAttribute('aria-label', t('columnsAdd'));
+                    item.appendChild(add);
+                    pick.appendChild(item);
+                    count++;
+                });
+                if (!count) pick.appendChild(el('li', 'is-empty', t('schemaNoMatch')));
+            }
+
+            paintShown();
+            paintPick();
             var actions = el('div', 'asset-tree-dialog-actions');
             actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
-                var picked = order.filter(function (key) { return shown[key]; });
-                saveProjectView({ columns: picked }, function () {
+                saveProjectView({ columns: order.slice() }, function () {
                     closeModal();
                     renderFrame();
                 });
