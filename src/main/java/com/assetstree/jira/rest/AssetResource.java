@@ -5,6 +5,9 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.PortalViewDto;
+import com.assetstree.jira.dto.LabDocDto;
+import com.assetstree.jira.dto.LabsDto;
+import com.assetstree.jira.model.WriteOffDraft;
 import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
@@ -600,6 +603,117 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.savePortalView(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/labs")
+    public Response saveLabs(@PathParam("projectKey") final String projectKey, final LabsDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveLabs(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/lab/{kind}")
+    public Response labDoc(@PathParam("projectKey") final String projectKey, @PathParam("kind") final String kind) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.labDoc(user(), projectKey, kind)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/lab/{kind}")
+    public Response saveLabDoc(@PathParam("projectKey") final String projectKey, @PathParam("kind") final String kind,
+                               final LabDocDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveLabDoc(user(), projectKey, kind, draft)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/life")
+    public Response lifeDocs(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.lifeDocs(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/writeoffs")
+    public Response writeOffs(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.writeOffs(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("assets/{id}/life")
+    public Response life(@PathParam("id") final int id) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.life(user(), id)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("assets/{id}/life")
+    public Response saveLife(@PathParam("id") final int id, final LabDocDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveLife(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/writeoff")
+    public Response requestWriteOff(@PathParam("id") final int id, final WriteOffDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.requestWriteOff(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/writeoff/decision")
+    public Response decideWriteOff(@PathParam("id") final int id, final WriteOffDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.decideWriteOff(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/writeoff")
+    public Response cancelWriteOff(@PathParam("id") final int id) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.cancelWriteOff(user(), id)).build();
             }
         });
     }

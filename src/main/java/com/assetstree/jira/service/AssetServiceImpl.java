@@ -89,6 +89,14 @@ import com.assetstree.jira.dto.PortalAssetGroupDto;
 import com.assetstree.jira.dto.PortalAssetsDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.dto.PortalViewDto;
+import com.assetstree.jira.dto.LabDocDto;
+import com.assetstree.jira.dto.LabsDto;
+import com.assetstree.jira.dto.LifeDto;
+import com.assetstree.jira.dto.WriteOffDto;
+import com.assetstree.jira.model.Labs;
+import com.assetstree.jira.model.WriteOffDraft;
+import com.assetstree.jira.ao.LabDocEntity;
+import com.assetstree.jira.ao.WriteOffEntity;
 import com.assetstree.jira.dto.ProjectDto;
 import com.assetstree.jira.dto.ReportBucketDto;
 import com.assetstree.jira.dto.ReportDto;
@@ -830,6 +838,8 @@ public class AssetServiceImpl implements AssetService {
                 deleteRows(AssetFileEntity.class, "ASSET_ID", toDelete);
                 deleteRows(AssetActivityEntity.class, "ASSET_ID", toDelete);
                 deleteRows(ServicePlanEntity.class, "ASSET_ID", toDelete);
+                deleteRows(WriteOffEntity.class, "ASSET_ID", toDelete);
+                deleteRows(LabDocEntity.class, "REF", toDelete);
                 List<Integer> ruleIds = new ArrayList<Integer>();
                 for (PortalRuleEntity rule : findIn(PortalRuleEntity.class, "ASSET_ID", toDelete, null)) {
                     ruleIds.add(Integer.valueOf(rule.getID()));
@@ -2267,6 +2277,298 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public LabsDto saveLabs(ApplicationUser user, String projectKey, LabsDto draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final List<String> labs = Labs.clean(draft == null ? null : draft.getLabs());
+        return ao().executeInTransaction(new TransactionCallback<LabsDto>() {
+            @Override
+            public LabsDto doInTransaction() {
+                ProjectViewEntity row = viewRow(project.getKey());
+                if (row == null) {
+                    row = ao().create(ProjectViewEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("TREE_MODE", Integer.valueOf(0)));
+                }
+                row.setLabs(Labs.join(labs));
+                row.save();
+                LabsDto saved = new LabsDto();
+                saved.setLabs(Labs.split(row.getLabs()));
+                return saved;
+            }
+        });
+    }
+
+    @Override
+    public LabDocDto labDoc(ApplicationUser user, String projectKey, String kind) {
+        final String lab = requireDocKind(kind);
+        final Project project = requireReadableProject(user, projectKey);
+        requireLab(project.getKey(), lab);
+        return ao().executeInTransaction(new TransactionCallback<LabDocDto>() {
+            @Override
+            public LabDocDto doInTransaction() {
+                return labDocDto(findLabDoc(project.getKey(), lab, 0), lab, 0);
+            }
+        });
+    }
+
+    @Override
+    public LabDocDto saveLabDoc(final ApplicationUser user, String projectKey, String kind, LabDocDto draft) {
+        final String lab = requireDocKind(kind);
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireLab(project.getKey(), lab);
+        final String body = Labs.body(draft == null ? null : draft.getBody(), Labs.MAX_BODY);
+        return ao().executeInTransaction(new TransactionCallback<LabDocDto>() {
+            @Override
+            public LabDocDto doInTransaction() {
+                return labDocDto(storeLabDoc(project.getKey(), lab, 0, body, user), lab, 0);
+            }
+        });
+    }
+
+    @Override
+    public List<LabDocDto> lifeDocs(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireLab(project.getKey(), Labs.LIFECYCLE);
+        return ao().executeInTransaction(new TransactionCallback<List<LabDocDto>>() {
+            @Override
+            public List<LabDocDto> doInTransaction() {
+                List<LabDocDto> docs = new ArrayList<LabDocDto>();
+                LabDocEntity[] rows = ao().find(LabDocEntity.class,
+                        Query.select().where("PROJECT_KEY = ? AND KIND = ?", project.getKey(), Labs.LIFE_DOC));
+                for (LabDocEntity row : rows) {
+                    docs.add(labDocDto(row, Labs.LIFE_DOC, row.getRef()));
+                }
+                return docs;
+            }
+        });
+    }
+
+    @Override
+    public LifeDto life(final ApplicationUser user, final int assetId) {
+        final AssetEntity asset = requireReadable(user, assetId);
+        requireLab(asset.getProjectKey(), Labs.LIFECYCLE);
+        return ao().executeInTransaction(new TransactionCallback<LifeDto>() {
+            @Override
+            public LifeDto doInTransaction() {
+                return lifeDto(user, asset);
+            }
+        });
+    }
+
+    @Override
+    public LifeDto saveLife(final ApplicationUser user, int assetId, LabDocDto draft) {
+        final AssetEntity asset = requireWritable(user, assetId);
+        requireLab(asset.getProjectKey(), Labs.LIFECYCLE);
+        final String body = Labs.body(draft == null ? null : draft.getBody(), Labs.MAX_LIFE_BODY);
+        return ao().executeInTransaction(new TransactionCallback<LifeDto>() {
+            @Override
+            public LifeDto doInTransaction() {
+                storeLabDoc(asset.getProjectKey(), Labs.LIFE_DOC, asset.getID(), body, user);
+                return lifeDto(user, asset);
+            }
+        });
+    }
+
+    @Override
+    public List<WriteOffDto> writeOffs(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireLab(project.getKey(), Labs.LIFECYCLE);
+        return ao().executeInTransaction(new TransactionCallback<List<WriteOffDto>>() {
+            @Override
+            public List<WriteOffDto> doInTransaction() {
+                List<WriteOffDto> list = new ArrayList<WriteOffDto>();
+                WriteOffEntity[] rows = ao().find(WriteOffEntity.class,
+                        Query.select().where("PROJECT_KEY = ?", project.getKey()).order("ID DESC"));
+                for (WriteOffEntity row : rows) {
+                    AssetEntity asset = ao().get(AssetEntity.class, row.getAssetId());
+                    if (asset != null) {
+                        list.add(writeOffDto(row, asset));
+                    }
+                }
+                return list;
+            }
+        });
+    }
+
+    @Override
+    public LifeDto requestWriteOff(final ApplicationUser user, int assetId, WriteOffDraft draft) {
+        final AssetEntity asset = requireWritable(user, assetId);
+        requireLab(asset.getProjectKey(), Labs.LIFECYCLE);
+        final String reason = Labs.text(draft == null ? null : draft.getReason());
+        if (reason.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.writeoff.reason");
+        }
+        return ao().executeInTransaction(new TransactionCallback<LifeDto>() {
+            @Override
+            public LifeDto doInTransaction() {
+                if (pendingWriteOff(asset.getID()) != null) {
+                    throw new AssetException(409, "asset-tree.error.writeoff.pending");
+                }
+                WriteOffEntity row = ao().create(WriteOffEntity.class,
+                        new DBParam("ASSET_ID", Integer.valueOf(asset.getID())),
+                        new DBParam("PROJECT_KEY", asset.getProjectKey()));
+                row.setState(Labs.PENDING);
+                row.setReason(reason);
+                row.setRequestedBy(user.getKey());
+                row.setRequested(new Date());
+                row.save();
+                recordActivity(asset.getID(), user.getKey(), "writeoff_request", "", "", reason);
+                return lifeDto(user, asset);
+            }
+        });
+    }
+
+    @Override
+    public LifeDto decideWriteOff(final ApplicationUser user, int assetId, WriteOffDraft draft) {
+        final AssetEntity asset = requireAsset(assetId);
+        requireConfigurableProject(user, asset.getProjectKey());
+        requireLab(asset.getProjectKey(), Labs.LIFECYCLE);
+        final boolean approve = draft != null && Boolean.TRUE.equals(draft.getApprove());
+        final String note = Labs.text(draft == null ? null : draft.getNote());
+        final String rawStatus = draft == null ? null : draft.getStatusKey();
+        return ao().executeInTransaction(new TransactionCallback<LifeDto>() {
+            @Override
+            public LifeDto doInTransaction() {
+                WriteOffEntity row = pendingWriteOff(asset.getID());
+                if (row == null) {
+                    throw new AssetException(409, "asset-tree.error.writeoff.none");
+                }
+                String status = null;
+                if (approve) {
+                    if (rawStatus == null || rawStatus.trim().isEmpty()) {
+                        throw new AssetException(400, "asset-tree.error.status");
+                    }
+                    status = resolveStatus(asset.getProjectKey(), rawStatus);
+                }
+                row.setState(approve ? Labs.APPROVED : Labs.REJECTED);
+                row.setNote(note);
+                row.setDecidedBy(user.getKey());
+                row.setDecided(new Date());
+                row.setStatusKey(status == null ? "" : status);
+                row.save();
+                recordActivity(asset.getID(), user.getKey(), approve ? "writeoff_approved" : "writeoff_rejected", "", "", note);
+                if (status != null && !status.equals(Statuses.canonical(asset.getStatus()))) {
+                    assignFlowStatus(user, asset, status);
+                }
+                return lifeDto(user, asset);
+            }
+        });
+    }
+
+    @Override
+    public LifeDto cancelWriteOff(final ApplicationUser user, int assetId) {
+        final AssetEntity asset = requireReadable(user, assetId);
+        requireLab(asset.getProjectKey(), Labs.LIFECYCLE);
+        final boolean configurer = canConfigure(user, project(asset.getProjectKey()));
+        return ao().executeInTransaction(new TransactionCallback<LifeDto>() {
+            @Override
+            public LifeDto doInTransaction() {
+                WriteOffEntity row = pendingWriteOff(asset.getID());
+                if (row == null) {
+                    throw new AssetException(409, "asset-tree.error.writeoff.none");
+                }
+                if (!configurer && !user.getKey().equals(row.getRequestedBy())) {
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                row.setState(Labs.CANCELLED);
+                row.setDecidedBy(user.getKey());
+                row.setDecided(new Date());
+                row.save();
+                recordActivity(asset.getID(), user.getKey(), "writeoff_cancelled", "", "", "");
+                return lifeDto(user, asset);
+            }
+        });
+    }
+
+    private String requireDocKind(String kind) {
+        String lab = Labs.labOfDoc(kind);
+        if (lab == null) {
+            throw new AssetException(404, "asset-tree.error.lab.off");
+        }
+        return lab;
+    }
+
+    private void requireLab(final String projectKey, String lab) {
+        ProjectViewEntity row = ao().executeInTransaction(new TransactionCallback<ProjectViewEntity>() {
+            @Override
+            public ProjectViewEntity doInTransaction() {
+                return viewRow(projectKey);
+            }
+        });
+        if (row == null || !Labs.split(row.getLabs()).contains(lab)) {
+            throw new AssetException(404, "asset-tree.error.lab.off");
+        }
+    }
+
+    private LabDocEntity findLabDoc(String projectKey, String kind, int ref) {
+        LabDocEntity[] rows = ao().find(LabDocEntity.class,
+                Query.select().where("PROJECT_KEY = ? AND KIND = ? AND REF = ?", projectKey, kind, Integer.valueOf(ref)));
+        return rows.length == 0 ? null : rows[0];
+    }
+
+    private LabDocEntity storeLabDoc(String projectKey, String kind, int ref, String body, ApplicationUser user) {
+        LabDocEntity row = findLabDoc(projectKey, kind, ref);
+        if (row == null) {
+            row = ao().create(LabDocEntity.class,
+                    new DBParam("PROJECT_KEY", projectKey),
+                    new DBParam("KIND", kind),
+                    new DBParam("REF", Integer.valueOf(ref)));
+        }
+        row.setBody(body);
+        row.setUpdated(new Date());
+        row.setUpdatedBy(user == null ? "" : user.getKey());
+        row.save();
+        return row;
+    }
+
+    private LabDocDto labDocDto(LabDocEntity row, String kind, int ref) {
+        LabDocDto dto = new LabDocDto();
+        dto.setKind(kind);
+        dto.setRef(ref);
+        dto.setBody(row == null || row.getBody() == null || row.getBody().isEmpty() ? "{}" : row.getBody());
+        dto.setUpdated(row == null ? null : format(row.getUpdated()));
+        dto.setUpdatedBy(row == null ? null : displayName(row.getUpdatedBy()));
+        return dto;
+    }
+
+    private WriteOffEntity pendingWriteOff(int assetId) {
+        WriteOffEntity[] rows = ao().find(WriteOffEntity.class,
+                Query.select().where("ASSET_ID = ? AND STATE = ?", Integer.valueOf(assetId), Labs.PENDING));
+        return rows.length == 0 ? null : rows[0];
+    }
+
+    private LifeDto lifeDto(ApplicationUser user, AssetEntity asset) {
+        LifeDto dto = new LifeDto();
+        dto.setAssetId(asset.getID());
+        LabDocEntity doc = findLabDoc(asset.getProjectKey(), Labs.LIFE_DOC, asset.getID());
+        dto.setBody(doc == null || doc.getBody() == null || doc.getBody().isEmpty() ? "{}" : doc.getBody());
+        WriteOffEntity[] rows = ao().find(WriteOffEntity.class,
+                Query.select().where("ASSET_ID = ?", Integer.valueOf(asset.getID())).order("ID DESC").limit(1));
+        dto.setWriteOff(rows.length == 0 ? null : writeOffDto(rows[0], asset));
+        dto.setCanDecide(canConfigure(user, project(asset.getProjectKey())));
+        return dto;
+    }
+
+    private WriteOffDto writeOffDto(WriteOffEntity row, AssetEntity asset) {
+        WriteOffDto dto = new WriteOffDto();
+        dto.setId(row.getID());
+        dto.setAssetId(row.getAssetId());
+        dto.setAssetName(asset == null ? "" : asset.getName());
+        dto.setObjectKey(asset == null ? "" : asset.getObjectKey());
+        dto.setState(row.getState());
+        dto.setReason(row.getReason());
+        dto.setRequestedBy(row.getRequestedBy());
+        dto.setRequestedByName(displayName(row.getRequestedBy()));
+        dto.setRequested(format(row.getRequested()));
+        dto.setDecidedBy(row.getDecidedBy());
+        dto.setDecidedByName(row.getDecidedBy() == null ? "" : displayName(row.getDecidedBy()));
+        dto.setDecided(format(row.getDecided()));
+        dto.setNote(row.getNote());
+        dto.setStatusKey(row.getStatusKey());
+        return dto;
+    }
+
+    @Override
     public PortalAssetsDto portalAssets(final ApplicationUser user) {
         requireUser(user);
         final String holder = user.getKey();
@@ -2454,6 +2756,7 @@ public class AssetServiceImpl implements AssetService {
             project.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
             project.setPortalMine(row != null && portalShown(row));
             project.setPortalFields(PortalCard.effective(row == null ? null : row.getPortalFields()));
+            project.setLabs(Labs.split(row == null ? null : row.getLabs()));
         }
     }
 

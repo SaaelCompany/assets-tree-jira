@@ -30,6 +30,7 @@ public class ProjectDto {
     private List<String> columns = new ArrayList<String>();
     private boolean portalMine;
     private List<String> portalFields = new ArrayList<String>();
+    private List<String> labs = new ArrayList<String>();
     private CardLayout card;
 
     public String getKey() {
@@ -206,5 +207,13 @@ public class ProjectDto {
 
     public void setCard(CardLayout card) {
         this.card = card;
+    }
+
+    public List<String> getLabs() {
+        return labs;
+    }
+
+    public void setLabs(List<String> labs) {
+        this.labs = labs;
     }
 }

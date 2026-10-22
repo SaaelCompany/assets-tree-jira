@@ -35,6 +35,11 @@ import com.assetstree.jira.dto.FlowBookDto;
 import com.assetstree.jira.dto.PortalAssetsDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.dto.PortalViewDto;
+import com.assetstree.jira.dto.LabDocDto;
+import com.assetstree.jira.dto.LabsDto;
+import com.assetstree.jira.dto.LifeDto;
+import com.assetstree.jira.dto.WriteOffDto;
+import com.assetstree.jira.model.WriteOffDraft;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
@@ -171,6 +176,30 @@ public interface AssetService {
 
     /** Turns the customer list on the portal on or off and picks what it shows. */
     PortalViewDto savePortalView(ApplicationUser user, String projectKey, PortalViewDto draft);
+
+    /** Turns features in testing on or off for one project. Needs the right to configure the project. */
+    LabsDto saveLabs(ApplicationUser user, String projectKey, LabsDto draft);
+
+    /** The schedule, building map or reports of a project, when that feature is on. */
+    LabDocDto labDoc(ApplicationUser user, String projectKey, String kind);
+
+    LabDocDto saveLabDoc(ApplicationUser user, String projectKey, String kind, LabDocDto draft);
+
+    /** Lifecycle documents of every asset in the project, for reports. */
+    List<LabDocDto> lifeDocs(ApplicationUser user, String projectKey);
+
+    LifeDto life(ApplicationUser user, int assetId);
+
+    LifeDto saveLife(ApplicationUser user, int assetId, LabDocDto draft);
+
+    List<WriteOffDto> writeOffs(ApplicationUser user, String projectKey);
+
+    LifeDto requestWriteOff(ApplicationUser user, int assetId, WriteOffDraft draft);
+
+    /** Approves or rejects the pending request. Approval moves the asset to the chosen status. */
+    LifeDto decideWriteOff(ApplicationUser user, int assetId, WriteOffDraft draft);
+
+    LifeDto cancelWriteOff(ApplicationUser user, int assetId);
 
     /** Equipment the user holds in every project that shows it on the portal. Needs no project permission. */
     PortalAssetsDto portalAssets(ApplicationUser user);

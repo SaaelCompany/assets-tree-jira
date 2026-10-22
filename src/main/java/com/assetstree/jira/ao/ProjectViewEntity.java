@@ -47,4 +47,12 @@ public interface ProjectViewEntity extends Entity {
     String getPortalFields();
 
     void setPortalFields(String portalFields);
+
+    /**
+     * Comma-separated features in testing turned on for this project; empty keeps them all off.
+     */
+    @StringLength(450)
+    String getLabs();
+
+    void setLabs(String labs);
 }
