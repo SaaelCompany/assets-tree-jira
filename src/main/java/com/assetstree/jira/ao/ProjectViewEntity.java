@@ -28,7 +28,7 @@ public interface ProjectViewEntity extends Entity {
     /**
      * Comma-separated column keys; empty keeps the built-in set.
      */
-    @StringLength(767)
+    @StringLength(StringLength.MAX_LENGTH)
     String getColumnList();
 
     void setColumnList(String columnList);
