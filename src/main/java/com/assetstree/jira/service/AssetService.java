@@ -4,6 +4,7 @@ import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
@@ -59,6 +60,8 @@ public interface AssetService {
     CommentDto addComment(ApplicationUser user, int id, String body);
 
     void deleteComment(ApplicationUser user, int assetId, int commentId);
+
+    void deleteActivity(ApplicationUser user, int assetId, int activityId);
 
     FileDto storeFile(ApplicationUser user, int assetId, String fileName, String contentType, byte[] data);
 
@@ -158,6 +161,8 @@ public interface AssetService {
 
     /** Stores the prefix used by future object keys. Keys already issued stay unchanged. */
     AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft);
+
+    ProjectViewDto saveProjectView(ApplicationUser user, String projectKey, ProjectViewDto draft);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 

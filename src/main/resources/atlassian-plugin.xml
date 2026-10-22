@@ -18,6 +18,7 @@
         <entity>com.assetstree.jira.ao.AssetTypeEntity</entity>
         <entity>com.assetstree.jira.ao.AssetCounterEntity</entity>
         <entity>com.assetstree.jira.ao.ProjectAssetKeyEntity</entity>
+        <entity>com.assetstree.jira.ao.ProjectViewEntity</entity>
         <entity>com.assetstree.jira.ao.AssetFieldEntity</entity>
         <entity>com.assetstree.jira.ao.InventoryMarkEntity</entity>
         <entity>com.assetstree.jira.ao.AssetCommentEntity</entity>

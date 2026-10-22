@@ -1045,11 +1045,17 @@
     function treeAnchorId() {
         var current = state.selectedId ? byId()[state.selectedId] : null;
         var guard = 0;
-        while (current && !showsInTree(current) && guard < 80) {
+        while (current && !showsInTree(current) && !objectInTree(current) && guard < 80) {
             current = current.parentId ? byId()[current.parentId] : null;
             guard++;
         }
         return current ? current.id : null;
+    }
+
+    function objectInTree(asset) {
+        if (!treeObjectsOn() || isFolder(asset)) return false;
+        var parent = asset.parentId ? byId()[asset.parentId] : null;
+        return !!(parent && isFolder(parent));
     }
 
     function expandPath(id) {
@@ -1940,8 +1946,12 @@
         if (state.canCreate) {
             side.appendChild(button('+ ' + t('addHere'), 'asset-tree-queue-add', function () {
                 if (state.typeGroup) openTypeAdd(state.typeGroup.placeId, state.typeGroup.typeKey);
-                else if (treeAnchorId() && isFolder(byId()[treeAnchorId()])) openCreate(treeAnchorId());
-                else openCreate(null, 'place');
+                else {
+                    var anchor = treeAnchorId() ? byId()[treeAnchorId()] : null;
+                    if (anchor && !isFolder(anchor)) anchor = anchor.parentId ? byId()[anchor.parentId] : null;
+                    if (anchor && isFolder(anchor)) openCreate(anchor.id);
+                    else openCreate(null, 'place');
+                }
             }));
         }
         renderNodesInto(nodes);
@@ -2252,17 +2262,22 @@
     function typeGroupRow(placeId, type) {
         var nestedHere = !!localParent(placeId, type.typeKey);
         var kids = nestedHere ? [] : subtypesAt(placeId, type.typeKey);
-        var open = kids.length > 0 && typeBranchOpen(placeId, type.typeKey);
+        var objects = treeObjectsOn() ? equipmentIn(placeId, type.typeKey) : [];
+        if (objects.length && projectFiltering()) {
+            objects = objects.filter(function (asset) { return assetMatches(asset); });
+        }
+        var expandable = kids.length > 0 || objects.length > 0;
+        var open = expandable && typeBranchOpen(placeId, type.typeKey);
         var branch = el('div', 'asset-tree-branch');
         var row = el('div', 'asset-tree-row is-type' + (nestedHere ? ' is-subtype' : ''));
         row.setAttribute('role', 'treeitem');
         row.setAttribute('data-place-id', String(placeId));
         row.setAttribute('data-type-key', type.typeKey);
         var selected = state.typeGroup && state.typeGroup.placeId === placeId && state.typeGroup.typeKey === type.typeKey;
-        if (selected) row.classList.add('is-selected');
-        var chevron = el('button', 'asset-tree-chevron', kids.length ? (open ? '▾' : '▸') : '');
+        if (selected && !(state.selectedId && treeObjectsOn())) row.classList.add('is-selected');
+        var chevron = el('button', 'asset-tree-chevron', expandable ? (open ? '▾' : '▸') : '');
         chevron.type = 'button';
-        chevron.disabled = !kids.length;
+        chevron.disabled = !expandable;
         chevron.setAttribute('aria-label', open ? t('collapse') : t('expand'));
         chevron.addEventListener('click', function (event) {
             event.stopPropagation();
@@ -2300,9 +2315,36 @@
             kids.forEach(function (child) {
                 nested.appendChild(typeGroupRow(placeId, child));
             });
+            objects.forEach(function (asset) {
+                nested.appendChild(objectTreeRow(asset));
+            });
             branch.appendChild(nested);
         }
         return branch;
+    }
+
+    function treeObjectsOn() {
+        var project = currentProject();
+        return !!(project && project.treeObjects);
+    }
+
+    function objectTreeRow(asset) {
+        var row = el('div', 'asset-tree-row is-object');
+        row.setAttribute('role', 'treeitem');
+        row.setAttribute('data-asset-id', String(asset.id));
+        if (state.selectedId === asset.id) row.classList.add('is-selected');
+        var spacer = el('span', 'asset-tree-chevron');
+        spacer.setAttribute('aria-hidden', 'true');
+        row.appendChild(spacer);
+        var name = el('span', 'asset-tree-name', asset.name);
+        name.title = asset.objectKey ? asset.objectKey + '  ' + asset.name : asset.name;
+        row.appendChild(name);
+        if (asset.objectKey) row.appendChild(el('span', 'asset-tree-object-key', asset.objectKey));
+        row.addEventListener('click', function () {
+            state.pane = 'card';
+            selectAsset(asset.id);
+        });
+        return row;
     }
 
     function offerTypes(placeId, typeKeys) {
@@ -2876,6 +2918,7 @@
                 openFieldModal(type);
             }));
         }
+        if (state.canArrange) tools.appendChild(columnsButton());
         var direct = equipmentIn(group.placeId, group.typeKey).length;
         var offered = false;
         if (place) {
@@ -2896,18 +2939,15 @@
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
             return section;
         }
+        var groupColumns = tableColumns(['type']);
         section.appendChild(selectableTable(kids.map(function (child) {
-            var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             return [
                 nameCell(child, function () {
                     state.pane = 'card';
                     selectAsset(child.id);
-                }),
-                child.objectKey || '',
-                lozenge(child.status),
-                who || t('custodianNone')
-            ];
-        }), [t('name'), t('keyLabel'), t('status'), t('custodian')], {
+                })
+            ].concat(groupColumns.map(function (key) { return columnCell(child, key); }));
+        }), [t('name')].concat(groupColumns.map(columnLabel)), {
             scope: 'group:' + group.placeId + ':' + group.typeKey,
             rows: kids.map(function (child) {
                 return { key: String(child.id), kind: 'object', label: child.name, projectKey: child.projectKey || state.projectKey, asset: child };
@@ -3366,6 +3406,7 @@
                 else openCreate(null, 'place');
             }));
         }
+        if (state.canArrange && !emptyRoot) tools.appendChild(columnsButton());
         if (tools.childNodes.length) head.appendChild(tools);
         var showSummary = !asset && !remote && !projectFiltering();
         if (showSummary) head.classList.add('is-with-summary');
@@ -3399,13 +3440,13 @@
         if (!kids.length) {
             return section;
         }
-        var headers = [t('name'), t('keyLabel'), t('type'), t('status'), t('custodian')];
-        var showField = state.sortKey && state.sortKey.indexOf('attr:') === 0;
-        if (showField) headers.push(fieldSpec(state.sortKey).label);
+        var columns = tableColumns([]);
+        var showField = state.sortKey && state.sortKey.indexOf('attr:') === 0 && columns.indexOf(state.sortKey) < 0;
+        if (showField) columns = columns.concat([state.sortKey]);
+        var headers = [t('name')].concat(columns.map(columnLabel));
         if (remote) headers.push(t('project'));
         section.appendChild(selectableTable(kids.map(function (child) {
             var nested = childrenOf(child.id).length;
-            var who = child.custodian && child.custodian.displayName ? child.custodian.displayName : '';
             var cells = [
                 nameCell(child, function () {
                     if (child.projectKey && child.projectKey !== state.projectKey) {
@@ -3414,13 +3455,12 @@
                     }
                     state.pane = 'list';
                     selectAsset(child.id);
-                }),
-                child.objectKey || '',
-                typeBadge(typeFor(child), child.typeLabel || typeOf(child.typeKey).label),
-                nested && !projectFiltering() && !remote ? t('childCount', nested) : lozenge(child.status),
-                who || t('custodianNone')
+                })
             ];
-            if (showField) cells.push(fieldRaw(child, state.sortKey));
+            columns.forEach(function (key) {
+                if (key === 'status' && nested && !projectFiltering() && !remote) cells.push(t('childCount', nested));
+                else cells.push(columnCell(child, key));
+            });
             if (remote) cells.push(child.projectName || child.projectKey || '');
             return cells;
         }), headers, {
@@ -3436,6 +3476,139 @@
             })
         }));
         return section;
+    }
+
+    var DEFAULT_COLUMNS = ['key', 'type', 'status', 'custodian'];
+    var BASE_COLUMNS = ['key', 'type', 'status', 'custodian', 'location', 'description', 'created', 'updated'];
+
+    function columnLabel(key) {
+        if (key === 'key') return t('keyLabel');
+        if (key === 'location') return t('columnLocation');
+        if (key.indexOf('attr:') === 0) return fieldSpec(key).label;
+        return t(key);
+    }
+
+    function columnChoices() {
+        var keys = BASE_COLUMNS.slice();
+        filterFields().forEach(function (field) {
+            if (field.key.indexOf('attr:') === 0) keys.push(field.key);
+        });
+        return keys;
+    }
+
+    function tableColumns(skip) {
+        var project = currentProject();
+        var saved = project && project.columns && project.columns.length ? project.columns : DEFAULT_COLUMNS;
+        var known = columnChoices();
+        return saved.filter(function (key) {
+            return known.indexOf(key) >= 0 && skip.indexOf(key) < 0;
+        });
+    }
+
+    function columnCell(asset, key) {
+        if (key === 'key') return asset.objectKey || '';
+        if (key === 'type') return typeBadge(typeFor(asset), asset.typeLabel || typeOf(asset.typeKey).label);
+        if (key === 'status') return lozenge(asset.status);
+        if (key === 'custodian') {
+            return asset.custodian && asset.custodian.displayName ? asset.custodian.displayName : t('custodianNone');
+        }
+        if (key === 'location') {
+            var parent = asset.parentId ? byId()[asset.parentId] : null;
+            return parent ? parent.name : (asset.location || '');
+        }
+        if (key === 'description') {
+            var text = asset.description || '';
+            return text.length > 120 ? text.slice(0, 117) + '...' : text;
+        }
+        if (key === 'created' || key === 'updated') return asset[key] ? stamp(asset[key]) : '';
+        if (key.indexOf('attr:') === 0) {
+            var raw = attrRaw(asset, key);
+            return fieldSpec(key).kind === 'date' && raw ? formatFieldDate(raw) : raw;
+        }
+        return '';
+    }
+
+    function columnsButton() {
+        return button(t('columns'), 'asset-tree-btn', openColumnsDialog);
+    }
+
+    function openColumnsDialog() {
+        var order = tableColumns([]);
+        columnChoices().forEach(function (key) {
+            if (order.indexOf(key) < 0) order.push(key);
+        });
+        var shown = {};
+        tableColumns([]).forEach(function (key) { shown[key] = true; });
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('columnsTitle')));
+            dialog.appendChild(el('p', 'asset-tree-hint', t('columnsHint')));
+            var list = el('ul', 'asset-tree-columns');
+            dialog.appendChild(list);
+            function paint() {
+                list.innerHTML = '';
+                var fixed = el('li', 'is-fixed');
+                var fixedLabel = el('label');
+                var fixedBox = el('input');
+                fixedBox.type = 'checkbox';
+                fixedBox.checked = true;
+                fixedBox.disabled = true;
+                fixedLabel.appendChild(fixedBox);
+                fixedLabel.appendChild(el('span', null, t('name')));
+                fixed.appendChild(fixedLabel);
+                list.appendChild(fixed);
+                order.forEach(function (key, index) {
+                    var item = el('li', shown[key] ? null : 'is-off');
+                    item.setAttribute('data-column', key);
+                    var label = el('label');
+                    var box = el('input');
+                    box.type = 'checkbox';
+                    box.checked = !!shown[key];
+                    box.addEventListener('change', function () {
+                        shown[key] = box.checked;
+                        item.className = box.checked ? '' : 'is-off';
+                    });
+                    label.appendChild(box);
+                    label.appendChild(el('span', null, columnLabel(key)));
+                    item.appendChild(label);
+                    var up = button('\u2191', 'asset-tree-btn', function () {
+                        if (index === 0) return;
+                        order.splice(index, 1);
+                        order.splice(index - 1, 0, key);
+                        paint();
+                    });
+                    up.title = t('moveUp');
+                    up.disabled = index === 0;
+                    var down = button('\u2193', 'asset-tree-btn', function () {
+                        if (index === order.length - 1) return;
+                        order.splice(index, 1);
+                        order.splice(index + 1, 0, key);
+                        paint();
+                    });
+                    down.title = t('moveDown');
+                    down.disabled = index === order.length - 1;
+                    item.appendChild(up);
+                    item.appendChild(down);
+                    list.appendChild(item);
+                });
+            }
+            paint();
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+                var picked = order.filter(function (key) { return shown[key]; });
+                saveProjectView({ columns: picked }, function () {
+                    closeModal();
+                    renderFrame();
+                });
+            }));
+            actions.appendChild(button(t('columnsReset'), 'asset-tree-btn', function () {
+                saveProjectView({ columns: [] }, function () {
+                    closeModal();
+                    renderFrame();
+                });
+            }));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
     }
 
     function openName(label, onClick) {
@@ -4312,9 +4485,11 @@
         line.appendChild(el('span', 'asset-tree-comment-time', stamp(comment.created)));
         details.appendChild(line);
         details.appendChild(el('div', 'asset-tree-action-body', comment.body || ''));
-        if (mayEdit(asset)) {
+        var own = !!(comment.author && comment.author.userKey && comment.author.userKey === state.userKey);
+        if (state.canArrange || (own && mayEdit(asset))) {
             var links = el('div', 'asset-tree-action-links');
             links.appendChild(button(t('delete'), 'asset-tree-linkish', function () {
+                if (!window.confirm(t('commentDeleteConfirm'))) return;
                 ajax('DELETE', '/assets/' + asset.id + '/comments/' + comment.id, null, function (status, payload) {
                     if (status >= 200 && status < 300) selectAsset(asset.id, true);
                     else setFormError((payload && payload.message) || t('errorTitle'));
@@ -4365,7 +4540,7 @@
         return t('actUpdated');
     }
 
-    function historyCard(item) {
+    function historyCard(asset, item) {
         var row = el('div', 'asset-tree-history');
         var head = el('div', 'asset-tree-history-head');
         var author = item.author && item.author.displayName ? item.author.displayName : '';
@@ -4377,6 +4552,19 @@
         text.appendChild(line);
         text.appendChild(el('span', null, stamp(item.created)));
         head.appendChild(text);
+        if (state.canArrange && asset && item.id > 0) {
+            var drop = button('', 'asset-tree-history-delete', function () {
+                if (!window.confirm(t('activityDeleteConfirm'))) return;
+                ajax('DELETE', '/assets/' + asset.id + '/activities/' + item.id, null, function (status, payload) {
+                    if (status >= 200 && status < 300) selectAsset(asset.id, true);
+                    else setFormError((payload && payload.message) || t('errorTitle'));
+                });
+            });
+            drop.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M6 2h4l.5 1H13v1.5H3V3h2.5L6 2zm-2 3.5h8l-.6 8.5H4.6L4 5.5z"/></svg>';
+            drop.title = t('activityDelete');
+            drop.setAttribute('aria-label', t('activityDelete'));
+            head.appendChild(drop);
+        }
         row.appendChild(head);
         if (item.action === 'created' || item.action === 'card_image' || item.action === 'card_image_delete') return row;
         if (placeKind(item.action)) {
@@ -4461,7 +4649,7 @@
                 body.appendChild(el('p', 'asset-tree-empty-note', state.activityTab === 'history' ? t('historyEmpty') : t('activityEmpty')));
             } else {
                 events.forEach(function (event) {
-                    body.appendChild(event.kind === 'comment' ? commentCard(asset, event.comment) : historyCard(event.item));
+                    body.appendChild(event.kind === 'comment' ? commentCard(asset, event.comment) : historyCard(asset, event.item));
                 });
             }
         }
@@ -9424,13 +9612,39 @@
             });
             refreshExample();
             form.appendChild(example);
+            var treeWas = treeObjectsOn();
+            var treeRow = el('label', 'asset-tree-check-row asset-tree-tree-objects');
+            var tree = el('input');
+            tree.type = 'checkbox';
+            tree.id = 'asset-tree-tree-objects';
+            tree.checked = treeWas;
+            treeRow.appendChild(tree);
+            var treeText = el('span');
+            treeText.appendChild(el('strong', null, t('treeObjects')));
+            treeText.appendChild(el('span', 'asset-tree-hint', t('treeObjectsHint')));
+            treeRow.appendChild(treeText);
+            form.appendChild(treeRow);
             var actions = el('div', 'asset-tree-dialog-actions');
-            var save = button(t('assetKeySave'), 'asset-tree-btn primary', function () {
-                if (assetKeyPreview(input.value) === current) {
+            var save = button(t('save'), 'asset-tree-btn primary', function () {
+                var keyChanged = assetKeyPreview(input.value) !== current;
+                var treeChanged = tree.checked !== treeWas;
+                function saveTree() {
+                    if (!treeChanged) {
+                        closeModal();
+                        mount();
+                        return;
+                    }
+                    saveProjectView({ treeObjects: tree.checked }, function () {
+                        closeModal();
+                        mount();
+                    });
+                }
+                if (!keyChanged && !treeChanged) {
                     closeModal();
                     return;
                 }
-                saveAssetKey(input.value, closeModal);
+                if (keyChanged) saveAssetKey(input.value, saveTree, true);
+                else saveTree();
             });
             actions.appendChild(save);
             actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
@@ -9445,7 +9659,7 @@
         if (focus) focus.select();
     }
 
-    function saveAssetKey(raw, done) {
+    function saveAssetKey(raw, done, quiet) {
         var prefix = assetKeyPreview(raw);
         setBusy(true);
         ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/asset-key', { assetKey: prefix }, function (status, payload) {
@@ -9458,8 +9672,26 @@
             var saved = (payload && payload.assetKey) || prefix;
             if (project) project.assetKey = saved;
             if (done) done();
-            mount();
+            if (!quiet) mount();
             notify(t('assetKeySaved', saved));
+        });
+    }
+
+    function saveProjectView(patch, done) {
+        setBusy(true);
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/view', patch, function (status, payload) {
+            setBusy(false);
+            if (status < 200 || status >= 300) {
+                notify((payload && payload.message) || t('errorTitle'));
+                return;
+            }
+            var project = currentProject();
+            if (project && payload) {
+                project.treeObjects = !!payload.treeObjects;
+                project.columns = payload.columns || [];
+            }
+            if (done) done();
+            notify(t('viewSaved'));
         });
     }
 
@@ -9695,6 +9927,7 @@
             copy.processes.push({
                 id: process.id,
                 name: process.name || '',
+                removedStatus: process.removedStatus || '',
                 nodes: graph.nodes,
                 links: graph.links
             });
@@ -9742,6 +9975,7 @@
                 return {
                     id: process.id,
                     name: process.name || '',
+                    removedStatus: process.removedStatus || '',
                     nodes: process.nodes || [],
                     links: process.links || []
                 };
@@ -9869,6 +10103,25 @@
         nameRow.appendChild(el('span', null, t('flowProcessName')));
         nameRow.appendChild(name);
         menu.appendChild(nameRow);
+        var removed = el('select', 'asset-tree-text');
+        removed.setAttribute('aria-label', t('flowRemovedStatus'));
+        var keep = el('option', null, t('flowRemovedKeep'));
+        keep.value = '';
+        removed.appendChild(keep);
+        statusChoices().forEach(function (choice) {
+            var option = el('option', null, choice.label);
+            option.value = choice.value;
+            if (choice.value === process.removedStatus) option.selected = true;
+            removed.appendChild(option);
+        });
+        removed.addEventListener('change', function () {
+            process.removedStatus = removed.value;
+        });
+        var removedRow = el('label', 'asset-tree-jira-field asset-tree-flow-removed');
+        removedRow.appendChild(el('span', null, t('flowRemovedStatus')));
+        removedRow.appendChild(removed);
+        removedRow.title = t('flowRemovedHint');
+        menu.appendChild(removedRow);
         menu.appendChild(menuActions);
         block.appendChild(menu);
         var tools = el('div', 'asset-tree-flow-tools');

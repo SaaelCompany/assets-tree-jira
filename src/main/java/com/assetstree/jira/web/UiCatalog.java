@@ -600,7 +600,23 @@ public final class UiCatalog {
             "assetKeySaved",
             "assetKeyCurrent",
             "assetKeyEdit",
-            "assetKeyChangeHint"
+            "assetKeyChangeHint",
+            "commentDeleteConfirm",
+            "activityDelete",
+            "activityDeleteConfirm",
+            "flowRemovedStatus",
+            "flowRemovedKeep",
+            "flowRemovedHint",
+            "treeObjects",
+            "treeObjectsHint",
+            "viewSaved",
+            "columnLocation",
+            "columns",
+            "columnsTitle",
+            "columnsHint",
+            "columnsReset",
+            "moveUp",
+            "moveDown"
     };
 
     private UiCatalog() {

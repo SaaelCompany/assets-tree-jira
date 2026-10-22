@@ -400,6 +400,70 @@
     font-weight: 600;
 }
 
+.asset-tree-check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 12px 0 4px;
+    cursor: pointer;
+}
+
+.asset-tree-check-row input {
+    margin-top: 3px;
+}
+
+.asset-tree-check-row > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.asset-tree-check-row strong {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.asset-tree-columns {
+    list-style: none;
+    margin: 8px 0;
+    padding: 0;
+    max-height: 360px;
+    overflow: auto;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+}
+
+.asset-tree-columns li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid #ebecf0;
+}
+
+.asset-tree-columns li:last-child {
+    border-bottom: 0;
+}
+
+.asset-tree-columns li.is-off {
+    color: #6b778c;
+}
+
+.asset-tree-columns label {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    cursor: pointer;
+}
+
+.asset-tree-columns .asset-tree-btn {
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+}
+
 .asset-tree-side {
     display: flex;
     flex-direction: column;
@@ -1591,6 +1655,24 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-row.is-type .asset-tree-type-icon {
     margin-right: 0;
+}
+
+#asset-tree-app .asset-tree-row.is-object .asset-tree-name {
+    font-weight: 400;
+    color: #172b4d;
+}
+
+#asset-tree-app .asset-tree-row.is-object .asset-tree-chevron {
+    visibility: hidden;
+}
+
+#asset-tree-app .asset-tree-object-key {
+    flex: 0 0 auto;
+    margin-left: auto;
+    padding-left: 8px;
+    color: #6b778c;
+    font-size: 11px;
+    white-space: nowrap;
 }
 
 .asset-tree-appearance {
@@ -4432,6 +4514,37 @@ a.asset-tree-url {
     font-size: 12px;
 }
 
+#asset-tree-app .asset-tree-history-head > div {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#asset-tree-app .asset-tree-history-delete {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #6b778c;
+    cursor: pointer;
+    opacity: 0;
+}
+
+#asset-tree-app .asset-tree-history:hover .asset-tree-history-delete,
+#asset-tree-app .asset-tree-history-delete:focus {
+    opacity: 1;
+}
+
+#asset-tree-app .asset-tree-history-delete:hover {
+    background: #ffebe6;
+    color: #de350b;
+}
+
 #asset-tree-app .asset-tree-history-change {
     display: flex;
     flex-wrap: wrap;
@@ -4703,7 +4816,7 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-flow-menu {
     display: grid;
-    grid-template-columns: minmax(160px, 280px) minmax(160px, 280px);
+    grid-template-columns: repeat(3, minmax(160px, 260px));
     gap: 8px 12px;
     align-items: end;
     margin-bottom: 8px;

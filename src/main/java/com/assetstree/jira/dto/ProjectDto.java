@@ -4,6 +4,8 @@ import com.assetstree.jira.model.CardLayout;
 
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
+import java.util.ArrayList;
+import java.util.List;
 
 @XmlAccessorType(XmlAccessType.PROPERTY)
 public class ProjectDto {
@@ -24,6 +26,8 @@ public class ProjectDto {
     private boolean canAdmin;
     private boolean canArrange;
     private String assetKey;
+    private boolean treeObjects;
+    private List<String> columns = new ArrayList<String>();
     private CardLayout card;
 
     public String getKey() {
@@ -160,6 +164,22 @@ public class ProjectDto {
 
     public void setAssetKey(String assetKey) {
         this.assetKey = assetKey;
+    }
+
+    public boolean isTreeObjects() {
+        return treeObjects;
+    }
+
+    public void setTreeObjects(boolean treeObjects) {
+        this.treeObjects = treeObjects;
+    }
+
+    public List<String> getColumns() {
+        return columns;
+    }
+
+    public void setColumns(List<String> columns) {
+        this.columns = columns;
     }
 
     public CardLayout getCard() {

@@ -5,6 +5,7 @@ import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
 import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CardLayout;
@@ -202,6 +203,18 @@ public class AssetResource {
             @Override
             public Response call() {
                 assetService.deleteComment(user(), id, commentId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/activities/{activityId}")
+    public Response deleteActivity(@PathParam("id") final int id, @PathParam("activityId") final int activityId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteActivity(user(), id, activityId);
                 return Response.noContent().build();
             }
         });
@@ -585,6 +598,17 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.saveAssetKey(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/view")
+    public Response saveProjectView(@PathParam("projectKey") final String projectKey, final ProjectViewDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveProjectView(user(), projectKey, draft)).build();
             }
         });
     }

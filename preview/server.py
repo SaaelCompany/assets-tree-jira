@@ -190,6 +190,7 @@ ISSUES = {
     "SD-22": {"issueId": 10022, "issueKey": "SD-22", "projectKey": "IT", "summary": "Замена коммутатора в серверной", "status": "Открыта"},
     "MED-7": {"issueId": 20007, "issueKey": "MED-7", "projectKey": "MED", "summary": "Списать монитор после ремонта", "status": "Ожидание"},
     "STP-1": {"issueId": 30001, "issueKey": "STP-1", "projectKey": "TEST", "summary": "Aser", "status": "Ожидание поддержки"},
+    "STP-7": {"issueId": 30007, "issueKey": "STP-7", "projectKey": "STP", "summary": "Замена ноутбука", "status": "В работе"},
 }
 ISSUES_BY_ID = {item["issueId"]: item for item in ISSUES.values()}
 SEEDS = [
@@ -208,7 +209,7 @@ STATE = {
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
     "cards": {}, "card_images": {},
-    "assetKeys": {}, "ready": False,
+    "assetKeys": {}, "ready": False, "views": {},
 }
 
 
@@ -735,6 +736,32 @@ def next_object_key(project):
         if len(key) > len(head) and key.upper().startswith(head) and key[len(head):].isdigit():
             highest = max(highest, int(key[len(head):]))
     return "%s-%s" % (prefix, highest + 1)
+
+
+VIEW_BASE = ("key", "type", "status", "custodian", "location", "description", "created", "updated")
+
+
+def project_view(project_key):
+    view = (STATE.get("views") or {}).get(project_key) or {}
+    return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or [])}
+
+
+def save_project_view(project_key, body, text):
+    body = body or {}
+    view = STATE.setdefault("views", {}).setdefault(project_key, {})
+    if body.get("treeObjects") is not None:
+        view["treeObjects"] = bool(body.get("treeObjects"))
+    if body.get("columns") is not None:
+        picked = []
+        for raw in body.get("columns") or []:
+            key = (raw or "").strip()
+            if not key or key == "name" or key in picked:
+                continue
+            if key not in VIEW_BASE and not re.fullmatch(r"attr:[a-z][a-z0-9-]{0,39}", key):
+                return 400, {"message": text.get("asset-tree.error.view.columns", "Columns")}
+            picked.append(key)
+        view["columns"] = picked
+    return 200, project_view(project_key)
 
 
 def save_asset_key(project_key, body, text):
@@ -2459,7 +2486,10 @@ def normalize_flow_book(raw):
         name = " ".join((item.get("name") or "").split())
         if len(name) > 80:
             name = name[:80]
-        processes.append({"id": node_id, "name": name, "nodes": graph["nodes"], "links": graph["links"]})
+        removed = (item.get("removedStatus") or "").strip()
+        if not re.fullmatch(r"[a-z0-9_-]{1,40}", removed):
+            removed = ""
+        processes.append({"id": node_id, "name": name, "removedStatus": removed, "nodes": graph["nodes"], "links": graph["links"]})
         if len(processes) >= 20:
             break
     return {"processes": processes}
@@ -2471,8 +2501,35 @@ def flow_book_named(book):
         named = flow_graph_named(process)
         named["id"] = process.get("id") or ""
         named["name"] = process.get("name") or ""
+        named["removedStatus"] = process.get("removedStatus") or ""
         processes.append(named)
     return {"processes": processes}
+
+
+def removed_status_for(project_key, issue_type_id):
+    stored = STATE["flow_graphs"].get(project_key)
+    if not stored or "processes" not in stored:
+        return None
+    for process in normalize_flow_book(stored)["processes"]:
+        status = process.get("removedStatus") or ""
+        if not status:
+            continue
+        types = [node.get("issueTypeId") for node in process["nodes"] if node.get("kind") == "request"]
+        if not types or str(issue_type_id) in [str(item) for item in types]:
+            return status
+    return None
+
+
+def apply_removed_flow(asset_id, issue):
+    asset = STATE["assets"].get(asset_id)
+    if not asset or not issue or is_location_id(asset_id):
+        return
+    status = removed_status_for(asset.get("projectKey"), issue.get("issueTypeId") or ISSUE_TYPES[0]["id"])
+    if not status or status == asset.get("status"):
+        return
+    old = asset.get("status") or ""
+    asset["status"] = status
+    log_activity(asset_id, "status", "", old, status)
 
 
 def flow_rules_from_book(project_key, book, names):
@@ -3068,12 +3125,12 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.4",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.5",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
                 "userKey": "ivanov", "i18n": i18n,
-                "projects": [dict(project_rights(), key=item["key"], name=item["name"], card=card_for(item["key"]), assetKey=asset_prefix(item["key"])) for item in PROJECTS],
+                "projects": [dict(project_rights(), key=item["key"], name=item["name"], card=card_for(item["key"]), assetKey=asset_prefix(item["key"]), **project_view(item["key"])) for item in PROJECTS],
             }
         if path == "/assets" and method == "GET":
             project_key = (query.get("projectKey") or [""])[0]
@@ -3142,6 +3199,11 @@ setTimeout(function () {
             if match.group(1) not in {item["key"] for item in PROJECTS}:
                 return 400, {"message": text["asset-tree.error.project.required"]}
             return save_asset_key(match.group(1), self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/view", path)
+        if match and method == "PUT":
+            if match.group(1) not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            return save_project_view(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/card", path)
         if match and method in ("GET", "PUT"):
             if match.group(1) not in {item["key"] for item in PROJECTS}:
@@ -3362,6 +3424,13 @@ setTimeout(function () {
         match = re.fullmatch(r"/assets/(\d+)/comments/(\d+)", path)
         if match and method == "DELETE":
             return self.delete_comment(int(match.group(1)), int(match.group(2)), text)
+        match = re.fullmatch(r"/assets/(\d+)/activities/(\d+)", path)
+        if match and method == "DELETE":
+            row = STATE["activities"].get(int(match.group(2)))
+            if not row or row["assetId"] != int(match.group(1)):
+                return 404, {"message": text["asset-tree.error.notFound"]}
+            STATE["activities"].pop(int(match.group(2)), None)
+            return 204, None
         match = re.fullmatch(r"/assets/(\d+)/files/(\d+)", path)
         if match and method == "DELETE":
             return self.delete_file(int(match.group(1)), int(match.group(2)), text)
@@ -3373,7 +3442,10 @@ setTimeout(function () {
             return self.link_issue(int(match.group(1)), (self.read_json() or {}).get("issueKey"), text)
         match = re.fullmatch(r"/assets/(\d+)/issues/(\d+)", path)
         if match and method == "DELETE":
+            had = any(link["assetId"] == int(match.group(1)) and link["issueId"] == int(match.group(2)) for link in STATE["links"])
             STATE["links"] = [link for link in STATE["links"] if not (link["assetId"] == int(match.group(1)) and link["issueId"] == int(match.group(2)))]
+            if had:
+                apply_removed_flow(int(match.group(1)), ISSUES_BY_ID.get(int(match.group(2))))
             return 204, None
         match = re.fullmatch(r"/issues/(\d+)/context", path)
         if match and method == "GET":

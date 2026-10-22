@@ -12,6 +12,7 @@ public class FlowProcessDto {
     private String name = "";
     private List<FlowNodeDto> nodes = new ArrayList<FlowNodeDto>();
     private List<FlowLinkDto> links = new ArrayList<FlowLinkDto>();
+    private String removedStatus = "";
 
     public String getId() {
         return id;
@@ -43,5 +44,13 @@ public class FlowProcessDto {
 
     public void setLinks(List<FlowLinkDto> links) {
         this.links = links == null ? new ArrayList<FlowLinkDto>() : links;
+    }
+
+    public String getRemovedStatus() {
+        return removedStatus;
+    }
+
+    public void setRemovedStatus(String removedStatus) {
+        this.removedStatus = removedStatus == null ? "" : removedStatus;
     }
 }

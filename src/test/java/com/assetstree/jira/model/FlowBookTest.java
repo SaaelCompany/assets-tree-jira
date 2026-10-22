@@ -47,6 +47,22 @@ public class FlowBookTest {
         assertTrue(FlowBook.normalize(Arrays.asList(process("no", "x"))).isEmpty());
     }
 
+    @Test
+    public void removedStatusFollowsTheRequestTypeAndRoundTrips() {
+        FlowProcessDto repair = process("proc1", "Ремонт", request("req1", "10001"));
+        repair.setRemovedStatus("in_stock");
+        FlowProcessDto any = process("proc2", "Любая заявка");
+        any.setRemovedStatus("reserve");
+        FlowProcessDto bad = process("proc3", "Плохой", request("req3", "10003"));
+        bad.setRemovedStatus("Not A Key!");
+        List<FlowProcessDto> processes = FlowBook.read(FlowBook.write(Arrays.asList(repair, any, bad)));
+        assertEquals("in_stock", processes.get(0).getRemovedStatus());
+        assertEquals("", processes.get(2).getRemovedStatus());
+        assertEquals("in_stock", FlowBook.removedStatus(processes, "10001"));
+        assertEquals("reserve", FlowBook.removedStatus(processes, "10009"));
+        assertNull(FlowBook.removedStatus(Arrays.asList(repair), "10009"));
+    }
+
     private static FlowProcessDto process(String id, String name, Object... items) {
         FlowProcessDto process = new FlowProcessDto();
         process.setId(id);

@@ -22,6 +22,7 @@ public final class FlowBook {
     private static final Pattern ID = Pattern.compile("[a-z0-9]{4,16}");
     private static final int MAX_PROCESSES = 20;
     private static final int NAME = 80;
+    private static final Pattern STATUS_KEY = Pattern.compile("[a-z0-9_-]{1,40}");
 
     private FlowBook() {
     }
@@ -57,6 +58,35 @@ public final class FlowBook {
             String found = FlowGraph.equipmentStatus(graphOf(process), issueTypeId, issueStatusId, onTransition);
             if (found != null && !found.trim().isEmpty()) {
                 return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Equipment status when it leaves a request of this type. A process that names request types
+     * applies only to them; a process without request nodes applies to every type.
+     */
+    public static String removedStatus(List<FlowProcessDto> processes, String issueTypeId) {
+        String wanted = issueTypeId == null ? "" : issueTypeId.trim();
+        for (FlowProcessDto process : normalize(processes)) {
+            String status = process.getRemovedStatus();
+            if (status == null || status.isEmpty()) {
+                continue;
+            }
+            boolean typed = false;
+            boolean matches = false;
+            for (FlowNodeDto node : process.getNodes()) {
+                if (!FlowGraph.REQUEST.equals(node.getKind())) {
+                    continue;
+                }
+                typed = true;
+                if (node.getIssueTypeId() != null && node.getIssueTypeId().trim().equals(wanted)) {
+                    matches = true;
+                }
+            }
+            if (!typed || matches) {
+                return status;
             }
         }
         return null;
@@ -132,6 +162,10 @@ public final class FlowBook {
         FlowGraph.quote(out, process.getId());
         out.append(",\"name\":");
         FlowGraph.quote(out, process.getName() == null ? "" : process.getName());
+        if (process.getRemovedStatus() != null && !process.getRemovedStatus().isEmpty()) {
+            out.append(",\"removedStatus\":");
+            FlowGraph.quote(out, process.getRemovedStatus());
+        }
         out.append(",\"nodes\":[");
         List<FlowNodeDto> nodes = process.getNodes();
         for (int i = 0; i < nodes.size(); i++) {
@@ -160,6 +194,7 @@ public final class FlowBook {
         FlowProcessDto process = new FlowProcessDto();
         process.setId(text(map.get("id")));
         process.setName(text(map.get("name")));
+        process.setRemovedStatus(text(map.get("removedStatus")));
         Object nodes = map.get("nodes");
         if (nodes instanceof List) {
             for (Object item : (List<?>) nodes) {
@@ -208,6 +243,7 @@ public final class FlowBook {
         FlowProcessDto clean = new FlowProcessDto();
         clean.setId(id);
         clean.setName(clip(process.getName()));
+        clean.setRemovedStatus(statusKey(process.getRemovedStatus()));
         clean.setNodes(graph.getNodes());
         clean.setLinks(graph.getLinks());
         return clean;
@@ -229,6 +265,11 @@ public final class FlowBook {
             return trimmed.substring(0, NAME);
         }
         return trimmed;
+    }
+
+    private static String statusKey(String value) {
+        String key = value == null ? "" : value.trim();
+        return STATUS_KEY.matcher(key).matches() ? key : "";
     }
 
     private static int coord(Object value) {
