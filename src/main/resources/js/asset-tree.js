@@ -2774,7 +2774,7 @@
             });
             var actions = el('div', 'asset-tree-dialog-actions');
             actions.appendChild(save);
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
@@ -2802,7 +2802,7 @@
                     closeModal();
                     openOfferType(placeId, type.typeKey);
                 }));
-                choose.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+                choose.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
                 dialog.appendChild(choose);
             });
             return;
@@ -2865,7 +2865,7 @@
                     else openTypes();
                 }));
             }
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             dialog.appendChild(actions);
         });
     }
@@ -3251,6 +3251,8 @@
         head.appendChild(tools);
         section.appendChild(head);
         section.appendChild(filterBar());
+        var groupEditor = columnsEditor();
+        if (groupEditor) section.appendChild(groupEditor);
         if (!kids.length) {
             section.appendChild(el('p', 'asset-tree-hint', t('typeListHint')));
             return section;
@@ -3774,6 +3776,8 @@
         section.appendChild(head);
         if (showSummary) section.appendChild(summaryBand());
         section.appendChild(filterBar());
+        var editor = columnsEditor();
+        if (editor) section.appendChild(editor);
         if (state.searchScope === 'all' && textQuery() && textQuery().length < 2) {
             section.appendChild(el('p', 'asset-tree-hint', t('searchPrompt')));
         }
@@ -3889,7 +3893,7 @@
 
     function tableColumns(skip) {
         var project = currentProject();
-        var saved = project && project.columns && project.columns.length ? project.columns : DEFAULT_COLUMNS;
+        var saved = state.columnDraft || (project && project.columns && project.columns.length ? project.columns : DEFAULT_COLUMNS);
         var known = columnChoices();
         var result = [];
         saved.forEach(function (raw) {
@@ -3920,7 +3924,23 @@
     }
 
     function columnsButton() {
-        return button(t('columns'), 'asset-tree-btn', openColumnsDialog);
+        var node = button(t('columns'), 'asset-tree-btn' + (state.columnDraft ? ' is-active' : ''), function () {
+            if (state.columnDraft) {
+                closeColumnsEditor();
+                return;
+            }
+            state.columnDraft = tableColumns([]);
+            state.columnPicker = { open: false, query: '' };
+            replaceDetail();
+        });
+        node.setAttribute('aria-pressed', state.columnDraft ? 'true' : 'false');
+        return node;
+    }
+
+    function closeColumnsEditor() {
+        state.columnDraft = null;
+        state.columnPicker = null;
+        replaceDetail();
     }
 
     function columnTypesText(key) {
@@ -3928,141 +3948,207 @@
         return spec.typeLabels ? spec.typeLabels.join(', ') : '';
     }
 
-    function openColumnsDialog() {
-        var order = tableColumns([]);
-        var query = '';
-        var typeFilter = '';
-        openModal(function (dialog) {
-            dialog.appendChild(el('h2', null, t('columnsTitle')));
-            dialog.appendChild(el('p', 'asset-tree-hint', t('columnsHint')));
-            dialog.appendChild(el('h3', 'asset-tree-columns-head', t('columnsShown')));
-            var list = el('ul', 'asset-tree-columns');
-            dialog.appendChild(list);
-            dialog.appendChild(el('h3', 'asset-tree-columns-head', t('columnsAdd')));
-            var tools = el('div', 'asset-tree-columns-tools');
-            var search = el('input');
-            search.type = 'search';
-            search.placeholder = t('columnsSearch');
-            search.setAttribute('aria-label', t('columnsSearch'));
-            search.addEventListener('input', function () {
-                query = search.value.trim().toLowerCase();
-                paintPick();
-            });
-            tools.appendChild(search);
-            var typeSelect = el('select');
-            typeSelect.setAttribute('aria-label', t('type'));
-            var anyType = el('option', null, t('columnsAllTypes'));
-            anyType.value = '';
-            typeSelect.appendChild(anyType);
-            state.types.forEach(function (type) {
-                if (!(type.fields || []).length) return;
-                var option = el('option', null, type.label);
-                option.value = type.typeKey;
-                typeSelect.appendChild(option);
-            });
-            typeSelect.addEventListener('change', function () {
-                typeFilter = typeSelect.value;
-                paintPick();
-            });
-            tools.appendChild(typeSelect);
-            dialog.appendChild(tools);
-            var pick = el('ul', 'asset-tree-columns asset-tree-columns-pick');
-            dialog.appendChild(pick);
-
-            function nameBlock(key) {
-                var block = el('span', 'asset-tree-columns-name');
-                block.appendChild(el('span', null, columnLabel(key)));
-                var types = key.indexOf('attr:') === 0 ? columnTypesText(key) : '';
-                if (types) {
-                    var hint = el('span', 'asset-tree-columns-types', types);
-                    hint.title = types;
-                    block.appendChild(hint);
-                }
-                return block;
-            }
-
-            function paintShown() {
-                list.innerHTML = '';
-                var fixed = el('li', 'is-fixed');
-                fixed.appendChild(nameBlock('name'));
-                list.appendChild(fixed);
-                order.forEach(function (key, index) {
-                    var item = el('li');
-                    item.setAttribute('data-column', key);
-                    item.appendChild(nameBlock(key));
-                    var up = button('\u2191', 'asset-tree-btn', function () {
-                        order.splice(index, 1);
-                        order.splice(index - 1, 0, key);
-                        paintShown();
-                    });
-                    up.title = t('moveUp');
-                    up.disabled = index === 0;
-                    var down = button('\u2193', 'asset-tree-btn', function () {
-                        order.splice(index, 1);
-                        order.splice(index + 1, 0, key);
-                        paintShown();
-                    });
-                    down.title = t('moveDown');
-                    down.disabled = index === order.length - 1;
-                    var drop = button('\u00d7', 'asset-tree-btn asset-tree-columns-drop', function () {
-                        order.splice(index, 1);
-                        paintShown();
-                        paintPick();
-                    });
-                    drop.title = t('columnsRemove');
-                    drop.setAttribute('aria-label', t('columnsRemove'));
-                    item.appendChild(up);
-                    item.appendChild(down);
-                    item.appendChild(drop);
-                    list.appendChild(item);
-                });
-            }
-
-            function paintPick() {
-                pick.innerHTML = '';
-                var count = 0;
-                columnChoices().forEach(function (key) {
-                    if (order.indexOf(key) >= 0) return;
-                    var spec = key.indexOf('attr:') === 0 ? fieldSpec(key) : null;
-                    if (typeFilter && (!spec || spec.typeKeys.indexOf(typeFilter) < 0)) return;
-                    var text = (columnLabel(key) + ' ' + (spec ? columnTypesText(key) : '')).toLowerCase();
-                    if (query && text.indexOf(query) < 0) return;
-                    var item = el('li');
-                    item.setAttribute('data-column', key);
-                    item.appendChild(nameBlock(key));
-                    var add = button('+', 'asset-tree-btn', function () {
-                        order.push(key);
-                        paintShown();
-                        paintPick();
-                    });
-                    add.title = t('columnsAdd');
-                    add.setAttribute('aria-label', t('columnsAdd'));
-                    item.appendChild(add);
-                    pick.appendChild(item);
-                    count++;
-                });
-                if (!count) pick.appendChild(el('li', 'is-empty', t('schemaNoMatch')));
-            }
-
-            paintShown();
-            paintPick();
-            var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
-                saveProjectView({ columns: order.slice() }, function () {
-                    closeModal();
-                    renderFrame();
-                });
-            }));
-            actions.appendChild(button(t('columnsReset'), 'asset-tree-btn', function () {
-                saveProjectView({ columns: [] }, function () {
-                    closeModal();
-                    renderFrame();
-                });
-            }));
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
-            dialog.appendChild(actions);
-        });
+    function moveDraftColumn(key, target) {
+        var order = state.columnDraft;
+        var from = order.indexOf(key);
+        if (from < 0 || target < 0 || target > order.length) return;
+        order.splice(from, 1);
+        if (target > from) target--;
+        order.splice(target, 0, key);
     }
+
+    function refocusColumns(selector) {
+        replaceDetail();
+        var target = document.querySelector(selector);
+        if (target) target.focus();
+    }
+
+    /* Inline editor like Service Desk queues: chips you drag or remove, and a "More" list with search. */
+    function columnsEditor() {
+        if (!state.columnDraft) return null;
+        var picker = state.columnPicker || (state.columnPicker = { open: false, query: '' });
+        var bar = el('div', 'asset-tree-coledit');
+        var top = el('div', 'asset-tree-coledit-row');
+        top.appendChild(el('span', 'asset-tree-coledit-title', t('columns')));
+        var chips = el('div', 'asset-tree-coledit-chips');
+        chips.setAttribute('role', 'list');
+        chips.appendChild(el('span', 'asset-tree-coledit-chip is-fixed', t('name')));
+        state.columnDraft.forEach(function (key, index) {
+            var chip = el('span', 'asset-tree-coledit-chip');
+            chip.setAttribute('role', 'listitem');
+            chip.setAttribute('data-column', key);
+            chip.setAttribute('tabindex', '0');
+            chip.draggable = true;
+            var label = columnLabel(key);
+            var types = key.indexOf('attr:') === 0 ? columnTypesText(key) : '';
+            chip.title = types ? label + ' \u2014 ' + types : label;
+            chip.setAttribute('aria-label', label + '. ' + t('columnsDragHint'));
+            chip.appendChild(el('span', 'asset-tree-coledit-grip', '\u2807'));
+            chip.appendChild(el('span', 'asset-tree-coledit-label', label));
+            var drop = el('button', 'asset-tree-coledit-x', '\u00d7');
+            drop.type = 'button';
+            drop.title = t('columnsRemove');
+            drop.setAttribute('aria-label', t('columnsRemove') + ': ' + label);
+            drop.addEventListener('click', function () {
+                state.columnDraft.splice(index, 1);
+                replaceDetail();
+            });
+            chip.appendChild(drop);
+            chip.addEventListener('dragstart', function (event) {
+                state.columnDrag = key;
+                chip.classList.add('is-dragging');
+                if (event.dataTransfer) {
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', key);
+                }
+            });
+            chip.addEventListener('dragend', function () {
+                state.columnDrag = null;
+                chip.classList.remove('is-dragging');
+            });
+            chip.addEventListener('dragover', function (event) {
+                if (!state.columnDrag || state.columnDrag === key) return;
+                event.preventDefault();
+                var box = chip.getBoundingClientRect();
+                var after = event.clientX > box.left + box.width / 2;
+                chip.classList.toggle('is-drop-after', after);
+                chip.classList.toggle('is-drop-before', !after);
+            });
+            chip.addEventListener('dragleave', function () {
+                chip.classList.remove('is-drop-after');
+                chip.classList.remove('is-drop-before');
+            });
+            chip.addEventListener('drop', function (event) {
+                event.preventDefault();
+                var moving = state.columnDrag;
+                state.columnDrag = null;
+                if (!moving || moving === key) return;
+                var after = chip.classList.contains('is-drop-after');
+                moveDraftColumn(moving, index + (after ? 1 : 0));
+                replaceDetail();
+            });
+            chip.addEventListener('keydown', function (event) {
+                var step = event.key === 'ArrowLeft' ? -1 : (event.key === 'ArrowRight' ? 1 : 0);
+                if (step) {
+                    event.preventDefault();
+                    var target = index + step;
+                    if (target < 0 || target >= state.columnDraft.length) return;
+                    moveDraftColumn(key, step > 0 ? target + 1 : target);
+                    refocusColumns('.asset-tree-coledit-chip[data-column="' + key + '"]');
+                } else if (event.key === 'Delete' || event.key === 'Backspace') {
+                    event.preventDefault();
+                    state.columnDraft.splice(index, 1);
+                    replaceDetail();
+                }
+            });
+            chips.appendChild(chip);
+        });
+        var more = el('div', 'asset-tree-coledit-more');
+        var moreButton = button(t('columnsMore') + ' \u25be', 'asset-tree-btn' + (picker.open ? ' is-active' : ''), function () {
+            picker.open = !picker.open;
+            refocusColumns(picker.open ? '.asset-tree-coledit-pop input[type=search]' : '.asset-tree-coledit-more > button');
+        });
+        moreButton.setAttribute('aria-expanded', picker.open ? 'true' : 'false');
+        more.appendChild(moreButton);
+        if (picker.open) more.appendChild(columnsPopover(picker));
+        chips.appendChild(more);
+        top.appendChild(chips);
+        bar.appendChild(top);
+        var foot = el('div', 'asset-tree-coledit-row asset-tree-coledit-foot');
+        foot.appendChild(el('span', 'asset-tree-hint', t('columnsHint')));
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+            saveProjectView({ columns: state.columnDraft.slice() }, function () {
+                state.columnDraft = null;
+                state.columnPicker = null;
+                renderFrame();
+            });
+        }));
+        actions.appendChild(button(t('columnsReset'), 'asset-tree-btn', function () {
+            state.columnDraft = DEFAULT_COLUMNS.slice();
+            replaceDetail();
+        }));
+        actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeColumnsEditor));
+        foot.appendChild(actions);
+        bar.appendChild(foot);
+        return bar;
+    }
+
+    function columnsPopover(picker) {
+        var pop = el('div', 'asset-tree-coledit-pop');
+        pop.setAttribute('role', 'dialog');
+        pop.setAttribute('aria-label', t('columnsMore'));
+        var search = el('input', 'asset-tree-text');
+        search.type = 'search';
+        search.placeholder = t('columnsSearch');
+        search.setAttribute('aria-label', t('columnsSearch'));
+        search.value = picker.query || '';
+        pop.appendChild(search);
+        var list = el('ul', 'asset-tree-coledit-list');
+        pop.appendChild(list);
+        var empty = el('p', 'asset-tree-hint', t('schemaNoMatch'));
+        pop.appendChild(empty);
+        var rows = [];
+        columnChoices().forEach(function (key) {
+            var item = el('li');
+            var label = el('label', 'asset-tree-check');
+            var box = el('input');
+            box.type = 'checkbox';
+            box.checked = state.columnDraft.indexOf(key) >= 0;
+            box.setAttribute('data-column', key);
+            box.addEventListener('change', function () {
+                var at = state.columnDraft.indexOf(key);
+                if (box.checked && at < 0) state.columnDraft.push(key);
+                if (!box.checked && at >= 0) state.columnDraft.splice(at, 1);
+                picker.scroll = list.scrollTop;
+                refocusColumns('.asset-tree-coledit-list input[data-column="' + key + '"]');
+            });
+            label.appendChild(box);
+            var name = columnLabel(key);
+            label.appendChild(el('span', null, name));
+            var types = key.indexOf('attr:') === 0 ? columnTypesText(key) : '';
+            if (types) label.appendChild(el('span', 'asset-tree-coledit-types', types));
+            item.appendChild(label);
+            list.appendChild(item);
+            rows.push({ node: item, text: (name + ' ' + types).toLowerCase() });
+        });
+        function filter() {
+            var query = search.value.trim().toLowerCase();
+            picker.query = search.value;
+            var shown = 0;
+            rows.forEach(function (row) {
+                row.node.hidden = !!query && row.text.indexOf(query) < 0;
+                if (!row.node.hidden) shown++;
+            });
+            empty.hidden = shown > 0;
+        }
+        search.addEventListener('input', filter);
+        pop.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                picker.open = false;
+                refocusColumns('.asset-tree-coledit-more > button');
+            }
+        });
+        filter();
+        setTimeout(function () {
+            if (picker.scroll) list.scrollTop = picker.scroll;
+        }, 0);
+        return pop;
+    }
+
+    document.addEventListener('mousedown', function (event) {
+        var picker = state.columnPicker;
+        if (!picker || !picker.open || !event.target || !event.target.closest) return;
+        if (event.target.closest('.asset-tree-coledit-more')) return;
+        picker.open = false;
+        var pop = document.querySelector('.asset-tree-coledit-pop');
+        if (pop && pop.parentNode) pop.parentNode.removeChild(pop);
+        var toggle = document.querySelector('.asset-tree-coledit-more > button');
+        if (toggle) {
+            toggle.classList.remove('is-active');
+            toggle.setAttribute('aria-expanded', 'false');
+        }
+    });
 
     function openName(label, onClick) {
         return button(label, 'asset-tree-linkish', onClick);
@@ -4448,7 +4534,7 @@
                 }));
             });
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             dialog.appendChild(actions);
         });
     }
@@ -4459,7 +4545,7 @@
             var box = userBox('', false);
             dialog.appendChild(box);
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('bulkClearCustodian'), 'asset-tree-btn', function () {
                 postBulk('custodian', { custodianKey: '' });
             }));
@@ -4499,7 +4585,7 @@
             var select = selectBox('asset-tree-bulk-place', options, 'root', false);
             dialog.appendChild(field(t('exchangePlace'), select, true));
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('bulkApply'), 'asset-tree-btn primary', function () {
                 if (!select.value) {
                     notify(t('bulkChoosePlace'));
@@ -4532,7 +4618,7 @@
             dialog.appendChild(el('p', null, t('bulkDeleteText', pickedItems().length)));
             if (extra) dialog.appendChild(el('p', null, t('deleteCascade', extra)));
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('delete'), 'asset-tree-btn danger', function () {
                 postBulk('delete', { cascade: extra > 0 });
             }));
@@ -4832,7 +4918,7 @@
             row.appendChild(button(t('save'), 'asset-tree-btn', function () {
                 persistAsset(asset, { description: area.value });
             }));
-            row.appendChild(button(t('cancel'), 'asset-tree-btn ghost', paint));
+            row.appendChild(button(t('cancel'), 'asset-tree-btn subtle', paint));
             host.appendChild(area);
             host.appendChild(row);
             area.focus();
@@ -6099,7 +6185,7 @@
             }));
         }
         if (state.canEdit) {
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', function () {
                 if (state.dirty && !window.confirm(t('confirmDiscard'))) {
                     return;
                 }
@@ -6732,7 +6818,7 @@
                         openOfferType(parentId);
                     }));
                 }
-                choose.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+                choose.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
                 dialog.appendChild(choose);
                 return;
             }
@@ -6741,7 +6827,7 @@
                 dialog.appendChild(el('h2', null, t('addObject')));
                 dialog.appendChild(el('p', null, t('needPlace')));
                 var missingPlace = el('div', 'asset-tree-dialog-actions');
-                missingPlace.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+                missingPlace.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
                 missingPlace.appendChild(button(t('addPlace'), 'asset-tree-btn primary', function () {
                     closeModal();
                     openCreate(null, 'place');
@@ -6753,7 +6839,7 @@
                 dialog.appendChild(el('h2', null, t('addObject')));
                 dialog.appendChild(el('p', null, t('needType')));
                 var missingType = el('div', 'asset-tree-dialog-actions');
-                missingType.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+                missingType.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
                 if (state.canConfigure) {
                     missingType.appendChild(button(t('types'), 'asset-tree-btn primary', function () {
                         closeModal();
@@ -6826,7 +6912,7 @@
             extraRequired.appendChild(el('span', null, t('fieldRequired')));
             fieldForm.appendChild(extraRequired);
             var extraActions = el('div', 'asset-tree-dialog-actions');
-            extraActions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            extraActions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', function () {
                 fieldForm.hidden = true;
                 showField.hidden = typeControl.value === '__new__';
             }));
@@ -7256,7 +7342,7 @@
             if (typeKey) typeControl.disabled = true;
             sync();
             var actions = el('div', 'asset-tree-dialog-actions is-footer');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('create'), 'asset-tree-btn primary', createNode));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
@@ -7280,7 +7366,7 @@
                 dialog.appendChild(el('p', null, t('deleteCascade', nested)));
             }
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('delete'), 'asset-tree-btn danger', function () {
                 ajax('DELETE', '/assets/' + asset.id + '?cascade=' + (nested ? 'true' : 'false'), null, function (status, payload) {
                     if (status >= 200 && status < 300) {
@@ -7375,7 +7461,7 @@
                 });
             }
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             actions.appendChild(button(t('addField'), 'asset-tree-btn primary', saveField));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
@@ -8018,6 +8104,7 @@
 
     function switchProject(key, selectedId) {
         state.projectKey = key;
+        state.columnDraft = null;
         state.selectedId = selectedId || null;
         state.query = '';
         state.rules = [];
@@ -9320,7 +9407,7 @@
                 refreshBrowse();
             }
             var actions = el('div', 'asset-tree-dialog-actions');
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             if (draft.id) {
                 actions.appendChild(button(t('filterDelete'), 'asset-tree-btn danger', function () {
                     state.savedFilters = (state.savedFilters || []).filter(function (filter) { return filter.id !== draft.id; });
@@ -10125,7 +10212,7 @@
                 else saveTree();
             });
             actions.appendChild(save);
-            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
@@ -11073,7 +11160,7 @@
         var formActions = el('div', 'asset-tree-inline-actions');
         formActions.appendChild(submit);
         if (editing) {
-            formActions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            formActions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', function () {
                 state.portalDraft = emptyPortalDraft();
                 renderFrame();
             }));

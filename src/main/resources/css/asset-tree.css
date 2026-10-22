@@ -423,104 +423,6 @@
     font-weight: 500;
 }
 
-.asset-tree-columns {
-    list-style: none;
-    margin: 8px 0;
-    padding: 0;
-    max-height: 360px;
-    overflow: auto;
-    border: 1px solid #dfe1e6;
-    border-radius: 3px;
-}
-
-.asset-tree-columns li {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border-bottom: 1px solid #ebecf0;
-}
-
-.asset-tree-columns li:last-child {
-    border-bottom: 0;
-}
-
-.asset-tree-columns li.is-off {
-    color: #6b778c;
-}
-
-.asset-tree-columns label {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    cursor: pointer;
-}
-
-.asset-tree-columns .asset-tree-btn {
-    min-width: 28px;
-    height: 28px;
-    padding: 0 6px;
-}
-
-.asset-tree-columns-head {
-    margin: 14px 0 4px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #5e6c84;
-    text-transform: uppercase;
-}
-
-.asset-tree-columns-name {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    min-width: 0;
-}
-
-.asset-tree-columns-name > span:first-child {
-    flex: 0 0 auto;
-}
-
-.asset-tree-columns-types {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12px;
-    color: #6b778c;
-}
-
-.asset-tree-columns li.is-fixed {
-    color: #6b778c;
-}
-
-.asset-tree-columns li.is-empty {
-    color: #6b778c;
-    justify-content: center;
-}
-
-.asset-tree-columns-tools {
-    display: flex;
-    gap: 8px;
-}
-
-.asset-tree-columns-tools input {
-    flex: 1 1 auto;
-    min-width: 0;
-}
-
-.asset-tree-columns-tools select {
-    flex: 0 1 200px;
-    min-width: 0;
-}
-
-.asset-tree-columns-pick {
-    max-height: 220px;
-}
-
 .asset-tree-side {
     display: flex;
     flex-direction: column;
@@ -5380,4 +5282,493 @@ a.asset-tree-url {
 #asset-tree-app button.asset-tree-flow-cut:hover {
     color: #de350b !important;
     border-color: #ffbdad !important;
+}
+
+/* Inline column editor, laid out like Service Desk queue columns. */
+.asset-tree-coledit {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 0 12px;
+    padding: 12px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.asset-tree-coledit-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+}
+
+.asset-tree-coledit-foot {
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.asset-tree-coledit-foot .asset-tree-hint {
+    margin: 0;
+}
+
+.asset-tree-coledit-title {
+    flex: 0 0 auto;
+    padding-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.asset-tree-coledit-chips {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.asset-tree-coledit-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 240px;
+    height: 32px;
+    padding: 0 4px 0 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--ink);
+    font-size: 14px;
+    cursor: grab;
+    user-select: none;
+}
+
+.asset-tree-coledit-chip:hover {
+    background: #ebecf0;
+}
+
+.asset-tree-coledit-chip:focus-visible {
+    outline: 2px solid #4c9aff;
+    outline-offset: 1px;
+}
+
+.asset-tree-coledit-chip.is-fixed {
+    padding: 0 10px;
+    background: transparent;
+    border-style: dashed;
+    color: var(--muted);
+    cursor: default;
+}
+
+.asset-tree-coledit-chip.is-dragging {
+    opacity: 0.4;
+}
+
+.asset-tree-coledit-chip.is-drop-before {
+    box-shadow: inset 3px 0 0 #4c9aff;
+}
+
+.asset-tree-coledit-chip.is-drop-after {
+    box-shadow: inset -3px 0 0 #4c9aff;
+}
+
+.asset-tree-coledit-grip {
+    color: var(--faint);
+    font-size: 14px;
+    line-height: 1;
+}
+
+.asset-tree-coledit-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#asset-tree-app button.asset-tree-coledit-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    min-height: 22px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+#asset-tree-app button.asset-tree-coledit-x:hover {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.asset-tree-coledit-more {
+    position: relative;
+}
+
+.asset-tree-coledit-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 360px;
+    padding: 8px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+.asset-tree-coledit-list {
+    max-height: 300px;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.asset-tree-coledit-list li {
+    padding: 2px 4px;
+    border-radius: var(--radius);
+}
+
+.asset-tree-coledit-list li:hover {
+    background: var(--paper);
+}
+
+.asset-tree-coledit-list li[hidden] {
+    display: none;
+}
+
+.asset-tree-coledit-list .asset-tree-check {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.asset-tree-coledit-list .asset-tree-check > span:first-of-type {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.asset-tree-coledit-types {
+    flex: 0 1 auto;
+    max-width: 50%;
+    min-width: 0;
+    margin-left: auto;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.asset-tree-coledit-pop .asset-tree-hint[hidden] {
+    display: none;
+}
+
+/* ------------------------------------------------------------------
+   Unified look. One style for buttons, fields, headings, labels and
+   dialogs across the page, the settings and every dialog, following
+   Jira 8 (AUI). Kept last so it wins over the older per-screen rules.
+   ------------------------------------------------------------------ */
+.asset-tree,
+.asset-tree-backdrop,
+.asset-tree-dialog {
+    --ink: #172b4d;
+    --muted: #6b778c;
+    --faint: #97a0af;
+    --line: #dfe1e6;
+    --paper: #f4f5f7;
+    --surface: #ffffff;
+    --accent: #0052cc;
+    --accent-soft: #deebff;
+    --danger: #de350b;
+    --danger-soft: #ffebe6;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+    --btn: rgba(9, 30, 66, 0.04);
+    --btn-hover: rgba(9, 30, 66, 0.08);
+    --btn-ink: #42526e;
+    --field: #fafbfc;
+    --field-hover: #ebecf0;
+    --field-focus: #4c9aff;
+}
+
+#asset-tree-app button,
+#asset-tree-app input,
+#asset-tree-app select,
+#asset-tree-app textarea,
+.asset-tree-backdrop button,
+.asset-tree-backdrop .asset-tree-dialog input,
+.asset-tree-backdrop .asset-tree-dialog select,
+.asset-tree-backdrop .asset-tree-dialog textarea {
+    font-family: var(--font) !important;
+}
+
+/* Buttons */
+#asset-tree-app button.asset-tree-btn:not(.slim),
+.asset-tree-backdrop button.asset-tree-btn:not(.slim) {
+    border: 1px solid transparent !important;
+    border-radius: 3px !important;
+    background: var(--btn) !important;
+    color: var(--btn-ink) !important;
+    font-size: 14px;
+    font-weight: 500 !important;
+    box-shadow: none !important;
+    text-decoration: none;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim):hover,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim):hover {
+    background: var(--btn-hover) !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim):active,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim):active,
+#asset-tree-app button.asset-tree-btn:not(.slim).is-active,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).is-active {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).primary,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).primary {
+    background: var(--accent) !important;
+    color: #ffffff !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).primary:hover,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).primary:hover {
+    background: #0065ff !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).danger,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).danger {
+    color: var(--danger) !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).danger:hover,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).danger:hover {
+    background: var(--danger-soft) !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).subtle,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).subtle,
+#asset-tree-app button.asset-tree-btn:not(.slim).ghost,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).ghost {
+    background: transparent !important;
+    color: var(--accent) !important;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim).subtle:hover,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).subtle:hover,
+#asset-tree-app button.asset-tree-btn:not(.slim).ghost:hover,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim).ghost:hover {
+    background: transparent !important;
+    text-decoration: underline;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim):disabled,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim):disabled {
+    background: var(--btn) !important;
+    color: #a5adba !important;
+    opacity: 1;
+    cursor: not-allowed;
+}
+
+#asset-tree-app button.asset-tree-btn:not(.slim):focus-visible,
+.asset-tree-backdrop button.asset-tree-btn:not(.slim):focus-visible {
+    outline: 2px solid var(--field-focus);
+    outline-offset: 1px;
+}
+
+/* Issue-style toolbar on the asset card uses the same buttons */
+#asset-tree-app button.asset-tree-tool {
+    padding: 0 8px !important;
+    background: var(--btn) !important;
+    color: var(--btn-ink) !important;
+}
+
+#asset-tree-app button.asset-tree-tool:hover {
+    background: var(--btn-hover) !important;
+}
+
+/* Text fields, lists and multi-line fields */
+#asset-tree-app input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="hidden"]),
+#asset-tree-app select,
+#asset-tree-app textarea,
+.asset-tree-backdrop .asset-tree-dialog input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):not([type="hidden"]),
+.asset-tree-backdrop .asset-tree-dialog select,
+.asset-tree-backdrop .asset-tree-dialog textarea {
+    border: 2px solid var(--line) !important;
+    border-radius: 3px !important;
+    background-color: var(--field) !important;
+    color: var(--ink);
+    font-size: 14px;
+    box-shadow: none !important;
+}
+
+#asset-tree-app input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):hover,
+#asset-tree-app select:hover,
+#asset-tree-app textarea:hover,
+.asset-tree-backdrop .asset-tree-dialog input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):hover,
+.asset-tree-backdrop .asset-tree-dialog select:hover,
+.asset-tree-backdrop .asset-tree-dialog textarea:hover {
+    background-color: var(--field-hover) !important;
+}
+
+#asset-tree-app input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):focus,
+#asset-tree-app select:focus,
+#asset-tree-app textarea:focus,
+.asset-tree-backdrop .asset-tree-dialog input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="file"]):not([type="range"]):focus,
+.asset-tree-backdrop .asset-tree-dialog select:focus,
+.asset-tree-backdrop .asset-tree-dialog textarea:focus {
+    border-color: var(--field-focus) !important;
+    background-color: #ffffff !important;
+    outline: none !important;
+}
+
+#asset-tree-app input:disabled,
+#asset-tree-app select:disabled,
+#asset-tree-app textarea:disabled,
+.asset-tree-backdrop .asset-tree-dialog input:disabled,
+.asset-tree-backdrop .asset-tree-dialog select:disabled,
+.asset-tree-backdrop .asset-tree-dialog textarea:disabled {
+    background-color: var(--paper) !important;
+    color: #a5adba;
+    cursor: not-allowed;
+}
+
+#asset-tree-app input[type="checkbox"],
+#asset-tree-app input[type="radio"],
+.asset-tree-backdrop .asset-tree-dialog input[type="checkbox"],
+.asset-tree-backdrop .asset-tree-dialog input[type="radio"] {
+    accent-color: var(--accent);
+}
+
+/* Headings: page 24, panels and dialogs 20, sections 16 */
+#asset-tree-app .asset-tree-heading h1 {
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+#asset-tree-app .asset-tree-report > h2,
+#asset-tree-app .asset-tree-queue-title h2,
+.asset-tree-dialog h2 {
+    margin-top: 0;
+    color: var(--ink);
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1.2;
+}
+
+#asset-tree-app .asset-tree-request-block h3,
+#asset-tree-app .asset-tree-request-aside h3,
+#asset-tree-app .asset-tree-settings-title,
+#asset-tree-app .asset-tree-module-head {
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.asset-tree-dialog h3 {
+    color: var(--ink);
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* Small labels: 12px, semi-bold, grey, sentence case */
+#asset-tree-app .asset-tree-field label,
+#asset-tree-app .asset-tree-section-title,
+#asset-tree-app .asset-tree-side-caption,
+#asset-tree-app .asset-tree-person-role,
+#asset-tree-app .asset-tree-columns-head,
+#asset-tree-app .asset-tree-icon-group-title,
+#asset-tree-app .asset-tree-filter-label,
+#asset-tree-app .asset-tree-project-label,
+.asset-tree-backdrop .asset-tree-field label,
+.asset-tree-backdrop .asset-tree-section-title,
+.asset-tree-backdrop .asset-tree-icon-group-title {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+#asset-tree-app .asset-tree-key,
+.asset-tree-backdrop .asset-tree-key {
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 12px;
+}
+
+#asset-tree-app .asset-tree-hint,
+.asset-tree-backdrop .asset-tree-hint {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+/* Edit form uses the same white side column as the card */
+#asset-tree-app .asset-tree-request-aside {
+    background: var(--surface);
+}
+
+/* Settings tabs run across the whole panel */
+#asset-tree-app .asset-tree-schema-tabs {
+    max-width: none;
+}
+
+/* Dialogs: 24px padding, footer on the right, primary button first, Cancel as a link last (Jira dialogs) */
+.asset-tree-dialog {
+    padding: 20px 24px;
+    border-radius: 3px;
+}
+
+.asset-tree-dialog-actions {
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.asset-tree-dialog-actions .asset-tree-btn.primary {
+    order: -1;
+}
+
+.asset-tree-dialog-actions .asset-tree-btn.subtle {
+    order: 10;
+}
+
+.asset-tree-dialog .asset-tree-dialog-actions.is-footer {
+    margin: 20px -24px -20px;
+    padding: 12px 24px;
+}
+
+/* Tables */
+#asset-tree-app table.asset-tree-table th {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: none;
 }
