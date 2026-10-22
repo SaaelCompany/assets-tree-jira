@@ -16,14 +16,12 @@
             title: 'Мои активы',
             empty: 'За вами пока не числится оборудование.',
             error: 'Не удалось загрузить оборудование. Обновите страницу.',
-            role: 'Вы указаны как',
             count: function (n) { return n + ' ' + plural(n, 'позиция', 'позиции', 'позиций'); }
         },
         en: {
             title: 'My assets',
             empty: 'No equipment is registered to you yet.',
             error: 'Could not load the equipment. Refresh the page.',
-            role: 'You are listed as',
             count: function (n) { return n + (n === 1 ? ' item' : ' items'); }
         }
     };
@@ -179,10 +177,6 @@
         }
         card.appendChild(head);
         var list = el('dl', 'asset-tree-pa-details');
-        if (item.role) {
-            list.appendChild(el('dt', null, t('role')));
-            list.appendChild(el('dd', null, item.role));
-        }
         (item.details || []).forEach(function (detail) {
             list.appendChild(el('dt', null, detail.name || ''));
             var value = detailValue(detail);
@@ -193,7 +187,7 @@
             }
             list.appendChild(value);
         });
-        card.appendChild(list);
+        if (list.firstChild) card.appendChild(list);
         return card;
     }
 
