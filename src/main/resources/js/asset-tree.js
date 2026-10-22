@@ -2336,8 +2336,12 @@
         var spacer = el('span', 'asset-tree-chevron');
         spacer.setAttribute('aria-hidden', 'true');
         row.appendChild(spacer);
-        var name = el('span', 'asset-tree-name', asset.name);
+        var name = el('span', 'asset-tree-name');
         name.title = asset.objectKey ? asset.objectKey + '  ' + asset.name : asset.name;
+        var tile = typeTile(typeFor(asset), 'sm');
+        tile.title = typeFor(asset).label || '';
+        name.appendChild(tile);
+        name.appendChild(el('span', 'asset-tree-object-name', asset.name));
         row.appendChild(name);
         if (asset.objectKey) row.appendChild(el('span', 'asset-tree-object-key', asset.objectKey));
         row.addEventListener('click', function () {

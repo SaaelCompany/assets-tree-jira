@@ -1658,8 +1658,24 @@ a.asset-tree-url {
 }
 
 #asset-tree-app .asset-tree-row.is-object .asset-tree-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
     font-weight: 400;
     color: #172b4d;
+}
+
+#asset-tree-app .asset-tree-row.is-object .asset-tree-type-icon {
+    flex: 0 0 auto;
+    margin-right: 0;
+}
+
+#asset-tree-app .asset-tree-object-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #asset-tree-app .asset-tree-row.is-object .asset-tree-chevron {
