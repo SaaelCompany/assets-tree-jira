@@ -3,6 +3,9 @@ package com.assetstree.jira.service;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.user.ApplicationUser;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
+import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
@@ -21,13 +24,19 @@ import com.assetstree.jira.dto.PickerNodeDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.ImportDraft;
+import com.assetstree.jira.dto.FlowRuleDto;
+import com.assetstree.jira.dto.IssueTypeDto;
+import com.assetstree.jira.dto.FlowBookDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.model.ServicePlanDraft;
@@ -53,11 +62,19 @@ public interface AssetService {
 
     void deleteComment(ApplicationUser user, int assetId, int commentId);
 
+    void deleteActivity(ApplicationUser user, int assetId, int activityId);
+
     FileDto storeFile(ApplicationUser user, int assetId, String fileName, String contentType, byte[] data);
 
     StoredFile openFile(ApplicationUser user, int fileId);
 
     void deleteFile(ApplicationUser user, int assetId, int fileId);
+
+    void storeCardImage(ApplicationUser user, int assetId, byte[] data);
+
+    StoredFile openCardImage(ApplicationUser user, int assetId);
+
+    void deleteCardImage(ApplicationUser user, int assetId);
 
     void deleteAsset(ApplicationUser user, int id, boolean cascade);
 
@@ -71,7 +88,11 @@ public interface AssetService {
 
     FieldDto addField(ApplicationUser user, String typeKey, FieldDraft draft);
 
+    FieldDto updateField(ApplicationUser user, String typeKey, String fieldKey, FieldDraft draft);
+
     void deleteField(ApplicationUser user, String typeKey, String fieldKey);
+
+    List<FieldDto> reorderFields(ApplicationUser user, String typeKey, FieldOrderDto order);
 
     List<StatusDto> listStatuses(ApplicationUser user, String projectKey);
 
@@ -119,7 +140,32 @@ public interface AssetService {
 
     PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft);
 
+    PortalRuleDto updatePortalRule(ApplicationUser user, String projectKey, int ruleId, PortalRuleDraft draft);
+
     void deletePortalRule(ApplicationUser user, String projectKey, int ruleId);
+
+    List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey);
+
+    List<IssueTypeDto> listIssueStatuses(ApplicationUser user, String projectKey);
+
+    List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey);
+
+    FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, FlowRuleDraft draft);
+
+    void deleteFlowRule(ApplicationUser user, String projectKey, int ruleId);
+
+    FlowBookDto flowGraph(ApplicationUser user, String projectKey);
+
+    FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft);
+
+    CardLayout cardLayout(ApplicationUser user, String projectKey);
+
+    CardLayout saveCardLayout(ApplicationUser user, String projectKey, CardLayout draft);
+
+    /** Stores the prefix used by future object keys. Keys already issued stay unchanged. */
+    AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft);
+
+    ProjectViewDto saveProjectView(ApplicationUser user, String projectKey, ProjectViewDto draft);
 
     List<UserProfileDto> searchUsers(ApplicationUser user, String query);
 
@@ -127,12 +173,18 @@ public interface AssetService {
 
     void syncRequestAsset(ApplicationUser user, Issue issue, String previousAssetId, String nextAssetId);
 
+    /** Moves equipment already linked to this request when the request itself changes status. */
+    void syncRequestStatus(ApplicationUser user, Issue issue);
+
     String describeAsset(String assetId);
 
     ServicePlanDto createPlan(ApplicationUser user, int assetId, ServicePlanDraft draft);
 
     /** Pins an equipment type to one place, or removes that pin when the place has no such equipment. */
     AssetDto offerType(ApplicationUser user, int assetId, PlaceTypeDraft draft, boolean present);
+
+    /** Moves a type up, down, into the type above, or back onto the place. */
+    AssetDto arrangeType(ApplicationUser user, int assetId, PlaceArrangeDraft draft);
 
     ServicePlanDto updatePlan(ApplicationUser user, int assetId, int planId, ServicePlanDraft draft);
 

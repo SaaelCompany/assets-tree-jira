@@ -13,6 +13,7 @@ public class TypeDraft {
     private Boolean showInTree;
     private Boolean service;
     private String placeCaption;
+    private String parentTypeKey;
 
     public String getLabel() {
         return label;
@@ -79,5 +80,14 @@ public class TypeDraft {
 
     public void setPlaceCaption(String placeCaption) {
         this.placeCaption = placeCaption;
+    }
+
+    /** Null when the request did not mention the parent, so a partial update leaves it alone. */
+    public String getParentTypeKey() {
+        return parentTypeKey;
+    }
+
+    public void setParentTypeKey(String parentTypeKey) {
+        this.parentTypeKey = parentTypeKey;
     }
 }

@@ -8,9 +8,14 @@ import com.atlassian.crowd.embedded.api.UserWithAttributes;
 import com.atlassian.jira.bc.user.search.UserSearchParams;
 import com.atlassian.jira.bc.user.search.UserSearchService;
 import com.atlassian.jira.component.ComponentAccessor;
+import com.atlassian.jira.config.ConstantsManager;
 import com.atlassian.jira.config.properties.APKeys;
 import com.atlassian.jira.issue.Issue;
 import com.atlassian.jira.issue.IssueManager;
+import com.atlassian.jira.issue.issuetype.IssueType;
+import com.atlassian.jira.issue.status.Status;
+import com.atlassian.jira.workflow.JiraWorkflow;
+import com.atlassian.jira.workflow.WorkflowManager;
 import com.atlassian.jira.permission.GlobalPermissionKey;
 import com.atlassian.jira.permission.ProjectPermissions;
 import com.atlassian.jira.project.Project;
@@ -32,20 +37,29 @@ import com.assetstree.jira.PluginInfo;
 import com.assetstree.jira.ao.AssetActivityEntity;
 import com.assetstree.jira.ao.AssetAttributeEntity;
 import com.assetstree.jira.ao.AssetCommentEntity;
+import com.assetstree.jira.ao.CardTemplateEntity;
 import com.assetstree.jira.ao.AssetCounterEntity;
 import com.assetstree.jira.ao.AssetEntity;
 import com.assetstree.jira.ao.AssetFieldEntity;
+import com.assetstree.jira.ao.FlowGraphEntity;
+import com.assetstree.jira.ao.FlowRuleEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
 import com.assetstree.jira.ao.InventoryMarkEntity;
 import com.assetstree.jira.ao.PortalRuleConditionEntity;
 import com.assetstree.jira.ao.PortalRuleEntity;
+import com.assetstree.jira.ao.ProjectAssetKeyEntity;
 import com.assetstree.jira.ao.ProjectGrantEntity;
 import com.assetstree.jira.ao.ProjectStatusEntity;
+import com.assetstree.jira.ao.ProjectViewEntity;
 import com.assetstree.jira.ao.ServicePlanEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
 import com.assetstree.jira.dto.AssetDto;
+import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
+import com.assetstree.jira.dto.ProjectViewDto;
+import com.assetstree.jira.model.ViewColumns;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
 import com.assetstree.jira.dto.AttributeDto;
@@ -53,6 +67,12 @@ import com.assetstree.jira.dto.BulkIssueDto;
 import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
+import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.dto.FlowGraphDto;
+import com.assetstree.jira.dto.FlowNodeDto;
+import com.assetstree.jira.dto.FlowProcessDto;
+import com.assetstree.jira.dto.FlowRuleDto;
+import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FileDto;
 import com.assetstree.jira.dto.GrantDto;
 import com.assetstree.jira.dto.ImportIssueDto;
@@ -75,6 +95,8 @@ import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CopyNames;
 import com.assetstree.jira.model.BulkDraft;
+import com.assetstree.jira.model.CardCanvas;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkSelection;
 import com.assetstree.jira.model.AssetException;
 import com.assetstree.jira.model.AssetValidator;
@@ -87,10 +109,18 @@ import com.assetstree.jira.model.WorkbookSheet;
 import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
+import com.assetstree.jira.model.FlowBook;
+import com.assetstree.jira.model.FlowGraph;
+import com.assetstree.jira.model.PickerLayout;
+import com.assetstree.jira.model.PlaceArrangeDraft;
+import com.assetstree.jira.model.PlaceLayout;
+import com.assetstree.jira.model.FlowRuleDraft;
+import com.assetstree.jira.model.FlowRules;
 import com.assetstree.jira.model.FieldKinds;
 import com.assetstree.jira.model.GrantCaps;
 import com.assetstree.jira.model.GrantDraft;
 import com.assetstree.jira.model.MoveDraft;
+import com.assetstree.jira.model.AssetKeyRules;
 import com.assetstree.jira.model.ObjectKeys;
 import com.assetstree.jira.model.PlaceHistory;
 import com.assetstree.jira.model.PortalConditionDraft;
@@ -109,6 +139,7 @@ import com.assetstree.jira.model.TypeIcons;
 import com.assetstree.jira.web.UiCatalog;
 import net.java.ao.DBParam;
 import net.java.ao.Query;
+import net.java.ao.RawEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -129,11 +160,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 public class AssetServiceImpl implements AssetService {
     private static final Logger log = LoggerFactory.getLogger(AssetServiceImpl.class);
     private static final int SEARCH_LIMIT = 30;
+    private static final int ID_BATCH = 200;
+    private static final ConcurrentHashMap<String, Object> KEY_LOCKS = new ConcurrentHashMap<String, Object>();
     private static final Pattern NUMBER = Pattern.compile("^-?\\d{1,12}(\\.\\d{1,4})?$");
     private static final GlobalPermissionKey MANAGE_ASSETS = GlobalPermissionKey.of("MANAGE_ASSETS");
     private static final GlobalPermissionKey MANAGE_ASSETS_FULL = GlobalPermissionKey.of(PluginInfo.KEY + ":MANAGE_ASSETS");
@@ -295,6 +329,9 @@ public class AssetServiceImpl implements AssetService {
         meta.setCanEdit(editable);
         meta.setCanConfigure(configurable);
         meta.setCanGrant(grantable);
+        attachCards(projects);
+        attachAssetKeys(projects);
+        attachViews(projects);
         meta.setProjects(projects);
         return meta;
     }
@@ -308,12 +345,13 @@ public class AssetServiceImpl implements AssetService {
         AssetListDto list = ao().executeInTransaction(new TransactionCallback<AssetListDto>() {
             @Override
             public AssetListDto doInTransaction() {
-                applyDueQuietly(key, notices);
                 AssetEntity[] rows = assetsIn(key);
-                Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset();
+                applyDueFor(key, rows, notices);
+                Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
+                Map<String, String[]> holders = new HashMap<String, String[]>();
                 List<AssetEntity> matched = new ArrayList<AssetEntity>();
                 for (AssetEntity row : rows) {
-                    if (!needle.isEmpty() && !matches(row, attributes.get(row.getID()), needle)) {
+                    if (!needle.isEmpty() && !matches(row, attributes.get(row.getID()), needle, holders)) {
                         continue;
                     }
                     matched.add(row);
@@ -348,10 +386,11 @@ public class AssetServiceImpl implements AssetService {
             @Override
             public AssetDto doInTransaction() {
                 AssetEntity entity = requireReadable(user, id);
-                applyDueQuietly(entity.getProjectKey(), notices);
+                String projectKey = entity.getProjectKey();
+                AssetEntity[] rows = assetsIn(projectKey);
+                applyDueFor(projectKey, rows, notices);
                 entity = requireReadable(user, id);
-                AssetEntity[] rows = assetsIn(entity.getProjectKey());
-                return toDto(entity, attributesFor(id), indexTypes(typeDtos(entity.getProjectKey(), rows)), indexAssets(rows), true);
+                return toDto(entity, attributesFor(id), indexTypes(typeDtos(projectKey, rows)), indexAssets(rows), true);
             }
         });
         dispatchNotices(notices);
@@ -367,6 +406,9 @@ public class AssetServiceImpl implements AssetService {
         AssetTypeEntity previewType = findType(draft.getTypeKey());
         String createCap = previewType != null && previewType.isLocation() ? GrantCaps.PLACES : GrantCaps.OBJECT;
         Project project = requireProjectCap(user, draft.getProjectKey(), createCap);
+        if (storedAssetPrefix(project.getKey()).isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
         return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
             @Override
             public AssetDto doInTransaction() {
@@ -535,13 +577,36 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public void deleteComment(ApplicationUser user, int assetId, int commentId) {
-        requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
+        AssetEntity asset = requireAsset(assetId);
         AssetCommentEntity comment = ao().get(AssetCommentEntity.class, commentId);
         if (comment == null || comment.getAssetId() != assetId) {
+            requireAssetCap(user, assetId, kindCap(asset));
             throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        boolean admin = canArrangeTypes(user, project(asset.getProjectKey()));
+        if (!admin) {
+            requireAssetCap(user, assetId, kindCap(asset));
+            if (comment.getAuthorKey() == null || !comment.getAuthorKey().equals(user.getKey())) {
+                throw new AssetException(403, "asset-tree.error.forbidden");
+            }
         }
         logActivity(assetId, user.getKey(), "comment_delete", "", clip(comment.getBody()), "");
         ao().delete(comment);
+    }
+
+    @Override
+    public void deleteActivity(ApplicationUser user, int assetId, int activityId) {
+        AssetEntity asset = requireAsset(assetId);
+        Project project = project(asset.getProjectKey());
+        if (!canArrangeTypes(user, project)) {
+            requireAssetCap(user, assetId, kindCap(asset));
+            throw new AssetException(403, "asset-tree.error.forbidden");
+        }
+        AssetActivityEntity row = ao().get(AssetActivityEntity.class, activityId);
+        if (row == null || row.getAssetId() != assetId) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        ao().delete(row);
     }
 
     @Override
@@ -623,6 +688,111 @@ public class AssetServiceImpl implements AssetService {
     }
 
     @Override
+    public void storeCardImage(ApplicationUser user, int assetId, byte[] data) {
+        if (data == null || data.length == 0) {
+            throw new AssetException(400, "asset-tree.error.file.required");
+        }
+        if (data.length > CardImageStore.MAX_BYTES) {
+            throw new AssetException(400, "asset-tree.error.cardImage.size");
+        }
+        final String kind = CardImageStore.kindOf(data);
+        if (kind.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.cardImage.type");
+        }
+        final byte[] bytes = data;
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
+                if (isLocation(entity)) {
+                    throw new AssetException(400, "asset-tree.error.cardImage.place");
+                }
+                entity.setCardImage(kind);
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                return null;
+            }
+        });
+        try {
+            CardImageStore.write(assetId, bytes);
+        } catch (IOException ex) {
+            clearCardImage(assetId);
+            throw new AssetException(500, "asset-tree.error.unexpected");
+        }
+        logActivity(assetId, user.getKey(), "card_image", "", "", "1");
+    }
+
+    @Override
+    public StoredFile openCardImage(ApplicationUser user, int assetId) {
+        AssetEntity entity = requireReadable(user, assetId);
+        String kind = entity.getCardImage();
+        if (kind == null || kind.isEmpty()) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        java.io.File stored = CardImageStore.file(assetId);
+        if (!stored.isFile()) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        byte[] data = new byte[(int) stored.length()];
+        try {
+            FileInputStream input = new FileInputStream(stored);
+            try {
+                int offset = 0;
+                while (offset < data.length) {
+                    int read = input.read(data, offset, data.length - offset);
+                    if (read < 0) {
+                        break;
+                    }
+                    offset += read;
+                }
+            } finally {
+                input.close();
+            }
+        } catch (IOException ex) {
+            throw new AssetException(500, "asset-tree.error.unexpected");
+        }
+        String name = "jpeg".equals(kind) ? "card.jpg" : "card.png";
+        return new StoredFile(name, CardImageStore.contentType(kind), data);
+    }
+
+    @Override
+    public void deleteCardImage(ApplicationUser user, int assetId) {
+        final boolean[] had = new boolean[] {false};
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = requireAssetCap(user, assetId, kindCap(requireAsset(assetId)));
+                String kind = entity.getCardImage();
+                had[0] = kind != null && !kind.isEmpty();
+                entity.setCardImage("");
+                entity.setUpdated(new Date());
+                entity.setUpdatedBy(user.getKey());
+                entity.save();
+                return null;
+            }
+        });
+        CardImageStore.delete(assetId);
+        if (had[0]) {
+            logActivity(assetId, user.getKey(), "card_image_delete", "", "1", "");
+        }
+    }
+
+    private void clearCardImage(final int assetId) {
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity entity = ao().get(AssetEntity.class, assetId);
+                if (entity != null) {
+                    entity.setCardImage("");
+                    entity.save();
+                }
+                return null;
+            }
+        });
+    }
+
+    @Override
     public void deleteAsset(ApplicationUser user, int id, boolean cascade) {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
@@ -645,21 +815,27 @@ public class AssetServiceImpl implements AssetService {
                     logPlaceChange(user, placeContainer(TreeLogic.normalizeParent(gone.getParentId()), all, doomed), "place_remove", gone);
                 }
                 List<Integer> fileIds = new ArrayList<Integer>();
-                for (Integer assetId : toDelete) {
-                    for (AssetFileEntity file : ao().find(AssetFileEntity.class, Query.select().where("ASSET_ID = ?", assetId))) {
-                        fileIds.add(file.getID());
-                    }
-                    ao().deleteWithSQL(AssetAttributeEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(InventoryMarkEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetCommentEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetFileEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(AssetActivityEntity.class, "ASSET_ID = ?", assetId);
-                    ao().deleteWithSQL(ServicePlanEntity.class, "ASSET_ID = ?", assetId);
-                    deletePortalRulesFor(assetId.intValue());
+                for (AssetFileEntity file : findIn(AssetFileEntity.class, "ASSET_ID", toDelete, null)) {
+                    fileIds.add(Integer.valueOf(file.getID()));
                 }
+                deleteRows(AssetAttributeEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetIssueLinkEntity.class, "ASSET_ID", toDelete);
+                deleteRows(InventoryMarkEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetCommentEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetFileEntity.class, "ASSET_ID", toDelete);
+                deleteRows(AssetActivityEntity.class, "ASSET_ID", toDelete);
+                deleteRows(ServicePlanEntity.class, "ASSET_ID", toDelete);
+                List<Integer> ruleIds = new ArrayList<Integer>();
+                for (PortalRuleEntity rule : findIn(PortalRuleEntity.class, "ASSET_ID", toDelete, null)) {
+                    ruleIds.add(Integer.valueOf(rule.getID()));
+                }
+                deleteRows(PortalRuleConditionEntity.class, "RULE_ID", ruleIds);
+                deleteRows(PortalRuleEntity.class, "ID", ruleIds);
                 for (Integer fileId : fileIds) {
                     AssetFileStore.delete(fileId.intValue());
+                }
+                for (Integer assetId : toDelete) {
+                    CardImageStore.delete(assetId.intValue());
                 }
                 for (int i = descendants.size() - 1; i >= 0; i--) {
                     AssetEntity child = ao().get(AssetEntity.class, descendants.get(i));
@@ -790,6 +966,7 @@ public class AssetServiceImpl implements AssetService {
                 if (!AssetValidator.isTypeKey(key)) {
                     throw new AssetException(400, "asset-tree.error.type.duplicate");
                 }
+                String parentKey = parentTypeKey(project.getKey(), null, draft.getParentTypeKey(), draft.isLocation());
                 AssetTypeEntity created = ao().create(AssetTypeEntity.class,
                         new DBParam("TYPE_KEY", key),
                         new DBParam("LABEL", draft.getLabel().trim()),
@@ -802,7 +979,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LOCATION", Boolean.valueOf(draft.isLocation())),
                         new DBParam("SHOW_IN_TREE", Boolean.valueOf(draft.isLocation() || Boolean.TRUE.equals(draft.getShowInTree()))),
                         new DBParam("SERVICE", Boolean.valueOf(!draft.isLocation() && Boolean.TRUE.equals(draft.getService()))),
-                        new DBParam("PLACE_CAPTION", chosenCaption));
+                        new DBParam("PLACE_CAPTION", chosenCaption),
+                        new DBParam("PARENT_TYPE_KEY", parentKey));
                 return toTypeDto(created, i18n(), 0);
             }
         });
@@ -844,6 +1022,10 @@ public class AssetServiceImpl implements AssetService {
                     }
                     type.setPlaceCaption(draft.getPlaceCaption().trim());
                 }
+                if (draft.getParentTypeKey() != null) {
+                    type.setParentTypeKey(parentTypeKey(type.getProjectKey(), type.getTypeKey(),
+                            draft.getParentTypeKey(), type.isLocation()));
+                }
                 type.save();
                 int count = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 return toTypeDto(type, i18n(), count);
@@ -867,6 +1049,9 @@ public class AssetServiceImpl implements AssetService {
                 int used = ao().count(AssetEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 if (used > 0) {
                     throw new AssetException(409, "asset-tree.error.type.inUse");
+                }
+                if (hasChildTypes(type.getTypeKey())) {
+                    throw new AssetException(409, "asset-tree.error.type.hasSubtypes");
                 }
                 ao().deleteWithSQL(AssetFieldEntity.class, "TYPE_KEY = ?", type.getTypeKey());
                 ao().delete(type);
@@ -924,9 +1109,75 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("LABEL", draft.getLabel().trim()),
                         new DBParam("KIND", draft.getKind()),
                         new DBParam("REQUIRED", Boolean.valueOf(draft.isRequired())),
+                        new DBParam("ISSUE_HIDDEN", Boolean.valueOf(hidesOnIssue(draft))),
                         new DBParam("POSITION", max + 1),
                         new DBParam("OPTIONS", storedOptions));
                 return toFieldDto(created, i18n());
+            }
+        });
+    }
+
+    @Override
+    public FieldDto updateField(ApplicationUser user, final String typeKey, final String fieldKey, final FieldDraft draft) {
+        if (draft == null || draft.getShowOnIssue() == null) {
+            throw new AssetException(400, "asset-tree.error.field.label");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FieldDto>() {
+            @Override
+            public FieldDto doInTransaction() {
+                AssetTypeEntity type = findType(typeKey);
+                if (type == null) {
+                    throw new AssetException(404, "asset-tree.error.type.notFound");
+                }
+                requireConfigurableProject(user, type.getProjectKey());
+                AssetFieldEntity field = findField(type.getTypeKey(), fieldKey);
+                if (field == null) {
+                    throw new AssetException(404, "asset-tree.error.field.notFound");
+                }
+                field.setIssueHidden(!draft.getShowOnIssue().booleanValue());
+                field.save();
+                return toFieldDto(field, i18n());
+            }
+        });
+    }
+
+    @Override
+    public List<FieldDto> reorderFields(ApplicationUser user, final String typeKey, final FieldOrderDto order) {
+        if (order == null) {
+            throw new AssetException(400, "asset-tree.error.field.notFound");
+        }
+        return ao().executeInTransaction(new TransactionCallback<List<FieldDto>>() {
+            @Override
+            public List<FieldDto> doInTransaction() {
+                AssetTypeEntity type = findType(typeKey);
+                if (type == null) {
+                    throw new AssetException(404, "asset-tree.error.type.notFound");
+                }
+                requireConfigurableProject(user, type.getProjectKey());
+                AssetFieldEntity[] existing = fields(type.getTypeKey());
+                Map<String, AssetFieldEntity> byKey = new LinkedHashMap<String, AssetFieldEntity>();
+                for (AssetFieldEntity field : existing) {
+                    byKey.put(field.getFieldKey(), field);
+                }
+                List<AssetFieldEntity> ordered = new ArrayList<AssetFieldEntity>();
+                for (String key : order.getFieldKeys()) {
+                    AssetFieldEntity field = byKey.remove(key);
+                    if (field != null) {
+                        ordered.add(field);
+                    }
+                }
+                ordered.addAll(byKey.values());
+                I18nHelper i18n = i18n();
+                List<FieldDto> result = new ArrayList<FieldDto>();
+                for (int i = 0; i < ordered.size(); i++) {
+                    AssetFieldEntity field = ordered.get(i);
+                    if (field.getPosition() != i) {
+                        field.setPosition(i);
+                        field.save();
+                    }
+                    result.add(toFieldDto(field, i18n));
+                }
+                return result;
             }
         });
     }
@@ -1181,7 +1432,9 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public IssueRefDto linkIssue(ApplicationUser user, int assetId, String issueKey) {
         Issue issue = requireIssue(user, issueKey);
-        return link(user, assetId, issue, true);
+        IssueRefDto linked = link(user, assetId, issue, true);
+        applyLinkedFlow(user, assetId, issue);
+        return linked;
     }
 
     @Override
@@ -1194,6 +1447,7 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(403, "asset-tree.error.forbidden");
         }
         link(user, assetId, issue, false);
+        applyLinkedFlow(user, assetId, issue);
         return getAsset(user, assetId);
     }
 
@@ -1208,7 +1462,10 @@ public class AssetServiceImpl implements AssetService {
                 if (!canWrite(user, project) && !canEditIssue(user, issue)) {
                     throw new AssetException(403, "asset-tree.error.forbidden");
                 }
-                ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId);
+                String before = dropLink(assetId, issueId);
+                if (before != null) {
+                    applyRemovedFlow(user, asset, issue, before);
+                }
                 return null;
             }
         });
@@ -1318,17 +1575,20 @@ public class AssetServiceImpl implements AssetService {
                 }
                 report.setByType(byType);
                 Map<Integer, List<Integer>> children = childrenMap(rows);
+                Set<Integer> locationIds = new HashSet<Integer>();
+                for (Map.Entry<Integer, Boolean> entry : locationAsset.entrySet()) {
+                    if (Boolean.TRUE.equals(entry.getValue())) {
+                        locationIds.add(entry.getKey());
+                    }
+                }
+                Map<Integer, Integer> equipmentByPlace = TreeLogic.equipmentCounts(children, locationIds);
                 List<ReportPlaceDto> places = new ArrayList<ReportPlaceDto>();
                 for (AssetEntity row : rows) {
                     if (!Boolean.TRUE.equals(locationAsset.get(row.getID()))) {
                         continue;
                     }
-                    int nested = 0;
-                    for (Integer descendant : TreeLogic.descendants(children, row.getID())) {
-                        if (!Boolean.TRUE.equals(locationAsset.get(descendant))) {
-                            nested++;
-                        }
-                    }
+                    Integer nestedCount = equipmentByPlace.get(row.getID());
+                    int nested = nestedCount == null ? 0 : nestedCount.intValue();
                     ReportPlaceDto place = new ReportPlaceDto();
                     place.setId(row.getID());
                     place.setName(row.getName());
@@ -1380,6 +1640,9 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public ImportResultDto importEquipment(ApplicationUser user, final String projectKey, final ImportDraft draft) {
         final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        if (storedAssetPrefix(project.getKey()).isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
         final EquipmentSheet.Sheet sheet = equipmentSheet(draft);
         return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
             @Override
@@ -1415,10 +1678,7 @@ public class AssetServiceImpl implements AssetService {
                 AssetEntity[] rows = assetsIn(project.getKey());
                 Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), rows));
                 Map<Integer, AssetEntity> index = indexAssets(rows);
-                Map<Integer, InventoryMarkEntity> marks = new HashMap<Integer, InventoryMarkEntity>();
-                for (InventoryMarkEntity mark : ao().find(InventoryMarkEntity.class)) {
-                    marks.put(Integer.valueOf(mark.getAssetId()), mark);
-                }
+                Map<Integer, InventoryMarkEntity> marks = marksFor(idsOf(rows));
                 List<InventoryRowDto> list = new ArrayList<InventoryRowDto>();
                 int checked = 0;
                 for (AssetEntity row : rows) {
@@ -1476,6 +1736,9 @@ public class AssetServiceImpl implements AssetService {
                     mark.setCheckedAt(new Date());
                     mark.setCheckedBy(user.getKey());
                     mark.save();
+                    for (int i = 1; i < existing.length; i++) {
+                        ao().delete(existing[i]);
+                    }
                 }
                 AssetEntity[] rows = assetsIn(entity.getProjectKey());
                 Map<String, AssetTypeDto> types = indexTypes(typeDtos(entity.getProjectKey(), rows));
@@ -1529,16 +1792,43 @@ public class AssetServiceImpl implements AssetService {
                 List<AssetEntity> ordered = new ArrayList<AssetEntity>();
                 Collections.addAll(ordered, rows);
                 Collections.sort(ordered, SIBLING_ORDER);
-                List<PickerNodeDto> nodes = new ArrayList<PickerNodeDto>();
+                List<PickerLayout.Catalog> catalog = new ArrayList<PickerLayout.Catalog>();
+                for (AssetTypeDto type : typeDtos(project.getKey(), rows)) {
+                    if (type == null || type.isLocation()) {
+                        continue;
+                    }
+                    String parentKey = type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+                    catalog.add(new PickerLayout.Catalog(type.getTypeKey(), type.getLabel(), parentKey));
+                }
+                List<PickerLayout.Source> sources = new ArrayList<PickerLayout.Source>();
                 for (AssetEntity row : ordered) {
-                    PickerNodeDto node = new PickerNodeDto();
-                    node.setId(row.getID());
-                    node.setParentId(TreeLogic.normalizeParent(row.getParentId()));
-                    node.setName(row.getName());
-                    node.setObjectKey(row.getObjectKey());
-                    node.setStatus(Statuses.canonical(row.getStatus()));
                     AssetTypeDto type = types.get(row.getTypeKey());
-                    node.setTypeLabel(type == null ? row.getTypeKey() : type.getLabel());
+                    String parentKey = type == null || type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+                    AssetTypeDto parentType = parentKey.isEmpty() ? null : types.get(parentKey);
+                    boolean location = type != null && type.isLocation();
+                    sources.add(new PickerLayout.Source(
+                            row.getID(),
+                            TreeLogic.normalizeParent(row.getParentId()),
+                            row.getName(),
+                            row.getObjectKey(),
+                            Statuses.canonical(row.getStatus()),
+                            row.getTypeKey(),
+                            type == null ? row.getTypeKey() : type.getLabel(),
+                            parentKey,
+                            parentType == null ? "" : parentType.getLabel(),
+                            location,
+                            location ? offeredLines(row.getOfferedTypes()) : null));
+                }
+                List<PickerNodeDto> nodes = new ArrayList<PickerNodeDto>();
+                for (PickerLayout.Node laid : PickerLayout.arrange(sources, catalog)) {
+                    PickerNodeDto node = new PickerNodeDto();
+                    node.setId(laid.getId());
+                    node.setParentId(laid.getParentId());
+                    node.setName(laid.getName());
+                    node.setObjectKey(laid.getObjectKey());
+                    node.setStatus(laid.getStatus());
+                    node.setTypeLabel(laid.getTypeLabel());
+                    node.setGroup(laid.isGroup());
                     nodes.add(node);
                 }
                 return nodes;
@@ -1611,12 +1901,450 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private void deletePortalRulesFor(int assetId) {
-        PortalRuleEntity[] rules = ao().find(PortalRuleEntity.class, Query.select().where("ASSET_ID = ?", assetId));
-        for (PortalRuleEntity rule : rules) {
-            ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", rule.getID());
-            ao().delete(rule);
+    @Override
+    public PortalRuleDto updatePortalRule(ApplicationUser user, String projectKey, final int ruleId, PortalRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getAssetId() <= 0) {
+            throw new AssetException(400, "asset-tree.error.portal.target");
         }
+        final List<PortalConditionDraft> conditions = cleanConditions(draft.getConditions());
+        return ao().executeInTransaction(new TransactionCallback<PortalRuleDto>() {
+            @Override
+            public PortalRuleDto doInTransaction() {
+                PortalRuleEntity rule = ao().get(PortalRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.portal.missing");
+                }
+                AssetEntity asset = ao().get(AssetEntity.class, draft.getAssetId());
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.portal.target");
+                }
+                rule.setAssetId(draft.getAssetId());
+                rule.save();
+                ao().deleteWithSQL(PortalRuleConditionEntity.class, "RULE_ID = ?", ruleId);
+                for (int i = 0; i < conditions.size(); i++) {
+                    PortalConditionDraft condition = conditions.get(i);
+                    ao().create(PortalRuleConditionEntity.class,
+                            new DBParam("RULE_ID", rule.getID()),
+                            new DBParam("POSITION", i),
+                            new DBParam("FIELD_NAME", condition.getField()),
+                            new DBParam("OPTION_NAME", condition.getOption()));
+                }
+                return toPortalRule(rule);
+            }
+        });
+    }
+
+    @Override
+    public List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey) {
+        return issueTypesOf(requireConfigurableProject(user, projectKey));
+    }
+
+    @Override
+    public List<IssueTypeDto> listIssueStatuses(ApplicationUser user, String projectKey) {
+        return issueStatusesOf(issueStatusNames(requireConfigurableProject(user, projectKey)));
+    }
+
+    @Override
+    public List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        return ao().executeInTransaction(new TransactionCallback<List<FlowRuleDto>>() {
+            @Override
+            public List<FlowRuleDto> doInTransaction() {
+                return flowRules(project.getKey(), names);
+            }
+        });
+    }
+
+    @Override
+    public FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, final FlowRuleDraft draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        if (draft == null || draft.getIssueTypeId() == null || draft.getIssueTypeId().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.flow.type");
+        }
+        if (draft.getStatusKey() == null || draft.getStatusKey().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.flow.status");
+        }
+        final String typeId = draft.getIssueTypeId().trim();
+        final String typeName = issueTypeNames(project).get(typeId);
+        if (typeName == null) {
+            throw new AssetException(400, "asset-tree.error.flow.type");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FlowRuleDto>() {
+            @Override
+            public FlowRuleDto doInTransaction() {
+                String status;
+                try {
+                    status = resolveStatus(project.getKey(), draft.getStatusKey());
+                } catch (AssetException ex) {
+                    throw new AssetException(400, "asset-tree.error.flow.status");
+                }
+                FlowRuleEntity[] existing = ao().find(FlowRuleEntity.class,
+                        Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", project.getKey(), typeId));
+                FlowRuleEntity row;
+                if (existing != null && existing.length > 0) {
+                    row = existing[0];
+                    row.setIssueTypeName(typeName);
+                    row.setStatusKey(status);
+                    row.save();
+                    for (int i = 1; i < existing.length; i++) {
+                        ao().delete(existing[i]);
+                    }
+                } else {
+                    row = ao().create(FlowRuleEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ISSUE_TYPE_ID", typeId),
+                            new DBParam("ISSUE_TYPE_NAME", typeName),
+                            new DBParam("STATUS_KEY", status));
+                }
+                return toFlow(row);
+            }
+        });
+    }
+
+    @Override
+    public void deleteFlowRule(ApplicationUser user, String projectKey, final int ruleId) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                FlowRuleEntity rule = ao().get(FlowRuleEntity.class, ruleId);
+                if (rule == null || !ProjectKeys.same(rule.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.flow.missing");
+                }
+                ao().delete(rule);
+                return null;
+            }
+        });
+    }
+
+    @Override
+    public FlowBookDto flowGraph(ApplicationUser user, String projectKey) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        final Map<String, String> issueStatuses = issueStatusNames(project);
+        return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
+            @Override
+            public FlowBookDto doInTransaction() {
+                FlowGraphEntity stored = findFlowGraph(project.getKey());
+                List<FlowProcessDto> processes;
+                if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
+                    processes = FlowBook.read(stored.getBody());
+                } else {
+                    processes = new ArrayList<FlowProcessDto>();
+                    FlowGraphDto graph = FlowGraph.fromRules(flowRules(project.getKey(), names));
+                    if (!graph.getNodes().isEmpty()) {
+                        FlowProcessDto one = new FlowProcessDto();
+                        one.setId("rules1");
+                        one.setNodes(graph.getNodes());
+                        one.setLinks(graph.getLinks());
+                        processes.add(one);
+                    }
+                }
+                FlowBookDto book = FlowBook.book(processes);
+                nameFlowBook(book, names, issueStatuses);
+                return book;
+            }
+        });
+    }
+
+    @Override
+    public FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final Map<String, String> names = issueTypeNames(project);
+        final Map<String, String> issueStatuses = issueStatusNames(project);
+        final FlowBookDto book = FlowBook.book(draft == null ? null : draft.getProcesses());
+        for (FlowProcessDto process : book.getProcesses()) {
+            for (FlowNodeDto node : process.getNodes()) {
+                if (FlowGraph.REQUEST.equals(node.getKind()) && node.getIssueTypeId() != null
+                        && !node.getIssueTypeId().isEmpty() && !names.containsKey(node.getIssueTypeId())) {
+                    throw new AssetException(400, "asset-tree.error.flow.type");
+                }
+                if (FlowGraph.ISSUE.equals(node.getKind()) && node.getIssueStatusId() != null
+                        && !node.getIssueStatusId().isEmpty() && !issueStatuses.containsKey(node.getIssueStatusId())) {
+                    throw new AssetException(400, "asset-tree.error.flow.issue");
+                }
+            }
+        }
+        return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
+            @Override
+            public FlowBookDto doInTransaction() {
+                for (FlowProcessDto process : book.getProcesses()) {
+                    for (FlowNodeDto node : process.getNodes()) {
+                        if (!FlowGraph.STATUS.equals(node.getKind()) || node.getStatusKey() == null || node.getStatusKey().isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            node.setStatusKey(resolveStatus(project.getKey(), node.getStatusKey()));
+                        } catch (AssetException ex) {
+                            throw new AssetException(400, "asset-tree.error.flow.status");
+                        }
+                    }
+                }
+                String body = FlowBook.write(book.getProcesses());
+                FlowGraphEntity stored = findFlowGraph(project.getKey());
+                if (stored == null) {
+                    ao().create(FlowGraphEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("BODY", body));
+                } else {
+                    stored.setBody(body);
+                    stored.save();
+                }
+                ao().deleteWithSQL(FlowRuleEntity.class, "PROJECT_KEY = ?", project.getKey());
+                for (FlowRuleDto pair : FlowBook.pairs(book.getProcesses())) {
+                    String typeName = names.get(pair.getIssueTypeId());
+                    if (typeName == null) {
+                        continue;
+                    }
+                    ao().create(FlowRuleEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ISSUE_TYPE_ID", pair.getIssueTypeId()),
+                            new DBParam("ISSUE_TYPE_NAME", typeName),
+                            new DBParam("STATUS_KEY", pair.getStatusKey()));
+                }
+                nameFlowBook(book, names, issueStatuses);
+                return book;
+            }
+        });
+    }
+
+    @Override
+    public CardLayout cardLayout(ApplicationUser user, String projectKey) {
+        Project project = requireReadableProject(user, projectKey);
+        return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
+            @Override
+            public CardLayout doInTransaction() {
+                return layoutOf(findCard(project.getKey()));
+            }
+        });
+    }
+
+    @Override
+    public CardLayout saveCardLayout(ApplicationUser user, String projectKey, final CardLayout draft) {
+        final Project project = requireConfigurableProject(user, projectKey);
+        final CardLayout layout = CardLayout.normalize(draft);
+        return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
+            @Override
+            public CardLayout doInTransaction() {
+                CardTemplateEntity row = findCard(project.getKey());
+                if (row == null) {
+                    row = ao().create(CardTemplateEntity.class, new DBParam("PROJECT_KEY", project.getKey()));
+                }
+                row.setCardSize(layout.getSize());
+                row.setWidthMm(layout.getWidth());
+                row.setHeightMm(layout.getHeight());
+                row.setGridMm(layout.getGrid());
+                row.setQrPlace(layout.getQr());
+                row.setLines(CardLayout.join(layout.getLines()));
+                row.setCanvas(layout.getElements() == null ? null : CardCanvas.write(layout.getElements()));
+                row.save();
+                return layout;
+            }
+        });
+    }
+
+    @Override
+    public AssetKeyDto saveAssetKey(ApplicationUser user, String projectKey, AssetKeyDto draft) {
+        final Project project = requireArrangeProject(user, projectKey);
+        final String prefix = AssetKeyRules.normalize(draft == null ? "" : draft.getAssetKey());
+        String error = AssetKeyRules.invalid(prefix);
+        if (error != null) {
+            throw new AssetException(400, error);
+        }
+        Collection<Project> known = projectManager().getProjects();
+        if (known != null) {
+            for (Project item : known) {
+                if (item != null && item.getKey() != null && prefix.equalsIgnoreCase(item.getKey())) {
+                    throw new AssetException(400, "asset-tree.error.assetKey.project");
+                }
+            }
+        }
+        return ao().executeInTransaction(new TransactionCallback<AssetKeyDto>() {
+            @Override
+            public AssetKeyDto doInTransaction() {
+                ProjectAssetKeyEntity[] rows = ao().find(ProjectAssetKeyEntity.class);
+                ProjectAssetKeyEntity current = null;
+                if (rows != null) {
+                    for (ProjectAssetKeyEntity row : rows) {
+                        if (row.getAssetPrefix() != null && prefix.equalsIgnoreCase(row.getAssetPrefix())
+                                && !ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                            throw new AssetException(400, "asset-tree.error.assetKey.taken");
+                        }
+                        if (current == null && ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                            current = row;
+                        }
+                    }
+                }
+                AssetEntity[] existing = ao().find(AssetEntity.class, Query.select().where("OBJECT_KEY LIKE ?", prefix + "-%"));
+                if (existing != null) {
+                    for (AssetEntity asset : existing) {
+                        if (ObjectKeys.suffix(prefix, asset.getObjectKey()) <= 0) {
+                            continue;
+                        }
+                        if (!ProjectKeys.same(asset.getProjectKey(), project.getKey())) {
+                            throw new AssetException(400, "asset-tree.error.assetKey.taken");
+                        }
+                    }
+                }
+                if (current == null) {
+                    ao().create(ProjectAssetKeyEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("ASSET_PREFIX", prefix));
+                } else if (!prefix.equals(current.getAssetPrefix())) {
+                    current.setAssetPrefix(prefix);
+                    current.save();
+                }
+                AssetKeyDto saved = new AssetKeyDto();
+                saved.setAssetKey(prefix);
+                return saved;
+            }
+        });
+    }
+
+    @Override
+    public ProjectViewDto saveProjectView(ApplicationUser user, String projectKey, ProjectViewDto draft) {
+        final Project project = requireArrangeProject(user, projectKey);
+        final Boolean tree = draft == null ? null : draft.getTreeObjects();
+        final List<String> columns = draft == null || draft.getColumns() == null ? null : ViewColumns.clean(draft.getColumns());
+        return ao().executeInTransaction(new TransactionCallback<ProjectViewDto>() {
+            @Override
+            public ProjectViewDto doInTransaction() {
+                ProjectViewEntity row = viewRow(project.getKey());
+                if (row == null) {
+                    row = ao().create(ProjectViewEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("TREE_MODE", Integer.valueOf(0)));
+                }
+                if (tree != null) {
+                    row.setTreeMode(tree.booleanValue() ? 1 : 0);
+                }
+                if (columns != null) {
+                    row.setColumnList(ViewColumns.join(columns));
+                }
+                row.save();
+                ProjectViewDto saved = new ProjectViewDto();
+                saved.setTreeObjects(Boolean.valueOf(row.getTreeMode() == 1));
+                saved.setColumns(ViewColumns.split(row.getColumnList()));
+                return saved;
+            }
+        });
+    }
+
+    private ProjectViewEntity viewRow(String projectKey) {
+        ProjectViewEntity[] rows = ao().find(ProjectViewEntity.class);
+        if (rows != null) {
+            for (ProjectViewEntity row : rows) {
+                if (ProjectKeys.same(row.getProjectKey(), projectKey)) {
+                    return row;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void attachViews(List<ProjectDto> projects) {
+        Map<String, ProjectViewEntity> stored = new HashMap<String, ProjectViewEntity>();
+        try {
+            ProjectViewEntity[] rows = ao().executeInTransaction(new TransactionCallback<ProjectViewEntity[]>() {
+                @Override
+                public ProjectViewEntity[] doInTransaction() {
+                    return ao().find(ProjectViewEntity.class);
+                }
+            });
+            if (rows != null) {
+                for (ProjectViewEntity row : rows) {
+                    if (row.getProjectKey() != null) {
+                        stored.put(row.getProjectKey(), row);
+                    }
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Project views were not loaded", ex);
+        }
+        for (ProjectDto project : projects) {
+            ProjectViewEntity row = stored.get(project.getKey());
+            project.setTreeObjects(row != null && row.getTreeMode() == 1);
+            project.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
+        }
+    }
+
+    private void attachAssetKeys(List<ProjectDto> projects) {
+        Map<String, String> stored = new HashMap<String, String>();
+        try {
+            List<ProjectAssetKeyEntity> rows = ao().executeInTransaction(new TransactionCallback<List<ProjectAssetKeyEntity>>() {
+                @Override
+                public List<ProjectAssetKeyEntity> doInTransaction() {
+                    ProjectAssetKeyEntity[] found = ao().find(ProjectAssetKeyEntity.class);
+                    List<ProjectAssetKeyEntity> list = new ArrayList<ProjectAssetKeyEntity>();
+                    if (found != null) {
+                        Collections.addAll(list, found);
+                    }
+                    return list;
+                }
+            });
+            for (ProjectAssetKeyEntity row : rows) {
+                if (row.getProjectKey() != null && row.getAssetPrefix() != null) {
+                    stored.put(row.getProjectKey(), row.getAssetPrefix());
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Asset keys were not loaded", ex);
+        }
+        for (ProjectDto project : projects) {
+            String prefix = stored.get(project.getKey());
+            project.setAssetKey(prefix == null ? "" : prefix);
+        }
+    }
+
+    private void attachCards(List<ProjectDto> projects) {
+        Map<String, CardLayout> stored = new HashMap<String, CardLayout>();
+        try {
+            List<CardTemplateEntity> rows = ao().executeInTransaction(new TransactionCallback<List<CardTemplateEntity>>() {
+                @Override
+                public List<CardTemplateEntity> doInTransaction() {
+                    CardTemplateEntity[] found = ao().find(CardTemplateEntity.class);
+                    List<CardTemplateEntity> list = new ArrayList<CardTemplateEntity>();
+                    if (found != null) {
+                        Collections.addAll(list, found);
+                    }
+                    return list;
+                }
+            });
+            for (CardTemplateEntity row : rows) {
+                stored.put(row.getProjectKey(), layoutOf(row));
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Card layouts were not loaded", ex);
+        }
+        for (ProjectDto project : projects) {
+            CardLayout layout = stored.get(project.getKey());
+            project.setCard(layout == null ? CardLayout.defaults() : layout);
+        }
+    }
+
+    private CardTemplateEntity findCard(String projectKey) {
+        CardTemplateEntity[] found = ao().find(CardTemplateEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private CardLayout layoutOf(CardTemplateEntity row) {
+        if (row == null) {
+            return CardLayout.defaults();
+        }
+        CardLayout raw = new CardLayout();
+        raw.setSize(row.getCardSize());
+        raw.setWidth(row.getWidthMm());
+        raw.setHeight(row.getHeightMm());
+        raw.setGrid(row.getGridMm());
+        raw.setQr(row.getQrPlace());
+        raw.setLines(CardLayout.split(row.getLines()));
+        String canvas = row.getCanvas();
+        if (canvas != null && !canvas.trim().isEmpty()) {
+            raw.setElements(CardCanvas.read(canvas));
+        }
+        return CardLayout.normalize(raw);
     }
 
     private List<PortalConditionDraft> cleanConditions(List<PortalConditionDraft> raw) {
@@ -1706,6 +2434,330 @@ public class AssetServiceImpl implements AssetService {
         return dto;
     }
 
+    private List<IssueTypeDto> issueTypesOf(Project project) {
+        List<IssueTypeDto> result = new ArrayList<IssueTypeDto>();
+        Map<String, String> names = issueTypeNames(project);
+        for (Map.Entry<String, String> entry : names.entrySet()) {
+            IssueTypeDto dto = new IssueTypeDto();
+            dto.setId(entry.getKey());
+            dto.setName(entry.getValue());
+            result.add(dto);
+        }
+        Collections.sort(result, new Comparator<IssueTypeDto>() {
+            @Override
+            public int compare(IssueTypeDto left, IssueTypeDto right) {
+                String leftName = left.getName() == null ? "" : left.getName();
+                String rightName = right.getName() == null ? "" : right.getName();
+                return leftName.compareToIgnoreCase(rightName);
+            }
+        });
+        return result;
+    }
+
+    private Map<String, String> issueTypeNames(Project project) {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        if (project == null || project.getIssueTypes() == null) {
+            return names;
+        }
+        for (IssueType type : project.getIssueTypes()) {
+            if (type == null || type.isSubTask() || type.getId() == null || type.getId().trim().isEmpty()) {
+                continue;
+            }
+            String name = type.getName() == null || type.getName().trim().isEmpty() ? type.getId().trim() : type.getName().trim();
+            names.put(type.getId().trim(), name);
+        }
+        return names;
+    }
+
+    private List<FlowRuleDto> flowRules(String projectKey, Map<String, String> names) {
+        FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (rows == null) {
+            return new ArrayList<FlowRuleDto>();
+        }
+        Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
+            @Override
+            public int compare(FlowRuleEntity left, FlowRuleEntity right) {
+                String leftName = left.getIssueTypeName() == null ? "" : left.getIssueTypeName();
+                String rightName = right.getIssueTypeName() == null ? "" : right.getIssueTypeName();
+                int byName = leftName.compareToIgnoreCase(rightName);
+                if (byName != 0) {
+                    return byName;
+                }
+                return left.getID() - right.getID();
+            }
+        });
+        List<FlowRuleDto> result = new ArrayList<FlowRuleDto>();
+        for (FlowRuleEntity row : rows) {
+            FlowRuleDto dto = toFlow(row);
+            String live = names == null ? null : names.get(dto.getIssueTypeId());
+            if (live != null) {
+                dto.setIssueTypeName(live);
+            }
+            result.add(dto);
+        }
+        return result;
+    }
+
+    private FlowRuleDto toFlow(FlowRuleEntity rule) {
+        FlowRuleDto dto = new FlowRuleDto();
+        dto.setId(rule.getID());
+        dto.setIssueTypeId(rule.getIssueTypeId());
+        dto.setIssueTypeName(rule.getIssueTypeName());
+        dto.setStatusKey(rule.getStatusKey());
+        return dto;
+    }
+
+    private FlowGraphEntity findFlowGraph(String projectKey) {
+        FlowGraphEntity[] found = ao().find(FlowGraphEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private void nameFlowBook(FlowBookDto book, Map<String, String> names, Map<String, String> issueStatuses) {
+        if (book == null || book.getProcesses() == null) {
+            return;
+        }
+        for (FlowProcessDto process : book.getProcesses()) {
+            FlowGraphDto graph = new FlowGraphDto();
+            graph.setNodes(process.getNodes());
+            graph.setLinks(process.getLinks());
+            nameFlowNodes(graph, names, issueStatuses);
+        }
+    }
+
+    private void nameFlowNodes(FlowGraphDto graph, Map<String, String> names, Map<String, String> issueStatuses) {
+        if (graph == null || graph.getNodes() == null) {
+            return;
+        }
+        for (FlowNodeDto node : graph.getNodes()) {
+            if (node == null) {
+                continue;
+            }
+            if (FlowGraph.REQUEST.equals(node.getKind()) && names != null) {
+                String live = names.get(node.getIssueTypeId());
+                if (live != null) {
+                    node.setIssueTypeName(live);
+                }
+            }
+            if (FlowGraph.ISSUE.equals(node.getKind()) && issueStatuses != null) {
+                String live = issueStatuses.get(node.getIssueStatusId());
+                if (live != null) {
+                    node.setIssueStatusName(live);
+                }
+            }
+        }
+    }
+
+    private List<IssueTypeDto> issueStatusesOf(Map<String, String> names) {
+        List<IssueTypeDto> result = new ArrayList<IssueTypeDto>();
+        if (names == null) {
+            return result;
+        }
+        for (Map.Entry<String, String> entry : names.entrySet()) {
+            IssueTypeDto dto = new IssueTypeDto();
+            dto.setId(entry.getKey());
+            dto.setName(entry.getValue());
+            result.add(dto);
+        }
+        Collections.sort(result, new Comparator<IssueTypeDto>() {
+            @Override
+            public int compare(IssueTypeDto left, IssueTypeDto right) {
+                String leftName = left.getName() == null ? "" : left.getName();
+                String rightName = right.getName() == null ? "" : right.getName();
+                return leftName.compareToIgnoreCase(rightName);
+            }
+        });
+        return result;
+    }
+
+    private Map<String, String> issueStatusNames(Project project) {
+        Map<String, String> names = new LinkedHashMap<String, String>();
+        try {
+            WorkflowManager workflows = ComponentAccessor.getWorkflowManager();
+            if (workflows != null && project != null && project.getIssueTypes() != null) {
+                for (IssueType type : project.getIssueTypes()) {
+                    if (type == null || type.isSubTask() || type.getId() == null || type.getId().trim().isEmpty()) {
+                        continue;
+                    }
+                    JiraWorkflow workflow = workflows.getWorkflow(project.getId(), type.getId());
+                    if (workflow == null || workflow.getLinkedStatusObjects() == null) {
+                        continue;
+                    }
+                    for (Status status : workflow.getLinkedStatusObjects()) {
+                        rememberStatus(names, status);
+                    }
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Workflow statuses were not loaded for {}", project == null ? "" : project.getKey(), ex);
+        }
+        if (!names.isEmpty()) {
+            return names;
+        }
+        try {
+            ConstantsManager constants = ComponentAccessor.getConstantsManager();
+            if (constants != null && constants.getStatuses() != null) {
+                for (Status status : constants.getStatuses()) {
+                    rememberStatus(names, status);
+                }
+            }
+        } catch (RuntimeException ex) {
+            log.warn("Issue statuses were not loaded", ex);
+        }
+        return names;
+    }
+
+    private void rememberStatus(Map<String, String> names, Status status) {
+        if (status == null || status.getId() == null || status.getId().trim().isEmpty()) {
+            return;
+        }
+        String name = status.getName() == null || status.getName().trim().isEmpty() ? status.getId().trim() : status.getName().trim();
+        names.put(status.getId().trim(), name);
+    }
+
+    private void applyLinkedFlow(ApplicationUser user, int assetId, Issue issue) {
+        try {
+            applyRequestFlow(user, assetId, issue);
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for {}", assetId, ex);
+        }
+    }
+
+    private void applyRequestFlow(ApplicationUser user, final int assetId, Issue issue) {
+        if (issue == null || issue.getIssueType() == null || issue.getProjectObject() == null) {
+            return;
+        }
+        final String typeId = issue.getIssueType().getId();
+        if (typeId == null || typeId.trim().isEmpty()) {
+            return;
+        }
+        final String projectKey = issue.getProjectObject().getKey();
+        final String wanted = typeId.trim();
+        final String issueStatusId = issue.getStatus() == null || issue.getStatus().getId() == null
+                ? "" : issue.getStatus().getId().trim();
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                AssetEntity asset = ao().get(AssetEntity.class, assetId);
+                if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
+                    return null;
+                }
+                applyResolvedStatus(user, asset, wanted, equipmentStatusFor(projectKey, wanted, null, false));
+                if (!issueStatusId.isEmpty()) {
+                    applyResolvedStatus(user, asset, wanted, equipmentStatusFor(projectKey, wanted, issueStatusId, true));
+                }
+                return null;
+            }
+        });
+    }
+
+    /** Deletes the link and returns the status the asset had when it was linked, or null when there was no link. */
+    private String dropLink(int assetId, long issueId) {
+        AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class,
+                Query.select().where("ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId));
+        if (links == null || links.length == 0) {
+            return null;
+        }
+        String before = "";
+        for (AssetIssueLinkEntity link : links) {
+            if (before.isEmpty() && link.getStatusBefore() != null) {
+                before = link.getStatusBefore().trim();
+            }
+        }
+        ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", assetId, issueId);
+        return before;
+    }
+
+    private void applyRemovedFlow(ApplicationUser user, AssetEntity asset, Issue issue, String statusBefore) {
+        if (asset == null || issue == null || issue.getProjectObject() == null || isLocation(asset)) {
+            return;
+        }
+        String projectKey = issue.getProjectObject().getKey();
+        if (!ProjectKeys.same(asset.getProjectKey(), projectKey)) {
+            return;
+        }
+        FlowGraphEntity stored = findFlowGraph(projectKey);
+        if (stored == null || stored.getBody() == null || stored.getBody().trim().isEmpty()) {
+            return;
+        }
+        String typeId = issue.getIssueType() == null || issue.getIssueType().getId() == null
+                ? "" : issue.getIssueType().getId().trim();
+        String next = FlowBook.removedStatus(FlowBook.read(stored.getBody()), typeId);
+        if (FlowBook.RESTORE.equals(next)) {
+            next = statusBefore == null || statusBefore.isEmpty() ? null : statusBefore;
+        }
+        if (next == null || !knownStatusKeys(projectKey).contains(next)
+                || next.equals(Statuses.canonical(asset.getStatus()))) {
+            return;
+        }
+        assignFlowStatus(user, asset, next);
+    }
+
+    private void applyResolvedStatus(ApplicationUser user, AssetEntity asset, String issueTypeId, String resolved) {
+        if (resolved == null || resolved.isEmpty()) {
+            return;
+        }
+        FlowRuleDto rule = new FlowRuleDto();
+        rule.setIssueTypeId(issueTypeId);
+        rule.setStatusKey(resolved);
+        String next = FlowRules.statusToApply(Collections.singletonList(rule), issueTypeId, true,
+                Statuses.canonical(asset.getStatus()), knownStatusKeys(asset.getProjectKey()));
+        if (next == null) {
+            return;
+        }
+        assignFlowStatus(user, asset, next);
+    }
+
+    private String equipmentStatusFor(String projectKey, String issueTypeId, String issueStatusId, boolean onTransition) {
+        FlowGraphEntity stored = findFlowGraph(projectKey);
+        if (stored != null && stored.getBody() != null && !stored.getBody().trim().isEmpty()) {
+            return FlowBook.equipmentStatus(FlowBook.read(stored.getBody()), issueTypeId, issueStatusId, onTransition);
+        }
+        if (onTransition || issueTypeId == null || issueTypeId.trim().isEmpty()) {
+            return null;
+        }
+        FlowRuleEntity[] rows = ao().find(FlowRuleEntity.class,
+                Query.select().where("PROJECT_KEY = ? AND ISSUE_TYPE_ID = ?", projectKey, issueTypeId.trim()));
+        if (rows == null || rows.length == 0) {
+            return null;
+        }
+        Arrays.sort(rows, new Comparator<FlowRuleEntity>() {
+            @Override
+            public int compare(FlowRuleEntity left, FlowRuleEntity right) {
+                return left.getID() - right.getID();
+            }
+        });
+        String found = null;
+        for (FlowRuleEntity row : rows) {
+            if (row.getStatusKey() != null && !row.getStatusKey().trim().isEmpty()) {
+                found = row.getStatusKey().trim();
+            }
+        }
+        return found;
+    }
+
+    private Set<String> knownStatusKeys(String projectKey) {
+        ensureStatuses(projectKey);
+        Set<String> known = new HashSet<String>();
+        ProjectStatusEntity[] statuses = projectStatuses(projectKey);
+        if (statuses != null) {
+            for (ProjectStatusEntity status : statuses) {
+                if (status.getStatusKey() != null) {
+                    known.add(status.getStatusKey());
+                }
+            }
+        }
+        return known;
+    }
+
+    private void assignFlowStatus(ApplicationUser user, AssetEntity asset, String next) {
+        String oldStatus = Statuses.canonical(asset.getStatus());
+        asset.setStatus(next);
+        asset.setUpdated(new Date());
+        asset.setUpdatedBy(user == null ? "" : user.getKey());
+        asset.save();
+        logActivity(asset.getID(), user == null ? "" : user.getKey(), "status", "", oldStatus, next);
+    }
+
     private String portalPath(AssetEntity entity) {
         List<String> names = new ArrayList<String>();
         AssetEntity cursor = entity;
@@ -1760,14 +2812,11 @@ public class AssetServiceImpl implements AssetService {
             public List<AssetDto> doInTransaction() {
                 List<AssetDto> found = new ArrayList<AssetDto>();
                 for (ProjectDto project : visibleProjects(user)) {
-                    applyDueQuietly(project.getKey(), notices);
                     AssetEntity[] rows = assetsIn(project.getKey());
+                    applyDueFor(project.getKey(), rows, notices);
                     Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), rows));
                     Map<Integer, AssetEntity> index = indexAssets(rows);
-                    Map<Integer, List<AssetAttributeEntity>> attributes = new HashMap<Integer, List<AssetAttributeEntity>>();
-                    for (AssetEntity row : rows) {
-                        attributes.put(row.getID(), attributesFor(row.getID()));
-                    }
+                    Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
                     for (AssetEntity row : rows) {
                         String role = holderRole(row, attributes.get(row.getID()), types.get(row.getTypeKey()), holder);
                         if (role == null) {
@@ -1810,7 +2859,10 @@ public class AssetServiceImpl implements AssetService {
                 ao().executeInTransaction(new TransactionCallback<Void>() {
                     @Override
                     public Void doInTransaction() {
-                        ao().deleteWithSQL(AssetIssueLinkEntity.class, "ASSET_ID = ? AND ISSUE_ID = ?", previous, issue.getId());
+                        String before = dropLink(previous.intValue(), issue.getId().longValue());
+                        if (before != null) {
+                            applyRemovedFlow(user, ao().get(AssetEntity.class, previous.intValue()), issue, before);
+                        }
                         return null;
                     }
                 });
@@ -1821,12 +2873,73 @@ public class AssetServiceImpl implements AssetService {
         if (next == null) {
             return;
         }
+        boolean fresh = previous == null || previous.intValue() != next.intValue();
         try {
             link(user, next.intValue(), issue, false);
         } catch (AssetException ex) {
             if (ex.getStatus() != 409) {
                 log.warn("Could not link asset {} to {}", next, issue.getKey());
             }
+            return;
+        }
+        if (!fresh) {
+            return;
+        }
+        try {
+            applyRequestFlow(user, next.intValue(), issue);
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for {}", next, ex);
+        }
+    }
+
+    @Override
+    public void syncRequestStatus(ApplicationUser user, Issue issue) {
+        if (issue == null || issue.getId() == null || issue.getProjectObject() == null || issue.getStatus() == null) {
+            return;
+        }
+        final String projectKey = issue.getProjectObject().getKey();
+        final String typeId = issue.getIssueType() == null || issue.getIssueType().getId() == null
+                ? "" : issue.getIssueType().getId().trim();
+        final String issueStatusId = issue.getStatus().getId() == null ? "" : issue.getStatus().getId().trim();
+        if (projectKey == null || projectKey.trim().isEmpty() || issueStatusId.isEmpty()) {
+            return;
+        }
+        final long issueId = issue.getId().longValue();
+        try {
+            ao().executeInTransaction(new TransactionCallback<Void>() {
+                @Override
+                public Void doInTransaction() {
+                    String resolved = equipmentStatusFor(projectKey, typeId, issueStatusId, true);
+                    if (resolved == null || resolved.isEmpty()) {
+                        return null;
+                    }
+                    Set<String> known = knownStatusKeys(projectKey);
+                    String matchType = typeId.isEmpty() ? "*" : typeId;
+                    FlowRuleDto rule = new FlowRuleDto();
+                    rule.setIssueTypeId(matchType);
+                    rule.setStatusKey(resolved);
+                    AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class,
+                            Query.select().where("ISSUE_ID = ?", issueId));
+                    if (links == null) {
+                        return null;
+                    }
+                    for (AssetIssueLinkEntity link : links) {
+                        AssetEntity asset = ao().get(AssetEntity.class, link.getAssetId());
+                        if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || isLocation(asset)) {
+                            continue;
+                        }
+                        String next = FlowRules.statusToApply(Collections.singletonList(rule), matchType, true,
+                                Statuses.canonical(asset.getStatus()), known);
+                        if (next == null) {
+                            continue;
+                        }
+                        assignFlowStatus(user, asset, next);
+                    }
+                    return null;
+                }
+            });
+        } catch (RuntimeException ex) {
+            log.warn("Could not apply the equipment flow for issue {}", issue.getKey(), ex);
         }
     }
 
@@ -1863,7 +2976,8 @@ public class AssetServiceImpl implements AssetService {
                 }
                 ao().create(AssetIssueLinkEntity.class,
                         new DBParam("ASSET_ID", assetId),
-                        new DBParam("ISSUE_ID", issue.getId()));
+                        new DBParam("ISSUE_ID", issue.getId()),
+                        new DBParam("STATUS_BEFORE", Statuses.canonical(asset.getStatus())));
                 return toIssue(issue);
             }
         });
@@ -1874,18 +2988,40 @@ public class AssetServiceImpl implements AssetService {
             @Override
             public List<AssetDto> doInTransaction() {
                 AssetIssueLinkEntity[] links = ao().find(AssetIssueLinkEntity.class, Query.select().where("ISSUE_ID = ?", issueId));
+                List<AssetEntity> visible = new ArrayList<AssetEntity>();
+                Map<String, AssetEntity[]> rowsByProject = new HashMap<String, AssetEntity[]>();
+                if (links != null) {
+                    for (AssetIssueLinkEntity link : links) {
+                        AssetEntity entity = ao().get(AssetEntity.class, link.getAssetId());
+                        if (entity == null) {
+                            continue;
+                        }
+                        Project project = project(entity.getProjectKey());
+                        if (!canOpen(user, project)) {
+                            continue;
+                        }
+                        visible.add(entity);
+                        if (!rowsByProject.containsKey(entity.getProjectKey())) {
+                            rowsByProject.put(entity.getProjectKey(), assetsIn(entity.getProjectKey()));
+                        }
+                    }
+                }
+                Map<String, Map<String, AssetTypeDto>> typesByProject = new HashMap<String, Map<String, AssetTypeDto>>();
+                Map<String, Map<Integer, AssetEntity>> indexByProject = new HashMap<String, Map<Integer, AssetEntity>>();
+                Map<String, Map<Integer, List<AssetAttributeEntity>>> attributesByProject =
+                        new HashMap<String, Map<Integer, List<AssetAttributeEntity>>>();
+                for (Map.Entry<String, AssetEntity[]> entry : rowsByProject.entrySet()) {
+                    AssetEntity[] rows = entry.getValue();
+                    typesByProject.put(entry.getKey(), indexTypes(typeDtos(entry.getKey(), rows)));
+                    indexByProject.put(entry.getKey(), indexAssets(rows));
+                    attributesByProject.put(entry.getKey(), attributesByAsset(idsOf(rows)));
+                }
                 List<AssetDto> assets = new ArrayList<AssetDto>();
-                for (AssetIssueLinkEntity link : links) {
-                    AssetEntity entity = ao().get(AssetEntity.class, link.getAssetId());
-                    if (entity == null) {
-                        continue;
-                    }
-                    Project project = project(entity.getProjectKey());
-                    if (!canOpen(user, project)) {
-                        continue;
-                    }
-                    AssetEntity[] rows = assetsIn(entity.getProjectKey());
-                    assets.add(toDto(entity, attributesFor(entity.getID()), indexTypes(typeDtos(entity.getProjectKey(), rows)), indexAssets(rows), false));
+                for (AssetEntity entity : visible) {
+                    String projectKey = entity.getProjectKey();
+                    Map<Integer, List<AssetAttributeEntity>> attributes = attributesByProject.get(projectKey);
+                    List<AssetAttributeEntity> stored = attributes == null ? null : attributes.get(Integer.valueOf(entity.getID()));
+                    assets.add(toDto(entity, stored, typesByProject.get(projectKey), indexByProject.get(projectKey), false));
                 }
                 Collections.sort(assets, new Comparator<AssetDto>() {
                     @Override
@@ -2448,18 +3584,37 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private String nextKey(String projectKey) {
-        String prefix = ObjectKeys.prefix(projectKey);
-        for (int attempt = 0; attempt < 8; attempt++) {
-            AssetCounterEntity counter = counterFor(prefix);
-            int value = Math.max(counter.getNextValue(), 1);
-            counter.setNextValue(value + 1);
-            counter.save();
-            String key = prefix + "-" + value;
-            if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
-                return key;
+        String prefix = storedAssetPrefix(projectKey);
+        if (prefix.isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.assetKey.required");
+        }
+        Object created = new Object();
+        Object raced = KEY_LOCKS.putIfAbsent(prefix, created);
+        Object lock = raced == null ? created : raced;
+        synchronized (lock) {
+            for (int attempt = 0; attempt < 8; attempt++) {
+                AssetCounterEntity counter = counterFor(prefix);
+                int value = Math.max(counter.getNextValue(), 1);
+                counter.setNextValue(value + 1);
+                counter.save();
+                String key = prefix + "-" + value;
+                if (key.length() <= 32 && ao().count(AssetEntity.class, "OBJECT_KEY = ?", key) == 0) {
+                    return key;
+                }
             }
         }
         throw new AssetException(500, "asset-tree.error.unexpected");
+    }
+
+    private String storedAssetPrefix(String projectKey) {
+        if (projectKey == null || projectKey.isEmpty()) {
+            return "";
+        }
+        ProjectAssetKeyEntity[] rows = ao().find(ProjectAssetKeyEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (rows == null || rows.length == 0 || rows[0].getAssetPrefix() == null) {
+            return "";
+        }
+        return rows[0].getAssetPrefix();
     }
 
     private AssetCounterEntity counterFor(String prefix) {
@@ -2645,6 +3800,24 @@ public class AssetServiceImpl implements AssetService {
         return project;
     }
 
+    private Project requireArrangeProject(ApplicationUser user, String projectKey) {
+        requireUser(user);
+        if (projectKey == null || projectKey.trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.project.required");
+        }
+        Project project = project(projectKey.trim());
+        if (project == null) {
+            throw new AssetException(404, "asset-tree.error.project.notFound");
+        }
+        if (!canArrangeTypes(user, project)) {
+            if (!canOpen(user, project)) {
+                throw new AssetException(403, "asset-tree.error.project.forbidden");
+            }
+            throw new AssetException(403, "asset-tree.error.forbidden");
+        }
+        return project;
+    }
+
     private Project requireConfigurableProject(ApplicationUser user, String projectKey) {
         requireUser(user);
         if (projectKey == null || projectKey.trim().isEmpty()) {
@@ -2755,6 +3928,20 @@ public class AssetServiceImpl implements AssetService {
         dto.setCanComment(places || objects);
         dto.setCanConfigure(types);
         dto.setCanGrant(assets || admin);
+        dto.setCanArrange(canArrangeTypes(user, project));
+    }
+
+    private boolean canArrangeTypes(ApplicationUser user, Project project) {
+        if (user == null || project == null) {
+            return false;
+        }
+        if (isAdmin(user) || hasGlobalManage(user)) {
+            return true;
+        }
+        if (permissionManager().hasPermission(ProjectPermissions.ADMINISTER_PROJECTS, project, user)) {
+            return true;
+        }
+        return grantHas(user, project, GrantCaps.ADMIN);
     }
 
     private boolean hasCap(ApplicationUser user, Project project, String cap) {
@@ -2877,6 +4064,33 @@ public class AssetServiceImpl implements AssetService {
         return type;
     }
 
+    private String parentTypeKey(String projectKey, String ownKey, String requested, boolean location) {
+        String parent = requested == null ? "" : requested.trim();
+        if (parent.isEmpty()) {
+            return "";
+        }
+        if (location || (ownKey != null && ownKey.equals(parent))) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        AssetTypeEntity parentType = findType(parent);
+        if (parentType == null || parentType.isLocation() || !ProjectKeys.same(parentType.getProjectKey(), projectKey)) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        String grandparent = parentType.getParentTypeKey();
+        if (grandparent != null && !grandparent.trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        if (ownKey != null && hasChildTypes(ownKey)) {
+            throw new AssetException(400, "asset-tree.error.type.parent");
+        }
+        return parentType.getTypeKey();
+    }
+
+    private boolean hasChildTypes(String typeKey) {
+        AssetTypeEntity[] children = ao().find(AssetTypeEntity.class, Query.select().where("PARENT_TYPE_KEY = ?", typeKey));
+        return children != null && children.length > 0;
+    }
+
     private AssetTypeEntity findType(String typeKey) {
         if (typeKey == null || typeKey.trim().isEmpty()) {
             return null;
@@ -2895,14 +4109,14 @@ public class AssetServiceImpl implements AssetService {
         return found.length == 0 ? null : found[0];
     }
 
-    private Map<Integer, List<AssetAttributeEntity>> attributesByAsset() {
-        AssetAttributeEntity[] all = ao().find(AssetAttributeEntity.class, Query.select().order("ATTR_POSITION ASC"));
+    private Map<Integer, List<AssetAttributeEntity>> attributesByAsset(Collection<Integer> assetIds) {
         Map<Integer, List<AssetAttributeEntity>> map = new HashMap<Integer, List<AssetAttributeEntity>>();
-        for (AssetAttributeEntity attribute : all) {
-            List<AssetAttributeEntity> bucket = map.get(attribute.getAssetId());
+        for (AssetAttributeEntity attribute : findIn(AssetAttributeEntity.class, "ASSET_ID", assetIds, "ATTR_POSITION ASC")) {
+            Integer assetId = Integer.valueOf(attribute.getAssetId());
+            List<AssetAttributeEntity> bucket = map.get(assetId);
             if (bucket == null) {
                 bucket = new ArrayList<AssetAttributeEntity>();
-                map.put(attribute.getAssetId(), bucket);
+                map.put(assetId, bucket);
             }
             bucket.add(attribute);
         }
@@ -2913,17 +4127,112 @@ public class AssetServiceImpl implements AssetService {
         AssetAttributeEntity[] rows = ao().find(AssetAttributeEntity.class,
                 Query.select().where("ASSET_ID = ?", assetId).order("ATTR_POSITION ASC"));
         List<AssetAttributeEntity> list = new ArrayList<AssetAttributeEntity>();
-        Collections.addAll(list, rows);
+        if (rows != null) {
+            Collections.addAll(list, rows);
+        }
         return list;
     }
 
-    private boolean matches(AssetEntity asset, List<AssetAttributeEntity> attributes, String needle) {
+    private static List<Integer> idsOf(AssetEntity[] rows) {
+        List<Integer> ids = new ArrayList<Integer>();
+        if (rows == null) {
+            return ids;
+        }
+        for (AssetEntity row : rows) {
+            ids.add(Integer.valueOf(row.getID()));
+        }
+        return ids;
+    }
+
+    private Map<Integer, InventoryMarkEntity> marksFor(Collection<Integer> assetIds) {
+        Map<Integer, InventoryMarkEntity> marks = new HashMap<Integer, InventoryMarkEntity>();
+        for (InventoryMarkEntity mark : findIn(InventoryMarkEntity.class, "ASSET_ID", assetIds, null)) {
+            Integer assetId = Integer.valueOf(mark.getAssetId());
+            InventoryMarkEntity previous = marks.get(assetId);
+            if (previous == null || newerMark(mark, previous)) {
+                marks.put(assetId, mark);
+            }
+        }
+        return marks;
+    }
+
+    private static boolean newerMark(InventoryMarkEntity candidate, InventoryMarkEntity current) {
+        Date left = candidate.getCheckedAt();
+        Date right = current.getCheckedAt();
+        if (left == null) {
+            return false;
+        }
+        if (right == null) {
+            return true;
+        }
+        return left.after(right);
+    }
+
+    private <T extends RawEntity<Integer>> List<T> findIn(Class<T> type, String column, Collection<?> values, String order) {
+        List<T> found = new ArrayList<T>();
+        if (values == null || values.isEmpty()) {
+            return found;
+        }
+        List<Object> items = new ArrayList<Object>();
+        for (Object value : values) {
+            if (value != null) {
+                items.add(value);
+            }
+        }
+        for (int offset = 0; offset < items.size(); offset += ID_BATCH) {
+            int end = Math.min(offset + ID_BATCH, items.size());
+            List<Object> slice = items.subList(offset, end);
+            StringBuilder clause = new StringBuilder(column.length() + slice.size() * 2 + 8);
+            clause.append(column).append(" IN (");
+            Object[] params = new Object[slice.size()];
+            for (int i = 0; i < slice.size(); i++) {
+                if (i > 0) {
+                    clause.append(',');
+                }
+                clause.append('?');
+                params[i] = slice.get(i);
+            }
+            clause.append(')');
+            Query query = Query.select().where(clause.toString(), params);
+            if (order != null && !order.isEmpty()) {
+                query = query.order(order);
+            }
+            T[] rows = ao().find(type, query);
+            if (rows != null) {
+                Collections.addAll(found, rows);
+            }
+        }
+        return found;
+    }
+
+    private <T extends RawEntity<Integer>> void deleteRows(Class<T> type, String column, List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return;
+        }
+        for (int offset = 0; offset < ids.size(); offset += ID_BATCH) {
+            int end = Math.min(offset + ID_BATCH, ids.size());
+            List<Integer> slice = ids.subList(offset, end);
+            StringBuilder clause = new StringBuilder(column.length() + slice.size() * 2 + 8);
+            clause.append(column).append(" IN (");
+            Object[] params = new Object[slice.size()];
+            for (int i = 0; i < slice.size(); i++) {
+                if (i > 0) {
+                    clause.append(',');
+                }
+                clause.append('?');
+                params[i] = slice.get(i);
+            }
+            clause.append(')');
+            ao().deleteWithSQL(type, clause.toString(), params);
+        }
+    }
+
+    private boolean matches(AssetEntity asset, List<AssetAttributeEntity> attributes, String needle, Map<String, String[]> holders) {
         if (contains(asset.getName(), needle) || contains(asset.getObjectKey(), needle)
                 || contains(asset.getDescription(), needle) || contains(asset.getCustodianKey(), needle)) {
             return true;
         }
-        UserProfileDto holder = profile(asset.getCustodianKey());
-        if (holder != null && (contains(holder.getDisplayName(), needle) || contains(holder.getEmail(), needle))) {
+        if (holderMatches(asset.getCustodianKey(), needle, holders)) {
             return true;
         }
         if (attributes == null) {
@@ -2941,6 +4250,21 @@ public class AssetServiceImpl implements AssetService {
         return value != null && value.toLowerCase(Locale.ROOT).contains(needle);
     }
 
+    private boolean holderMatches(String userKey, String needle, Map<String, String[]> holders) {
+        if (userKey == null || userKey.isEmpty()) {
+            return false;
+        }
+        String[] cached = holders.get(userKey);
+        if (cached == null) {
+            ApplicationUser person = userManager().getUserByKey(userKey);
+            String name = person == null || person.getDisplayName() == null ? "" : person.getDisplayName();
+            String email = person == null || person.getEmailAddress() == null ? "" : person.getEmailAddress();
+            cached = new String[] {name, email};
+            holders.put(userKey, cached);
+        }
+        return contains(cached[0], needle) || contains(cached[1], needle);
+    }
+
     private List<AssetTypeDto> typeDtos(String projectKey, AssetEntity[] assets) {
         Map<String, Integer> counts = new HashMap<String, Integer>();
         if (assets != null) {
@@ -2950,9 +4274,12 @@ public class AssetServiceImpl implements AssetService {
             }
         }
         List<AssetTypeEntity> ordered = new ArrayList<AssetTypeEntity>();
-        for (AssetTypeEntity type : ao().find(AssetTypeEntity.class)) {
-            if (ProjectKeys.same(type.getProjectKey(), projectKey)) {
-                ordered.add(type);
+        AssetTypeEntity[] found = ao().find(AssetTypeEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (found != null) {
+            for (AssetTypeEntity type : found) {
+                if (ProjectKeys.same(type.getProjectKey(), projectKey)) {
+                    ordered.add(type);
+                }
             }
         }
         Collections.sort(ordered, new Comparator<AssetTypeEntity>() {
@@ -2962,16 +4289,45 @@ public class AssetServiceImpl implements AssetService {
                 return byOrder != 0 ? byOrder : left.getTypeKey().compareTo(right.getTypeKey());
             }
         });
+        List<String> typeKeys = new ArrayList<String>();
+        for (AssetTypeEntity type : ordered) {
+            typeKeys.add(type.getTypeKey());
+        }
+        Map<String, List<AssetFieldEntity>> fieldsByType = fieldsByType(typeKeys);
         I18nHelper labels = i18n();
         List<AssetTypeDto> result = new ArrayList<AssetTypeDto>();
         for (AssetTypeEntity type : ordered) {
             Integer count = counts.get(type.getTypeKey());
-            result.add(toTypeDto(type, labels, count == null ? 0 : count.intValue()));
+            List<AssetFieldEntity> typeFields = fieldsByType.get(type.getTypeKey());
+            result.add(toTypeDto(type, labels, count == null ? 0 : count.intValue(),
+                    typeFields == null ? Collections.<AssetFieldEntity>emptyList() : typeFields));
         }
         return result;
     }
 
+    private Map<String, List<AssetFieldEntity>> fieldsByType(List<String> typeKeys) {
+        Map<String, List<AssetFieldEntity>> map = new HashMap<String, List<AssetFieldEntity>>();
+        for (AssetFieldEntity field : findIn(AssetFieldEntity.class, "TYPE_KEY", typeKeys, "POSITION ASC")) {
+            List<AssetFieldEntity> bucket = map.get(field.getTypeKey());
+            if (bucket == null) {
+                bucket = new ArrayList<AssetFieldEntity>();
+                map.put(field.getTypeKey(), bucket);
+            }
+            bucket.add(field);
+        }
+        return map;
+    }
+
     private AssetTypeDto toTypeDto(AssetTypeEntity type, I18nHelper labels, int assetCount) {
+        AssetFieldEntity[] stored = fields(type.getTypeKey());
+        List<AssetFieldEntity> typeFields = new ArrayList<AssetFieldEntity>();
+        if (stored != null) {
+            Collections.addAll(typeFields, stored);
+        }
+        return toTypeDto(type, labels, assetCount, typeFields);
+    }
+
+    private AssetTypeDto toTypeDto(AssetTypeEntity type, I18nHelper labels, int assetCount, List<AssetFieldEntity> typeFields) {
         AssetTypeDto dto = new AssetTypeDto();
         dto.setTypeKey(type.getTypeKey());
         dto.setProjectKey(type.getProjectKey());
@@ -2982,6 +4338,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setShowInTree(type.isLocation() || type.isShowInTree());
         dto.setService(!type.isLocation() && type.isService());
         dto.setPlaceCaption(type.getPlaceCaption() == null ? "" : type.getPlaceCaption());
+        dto.setParentTypeKey(type.getParentTypeKey() == null ? "" : type.getParentTypeKey());
         dto.setAssetCount(assetCount);
         if (type.isSystemType() && type.getBaseKey() != null && !type.getBaseKey().isEmpty()) {
             String key = "asset-tree.type." + type.getBaseKey();
@@ -2991,8 +4348,10 @@ public class AssetServiceImpl implements AssetService {
             dto.setLabel(type.getLabel());
         }
         List<FieldDto> fields = new ArrayList<FieldDto>();
-        for (AssetFieldEntity field : fields(type.getTypeKey())) {
-            fields.add(toFieldDto(field, labels));
+        if (typeFields != null) {
+            for (AssetFieldEntity field : typeFields) {
+                fields.add(toFieldDto(field, labels));
+            }
         }
         dto.setFields(fields);
         return dto;
@@ -3003,6 +4362,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setFieldKey(field.getFieldKey());
         dto.setKind(field.getKind());
         dto.setRequired(field.isRequired());
+        dto.setShowOnIssue(!field.isIssueHidden());
         dto.setPosition(field.getPosition());
         dto.setLabel(fieldLabel(field, labels));
         dto.setOptions(FieldChoices.optionsOf(field.getOptions()));
@@ -3018,6 +4378,10 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(400, "asset-tree.error.type.icon");
         }
         return icon;
+    }
+
+    private boolean hidesOnIssue(FieldDraft draft) {
+        return draft.getShowOnIssue() != null && !draft.getShowOnIssue().booleanValue();
     }
 
     private String fieldLabel(AssetFieldEntity field, I18nHelper labels) {
@@ -3337,6 +4701,8 @@ public class AssetServiceImpl implements AssetService {
         Project project = project(entity.getProjectKey());
         dto.setProjectName(project == null ? entity.getProjectKey() : project.getName());
         dto.setEditable(canWrite(authenticationContext().getLoggedInUser(), project));
+        String cardImage = entity.getCardImage();
+        dto.setCardImage(cardImage != null && !cardImage.isEmpty());
         dto.setLocation(location(entity, index));
         dto.setCustodian(profile(entity.getCustodianKey()));
         AssetTypeDto type = types.get(entity.getTypeKey());
@@ -3352,7 +4718,7 @@ public class AssetServiceImpl implements AssetService {
         dto.setAttributes(attributeDtos(type, attributes));
         List<ServicePlanEntity> plans = plansOf(entity.getID());
         dto.setServiceDue(dueNames(plans, LocalDate.now()));
-        dto.setOfferedTypes(type != null && type.isLocation() ? offeredKeys(entity.getOfferedTypes()) : new ArrayList<String>());
+        dto.setOfferedTypes(type != null && type.isLocation() ? offeredLines(entity.getOfferedTypes()) : new ArrayList<String>());
         if (withIssues) {
             dto.setIssues(issuesFor(entity.getID()));
             dto.setComments(commentDtos(entity.getID()));
@@ -3569,7 +4935,10 @@ public class AssetServiceImpl implements AssetService {
             dto.setName(field.getLabel());
             dto.setKind(field.getKind());
             dto.setRequired(field.isRequired());
-            dto.setValue(values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "");
+            dto.setShowOnIssue(field.isShowOnIssue());
+            String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
+            dto.setValue(value);
+            dto.setDisplayValue(FieldKinds.USER.equals(field.getKind()) ? userLabel(value) : value);
             result.add(dto);
         }
         return result;
@@ -3674,6 +5043,21 @@ public class AssetServiceImpl implements AssetService {
             }
         }
         return "";
+    }
+
+    private String userLabel(String userKey) {
+        if (userKey == null || userKey.trim().isEmpty()) {
+            return "";
+        }
+        try {
+            ApplicationUser user = userManager().getUserByKey(userKey.trim());
+            if (user != null && user.getDisplayName() != null && !user.getDisplayName().isEmpty()) {
+                return user.getDisplayName();
+            }
+        } catch (RuntimeException ex) {
+            log.debug("User {} was not resolved", userKey, ex);
+        }
+        return userKey;
     }
 
     private String displayName(String userKey) {
@@ -3806,24 +5190,27 @@ public class AssetServiceImpl implements AssetService {
                 if (!isLocation(place)) {
                     throw new AssetException(400, "asset-tree.error.type.place");
                 }
-                List<String> keys = offeredKeys(place.getOfferedTypes());
+                List<String> lines = offeredLines(place.getOfferedTypes());
+                List<PlaceLayout.Fact> facts = placeFacts(place.getProjectKey());
                 for (String typeKey : requested) {
                     AssetTypeEntity type = requireType(typeKey);
                     if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
                         throw new AssetException(400, "asset-tree.error.type");
                     }
                     if (present) {
-                        if (!keys.contains(type.getTypeKey())) {
-                            keys.add(type.getTypeKey());
+                        List<String> next = PlaceLayout.addPin(lines, facts, type.getTypeKey());
+                        if (next == null) {
+                            throw new AssetException(400, "asset-tree.error.type");
                         }
+                        lines = next;
                     } else {
                         if (placeHasEquipment(place, type.getTypeKey())) {
                             throw new AssetException(409, "asset-tree.error.type.busy");
                         }
-                        keys.remove(type.getTypeKey());
+                        lines = PlaceLayout.removePin(lines, type.getTypeKey());
                     }
                 }
-                place.setOfferedTypes(joinOffered(keys));
+                place.setOfferedTypes(joinOffered(lines));
                 place.setUpdated(new Date());
                 place.setUpdatedBy(user.getKey());
                 place.save();
@@ -3831,6 +5218,66 @@ public class AssetServiceImpl implements AssetService {
                 return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
             }
         });
+    }
+
+    @Override
+    public AssetDto arrangeType(ApplicationUser user, final int assetId, final PlaceArrangeDraft draft) {
+        if (draft == null || draft.getTypeKey() == null || draft.getTypeKey().trim().isEmpty()) {
+            throw new AssetException(400, "asset-tree.error.type.arrange");
+        }
+        final String typeKey = draft.getTypeKey().trim();
+        final String action = draft.getAction() == null ? "" : draft.getAction().trim();
+        return ao().executeInTransaction(new TransactionCallback<AssetDto>() {
+            @Override
+            public AssetDto doInTransaction() {
+                AssetEntity place = requireAsset(assetId);
+                Project project = project(place.getProjectKey());
+                if (!canArrangeTypes(user, project)) {
+                    if (!canOpen(user, project)) {
+                        throw new AssetException(404, "asset-tree.error.notFound");
+                    }
+                    throw new AssetException(403, "asset-tree.error.forbidden");
+                }
+                if (!isLocation(place)) {
+                    throw new AssetException(400, "asset-tree.error.type.place");
+                }
+                AssetTypeEntity type = requireType(typeKey);
+                if (type.isLocation() || !ProjectKeys.same(type.getProjectKey(), place.getProjectKey())) {
+                    throw new AssetException(400, "asset-tree.error.type.arrange");
+                }
+                List<String> pinned = offeredKeys(place.getOfferedTypes());
+                for (AssetEntity asset : assetsIn(place.getProjectKey())) {
+                    Integer parent = TreeLogic.normalizeParent(asset.getParentId());
+                    if (parent != null && parent.intValue() == place.getID() && !isLocation(asset)
+                            && asset.getTypeKey() != null && !pinned.contains(asset.getTypeKey())) {
+                        pinned.add(asset.getTypeKey());
+                    }
+                }
+                List<String> next = PlaceLayout.move(offeredLines(place.getOfferedTypes()), pinned,
+                        placeFacts(place.getProjectKey()), type.getTypeKey(), action);
+                if (next == null) {
+                    throw new AssetException(400, "asset-tree.error.type.arrange");
+                }
+                place.setOfferedTypes(joinOffered(next));
+                place.setUpdated(new Date());
+                place.setUpdatedBy(user.getKey());
+                place.save();
+                AssetEntity[] rows = assetsIn(place.getProjectKey());
+                return toDto(place, attributesFor(assetId), indexTypes(typeDtos(place.getProjectKey(), rows)), indexAssets(rows), false);
+            }
+        });
+    }
+
+    private List<PlaceLayout.Fact> placeFacts(String projectKey) {
+        List<PlaceLayout.Fact> facts = new ArrayList<PlaceLayout.Fact>();
+        for (AssetTypeDto type : typeDtos(projectKey, assetsIn(projectKey))) {
+            if (type == null || type.isLocation()) {
+                continue;
+            }
+            String parent = type.getParentTypeKey() == null ? "" : type.getParentTypeKey().trim();
+            facts.add(new PlaceLayout.Fact(type.getTypeKey(), parent));
+        }
+        return facts;
     }
 
     private List<String> requestedTypes(PlaceTypeDraft draft) {
@@ -3855,16 +5302,28 @@ public class AssetServiceImpl implements AssetService {
         return keys;
     }
 
-    private List<String> offeredKeys(String raw) {
-        List<String> keys = new ArrayList<String>();
+    private List<String> offeredLines(String raw) {
+        List<String> lines = new ArrayList<String>();
+        List<String> seen = new ArrayList<String>();
         if (raw == null || raw.isEmpty()) {
-            return keys;
+            return lines;
         }
         for (String part : raw.split("\n")) {
-            String key = part.trim();
-            if (!key.isEmpty() && !keys.contains(key)) {
-                keys.add(key);
+            String line = part.trim();
+            String key = PlaceLayout.lineKey(line);
+            if (key.isEmpty() || seen.contains(key)) {
+                continue;
             }
+            seen.add(key);
+            lines.add(line);
+        }
+        return lines;
+    }
+
+    private List<String> offeredKeys(String raw) {
+        List<String> keys = new ArrayList<String>();
+        for (String line : offeredLines(raw)) {
+            keys.add(PlaceLayout.lineKey(line));
         }
         return keys;
     }
@@ -3897,7 +5356,7 @@ public class AssetServiceImpl implements AssetService {
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
-                applyDueInside(null, notices);
+                applyDueInside(null, null, notices);
                 return null;
             }
         });
@@ -3906,13 +5365,27 @@ public class AssetServiceImpl implements AssetService {
 
     private void applyDueQuietly(String projectKey, List<ServiceNotice> notices) {
         try {
-            applyDueInside(projectKey, notices);
+            applyDueInside(projectKey, null, notices);
         } catch (RuntimeException ex) {
             log.warn("Service dates were not applied", ex);
         }
     }
 
-    private void applyDueInside(String projectKey, List<ServiceNotice> notices) {
+    private void applyDueFor(String projectKey, AssetEntity[] rows, List<ServiceNotice> notices) {
+        Map<Integer, AssetEntity> known = new HashMap<Integer, AssetEntity>();
+        if (rows != null) {
+            for (AssetEntity row : rows) {
+                known.put(Integer.valueOf(row.getID()), row);
+            }
+        }
+        try {
+            applyDueInside(projectKey, known, notices);
+        } catch (RuntimeException ex) {
+            log.warn("Service dates were not applied", ex);
+        }
+    }
+
+    private void applyDueInside(String projectKey, Map<Integer, AssetEntity> known, List<ServiceNotice> notices) {
         LocalDate today = LocalDate.now();
         ServicePlanEntity[] rows = ao().find(ServicePlanEntity.class);
         if (rows == null) {
@@ -3926,17 +5399,38 @@ public class AssetServiceImpl implements AssetService {
                 return left.getID() - right.getID();
             }
         });
+        Set<Integer> allowed = null;
+        if (projectKey != null) {
+            allowed = new HashSet<Integer>();
+            if (known != null) {
+                allowed.addAll(known.keySet());
+            } else {
+                AssetEntity[] assets = assetsIn(projectKey);
+                if (assets != null) {
+                    for (AssetEntity asset : assets) {
+                        allowed.add(Integer.valueOf(asset.getID()));
+                    }
+                }
+            }
+        }
         for (ServicePlanEntity plan : ordered) {
+            if (allowed != null && !allowed.contains(Integer.valueOf(plan.getAssetId()))) {
+                continue;
+            }
             try {
-                applyOne(plan, projectKey, today, notices);
+                applyOne(plan, known, projectKey, today, notices);
             } catch (RuntimeException ex) {
                 log.warn("Service plan {} was skipped", Integer.valueOf(plan.getID()), ex);
             }
         }
     }
 
-    private void applyOne(ServicePlanEntity plan, String projectKey, LocalDate today, List<ServiceNotice> notices) {
-        AssetEntity asset = ao().get(AssetEntity.class, plan.getAssetId());
+    private void applyOne(ServicePlanEntity plan, Map<Integer, AssetEntity> known, String projectKey, LocalDate today,
+                           List<ServiceNotice> notices) {
+        AssetEntity asset = known == null ? null : known.get(Integer.valueOf(plan.getAssetId()));
+        if (asset == null) {
+            asset = ao().get(AssetEntity.class, plan.getAssetId());
+        }
         if (asset == null || isLocation(asset)) {
             return;
         }

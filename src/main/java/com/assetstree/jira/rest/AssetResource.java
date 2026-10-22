@@ -4,8 +4,12 @@ import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.security.JiraAuthenticationContext;
 import com.atlassian.jira.user.ApplicationUser;
 import com.atlassian.jira.util.I18nHelper;
+import com.assetstree.jira.dto.AssetKeyDto;
+import com.assetstree.jira.dto.FieldOrderDto;
+import com.assetstree.jira.dto.ProjectViewDto;
 import com.assetstree.jira.dto.MessageDto;
 import com.assetstree.jira.model.AssetDraft;
+import com.assetstree.jira.model.CardLayout;
 import com.assetstree.jira.model.BulkDraft;
 import com.assetstree.jira.model.CommentDraft;
 import com.assetstree.jira.model.AssetException;
@@ -17,7 +21,10 @@ import com.assetstree.jira.model.IssueLinkDraft;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
+import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
+import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.StatusDraft;
@@ -109,6 +116,17 @@ public class AssetResource {
     }
 
     @POST
+    @Path("assets/{id}/types/arrange")
+    public Response arrangeType(@PathParam("id") final int id, final PlaceArrangeDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.arrangeType(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
     @Path("assets/{id}/types")
     public Response offerType(@PathParam("id") final int id, final PlaceTypeDraft draft) {
         return invoke(new Callable<Response>() {
@@ -186,6 +204,18 @@ public class AssetResource {
             @Override
             public Response call() {
                 assetService.deleteComment(user(), id, commentId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("assets/{id}/activities/{activityId}")
+    public Response deleteActivity(@PathParam("id") final int id, @PathParam("activityId") final int activityId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteActivity(user(), id, activityId);
                 return Response.noContent().build();
             }
         });
@@ -330,6 +360,29 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.status(Response.Status.CREATED).entity(assetService.addField(user(), typeKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("types/{typeKey}/fields/{fieldKey}")
+    public Response updateField(@PathParam("typeKey") final String typeKey, @PathParam("fieldKey") final String fieldKey,
+                                final FieldDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updateField(user(), typeKey, fieldKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("types/{typeKey}/field-order")
+    public Response reorderFields(@PathParam("typeKey") final String typeKey, final FieldOrderDto order) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.reorderFields(user(), typeKey, order)).build();
             }
         });
     }
@@ -529,6 +582,50 @@ public class AssetResource {
     }
 
     @GET
+    @Path("projects/{projectKey}/card")
+    public Response cardLayout(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.cardLayout(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/card")
+    public Response saveCardLayout(@PathParam("projectKey") final String projectKey, final CardLayout draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveCardLayout(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/asset-key")
+    public Response saveAssetKey(@PathParam("projectKey") final String projectKey, final AssetKeyDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveAssetKey(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/view")
+    public Response saveProjectView(@PathParam("projectKey") final String projectKey, final ProjectViewDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveProjectView(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
     @Path("projects/{projectKey}/picker")
     public Response picker(@PathParam("projectKey") final String projectKey) {
         return invoke(new Callable<Response>() {
@@ -563,6 +660,18 @@ public class AssetResource {
         });
     }
 
+    @PUT
+    @Path("projects/{projectKey}/portal-rules/{ruleId}")
+    public Response updatePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId,
+                                     final PortalRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.updatePortalRule(user(), projectKey, ruleId, draft)).build();
+            }
+        });
+    }
+
     @DELETE
     @Path("projects/{projectKey}/portal-rules/{ruleId}")
     public Response deletePortalRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
@@ -571,6 +680,86 @@ public class AssetResource {
             public Response call() {
                 assetService.deletePortalRule(user(), projectKey, ruleId);
                 return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/issue-statuses")
+    public Response issueStatuses(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listIssueStatuses(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/issue-types")
+    public Response issueTypes(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listIssueTypes(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/flows")
+    public Response flowRules(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.listFlowRules(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/flows")
+    public Response saveFlowRule(@PathParam("projectKey") final String projectKey, final FlowRuleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED)
+                        .entity(assetService.saveFlowRule(user(), projectKey, draft))
+                        .build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/flows/{ruleId}")
+    public Response deleteFlowRule(@PathParam("projectKey") final String projectKey, @PathParam("ruleId") final int ruleId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteFlowRule(user(), projectKey, ruleId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/flow-graph")
+    public Response flowGraph(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.flowGraph(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/flow-graph")
+    public Response saveFlowGraph(@PathParam("projectKey") final String projectKey, final FlowBookDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveFlowGraph(user(), projectKey, draft)).build();
             }
         });
     }

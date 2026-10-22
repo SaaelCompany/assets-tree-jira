@@ -9,7 +9,9 @@ public class AttributeDto {
     private String fieldKey;
     private String kind;
     private boolean required;
+    private boolean showOnIssue;
     private String value;
+    private String displayValue;
 
     public AttributeDto() {
     }
@@ -52,11 +54,27 @@ public class AttributeDto {
         this.required = required;
     }
 
+    public boolean isShowOnIssue() {
+        return showOnIssue;
+    }
+
+    public void setShowOnIssue(boolean showOnIssue) {
+        this.showOnIssue = showOnIssue;
+    }
+
     public String getValue() {
         return value;
     }
 
     public void setValue(String value) {
         this.value = value;
+    }
+
+    public String getDisplayValue() {
+        return displayValue;
+    }
+
+    public void setDisplayValue(String displayValue) {
+        this.displayValue = displayValue;
     }
 }
