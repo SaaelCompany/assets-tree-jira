@@ -13,6 +13,14 @@ public class FlowProcessDto {
     private List<FlowNodeDto> nodes = new ArrayList<FlowNodeDto>();
     private List<FlowLinkDto> links = new ArrayList<FlowLinkDto>();
     private String removedStatus = "";
+    private boolean enabled = true;
+    private boolean requireApproval;
+    private boolean notifyApprover;
+    private int slaDays;
+    private String approverKey = "";
+    private String approverName = "";
+    private String note = "";
+    private String color = "";
 
     public String getId() {
         return id;
@@ -52,5 +60,69 @@ public class FlowProcessDto {
 
     public void setRemovedStatus(String removedStatus) {
         this.removedStatus = removedStatus == null ? "" : removedStatus;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public boolean isRequireApproval() {
+        return requireApproval;
+    }
+
+    public void setRequireApproval(boolean requireApproval) {
+        this.requireApproval = requireApproval;
+    }
+
+    public boolean isNotifyApprover() {
+        return notifyApprover;
+    }
+
+    public void setNotifyApprover(boolean notifyApprover) {
+        this.notifyApprover = notifyApprover;
+    }
+
+    public int getSlaDays() {
+        return slaDays;
+    }
+
+    public void setSlaDays(int slaDays) {
+        this.slaDays = slaDays;
+    }
+
+    public String getApproverKey() {
+        return approverKey;
+    }
+
+    public void setApproverKey(String approverKey) {
+        this.approverKey = approverKey;
+    }
+
+    public String getApproverName() {
+        return approverName;
+    }
+
+    public void setApproverName(String approverName) {
+        this.approverName = approverName;
+    }
+
+    public String getNote() {
+        return note;
+    }
+
+    public void setNote(String note) {
+        this.note = note;
+    }
+
+    public String getColor() {
+        return color;
+    }
+
+    public void setColor(String color) {
+        this.color = color;
     }
 }

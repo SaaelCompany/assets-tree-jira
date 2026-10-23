@@ -252,6 +252,12 @@ public final class FlowGraph {
         quote(out, node.getIssueStatusId() == null ? "" : node.getIssueStatusId());
         out.append(",\"statusKey\":");
         quote(out, node.getStatusKey() == null ? "" : node.getStatusKey());
+        out.append(",\"approverKey\":");
+        quote(out, node.getApproverKey() == null ? "" : node.getApproverKey());
+        out.append(",\"approverName\":");
+        quote(out, node.getApproverName() == null ? "" : node.getApproverName());
+        out.append(",\"note\":");
+        quote(out, node.getNote() == null ? "" : node.getNote());
         out.append('}');
     }
 
@@ -264,6 +270,9 @@ public final class FlowGraph {
         node.setIssueTypeId(text(map.get("issueTypeId")));
         node.setIssueStatusId(text(map.get("issueStatusId")));
         node.setStatusKey(text(map.get("statusKey")));
+        node.setApproverKey(text(map.get("approverKey")));
+        node.setApproverName(text(map.get("approverName")));
+        node.setNote(text(map.get("note")));
         return node;
     }
 
@@ -293,6 +302,9 @@ public final class FlowGraph {
         } else {
             clean.setStatusKey(clip(node.getStatusKey(), 40));
         }
+        clean.setApproverKey(personKey(node.getApproverKey()));
+        clean.setApproverName(clip(node.getApproverName(), 120));
+        clean.setNote(clip(node.getNote(), 240));
         return clean;
     }
 
@@ -383,6 +395,24 @@ public final class FlowGraph {
 
     private static String text(Object value) {
         return value instanceof String ? (String) value : "";
+    }
+
+    /** A Jira user key. Control characters are rejected; the key is not otherwise rewritten. */
+    private static String personKey(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > 255) {
+            trimmed = trimmed.substring(0, 255);
+        }
+        for (int i = 0; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (c < 0x20 || c == '"' || c == '\\') {
+                return "";
+            }
+        }
+        return trimmed;
     }
 
     static void quote(StringBuilder out, String value) {

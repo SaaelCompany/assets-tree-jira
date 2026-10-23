@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -61,6 +62,51 @@ public class FlowBookTest {
         assertEquals("in_stock", FlowBook.removedStatus(processes, "10001"));
         assertEquals("reserve", FlowBook.removedStatus(processes, "10009"));
         assertNull(FlowBook.removedStatus(Arrays.asList(repair), "10009"));
+    }
+
+    @Test
+    public void anApproverAndADisabledProcessSurviveTheRoundTrip() {
+        FlowProcessDto repair = process("proc1", "Ремонт", request("req1", "10001"), status("sta1", "repair"), link("req1", "sta1"));
+        repair.setApproverKey("JIRAUSER10000");
+        repair.setApproverName("Иванова Мария");
+        repair.setNote("Согласует списание");
+        repair.setColor("#6554c0");
+        repair.setRequireApproval(true);
+        repair.setNotifyApprover(true);
+        repair.setSlaDays(5);
+        repair.getNodes().get(1).setApproverKey("petrov");
+        repair.getNodes().get(1).setApproverName("Петров");
+        repair.getNodes().get(1).setNote("Только ремонт");
+        FlowProcessDto paused = process("proc2", "Пауза", request("req2", "10001"), status("sta2", "in_stock"), link("req2", "sta2"));
+        paused.setEnabled(false);
+        paused.setRemovedStatus("reserve");
+        List<FlowProcessDto> again = FlowBook.read(FlowBook.write(Arrays.asList(repair, paused)));
+        assertEquals("JIRAUSER10000", again.get(0).getApproverKey());
+        assertEquals("Иванова Мария", again.get(0).getApproverName());
+        assertEquals("Согласует списание", again.get(0).getNote());
+        assertEquals("#6554C0", again.get(0).getColor());
+        assertTrue(again.get(0).isRequireApproval());
+        assertTrue(again.get(0).isNotifyApprover());
+        assertEquals(5, again.get(0).getSlaDays());
+        assertTrue(again.get(0).isEnabled());
+        assertEquals("petrov", again.get(0).getNodes().get(1).getApproverKey());
+        assertEquals("Петров", again.get(0).getNodes().get(1).getApproverName());
+        assertEquals("Только ремонт", again.get(0).getNodes().get(1).getNote());
+        assertFalse(again.get(1).isEnabled());
+        assertEquals("repair", FlowBook.equipmentStatus(again, "10001", null, false));
+        assertNull(FlowBook.removedStatus(again, "10001"));
+        assertEquals(1, FlowBook.pairs(again).size());
+    }
+
+    @Test
+    public void aBookWithoutAnApproverStaysEnabled() {
+        FlowProcessDto repair = process("proc1", "Ремонт", request("req1", "10001"));
+        repair.setRemovedStatus("in_stock");
+        String legacy = "{\"processes\":[{\"id\":\"proc1\",\"name\":\"Ремонт\",\"removedStatus\":\"in_stock\",\"nodes\":[{\"id\":\"req1\",\"kind\":\"request\",\"x\":40,\"y\":40,\"issueTypeId\":\"10001\",\"issueStatusId\":\"\",\"statusKey\":\"\"}],\"links\":[]}]}";
+        List<FlowProcessDto> read = FlowBook.read(legacy);
+        assertTrue(read.get(0).isEnabled());
+        assertEquals("", read.get(0).getApproverKey());
+        assertEquals("in_stock", FlowBook.removedStatus(Arrays.asList(repair), "10001"));
     }
 
     @Test

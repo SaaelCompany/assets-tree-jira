@@ -22,6 +22,7 @@ import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.dto.PortalFieldsDto;
 import com.assetstree.jira.dto.PortalProjectDto;
 import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.dto.SiteMapDto;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.PlaceArrangeDraft;
@@ -760,6 +761,28 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.saveFlowGraph(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/site-map")
+    public Response siteMap(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.siteMap(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/site-map")
+    public Response saveSiteMap(@PathParam("projectKey") final String projectKey, final SiteMapDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveSiteMap(user(), projectKey, draft)).build();
             }
         });
     }

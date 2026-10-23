@@ -32,6 +32,7 @@ import com.assetstree.jira.model.ImportDraft;
 import com.assetstree.jira.dto.FlowRuleDto;
 import com.assetstree.jira.dto.IssueTypeDto;
 import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.dto.SiteMapDto;
 import com.assetstree.jira.dto.PortalRuleDto;
 import com.assetstree.jira.model.MoveDraft;
 import com.assetstree.jira.model.PlaceArrangeDraft;
@@ -157,6 +158,10 @@ public interface AssetService {
     FlowBookDto flowGraph(ApplicationUser user, String projectKey);
 
     FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft);
+
+    SiteMapDto siteMap(ApplicationUser user, String projectKey);
+
+    SiteMapDto saveSiteMap(ApplicationUser user, String projectKey, SiteMapDto draft);
 
     CardLayout cardLayout(ApplicationUser user, String projectKey);
 
