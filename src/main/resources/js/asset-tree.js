@@ -10126,15 +10126,13 @@
                 window.removeEventListener('resize', apply);
                 return;
             }
-            var top = panel.getBoundingClientRect().top;
-            var next = Math.max(280, Math.round(window.innerHeight - top - 44));
-            panel.style.height = next + 'px';
-            panel.style.maxHeight = next + 'px';
+            panel.style.height = '';
+            panel.style.maxHeight = '';
             var board = panel.querySelector('.asset-tree-flow-board');
             var canvas = panel.querySelector('.asset-tree-flow-canvas');
             if (board && canvas) {
                 var room = board.clientHeight;
-                if (room > 120 && canvas.offsetHeight - room < 40) canvas.style.height = room + 'px';
+                if (room > 160 && canvas.offsetHeight < room) canvas.style.height = room + 'px';
             }
         }
         if (state.portalFit) window.removeEventListener('resize', state.portalFit);
@@ -10749,18 +10747,16 @@
         block.appendChild(tools);
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
+        tools.appendChild(button(t('save'), 'asset-tree-btn primary asset-tree-flow-save', function () {
+            error.hidden = true;
+            saveFlowBook(error);
+        }));
         var board = el('div', 'asset-tree-flow-board');
         var canvas = el('div', 'asset-tree-flow-canvas');
         board.appendChild(canvas);
         block.appendChild(error);
         block.appendChild(board);
         paintFlow(canvas, process, error);
-        var actions = el('div', 'asset-tree-inline-actions');
-        actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
-            error.hidden = true;
-            saveFlowBook(error);
-        }));
-        block.appendChild(actions);
         host.appendChild(block);
     }
 
@@ -11067,6 +11063,7 @@
             renderFlowSettings(layout);
             return;
         }
+        fields.appendChild(el('p', 'asset-tree-portal-rules-label', t('portalRulesTitle')));
         var list = el('div', 'asset-tree-portal-list');
         if (!state.portalRules.length) {
             list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
@@ -11160,9 +11157,10 @@
         target.addEventListener('change', function () { draft.assetId = target.value; });
 
         var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(el('h4', 'asset-tree-portal-form-title', editing ? t('portalEditRule') : t('portalNewRule')));
         form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
-        form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
+        form.appendChild(button('+ ' + t('portalAddCondition'), 'asset-tree-btn subtle', function () {
             if (draft.conditions.length >= 6) return;
             draft.conditions.push({ field: '', option: '' });
             paintConditions();

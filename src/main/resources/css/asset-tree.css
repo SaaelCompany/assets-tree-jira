@@ -4693,37 +4693,40 @@ a.asset-tree-url {
 }
 
 #asset-tree-app .asset-tree-report.is-portal {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 8px 20px 0;
-}
-
-#asset-tree-app .asset-tree-report.is-portal > h2,
-#asset-tree-app .asset-tree-report.is-portal > .asset-tree-hint,
-#asset-tree-app .asset-tree-report.is-portal > .asset-tree-viewtabs {
-    flex: 0 0 auto;
+    display: block;
+    overflow: visible;
+    height: auto;
+    max-height: none;
+    padding: 8px 20px 28px;
 }
 
 #asset-tree-app .asset-tree-settings-block.asset-tree-portal-layout {
-    display: grid;
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-    gap: 12px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
     align-items: stretch;
     max-width: none;
     min-height: 0;
+    margin-top: 16px;
+    padding-top: 0;
+    border-top: 0;
+    overflow: visible;
 }
 
-#asset-tree-app .asset-tree-report.is-portal > .asset-tree-settings-block.asset-tree-portal-layout {
-    flex: 1 1 auto;
-    overflow: hidden;
+#asset-tree-app .asset-tree-portal-fields,
+#asset-tree-app .asset-tree-flow-column {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    overflow: visible;
+    padding: 16px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
 }
 
 #asset-tree-app .asset-tree-portal-fields {
-    min-width: 0;
     min-height: 0;
-    overflow: auto;
-    padding-right: 4px;
 }
 
 #asset-tree-app .asset-tree-jira-field {
@@ -4820,9 +4823,7 @@ a.asset-tree-url {
 #asset-tree-app .asset-tree-flow-column {
     display: flex;
     flex-direction: column;
-    min-width: 0;
     min-height: 0;
-    overflow: hidden;
 }
 
 #asset-tree-app .asset-tree-flow-column > .asset-tree-settings-title,
@@ -4859,9 +4860,57 @@ a.asset-tree-url {
     gap: 8px;
 }
 
-@media (max-width: 980px) {
-    #asset-tree-app .asset-tree-settings-block.asset-tree-portal-layout {
+#asset-tree-app .asset-tree-portal-rules-label {
+    margin: 12px 0 6px;
+    color: #6b778c;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#asset-tree-app .asset-tree-portal-list,
+#asset-tree-app form.asset-tree-portal-add {
+    max-width: 680px;
+}
+
+#asset-tree-app form.asset-tree-portal-add {
+    gap: 8px;
+    margin-top: 16px;
+    padding: 12px 14px 14px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #f4f5f7;
+}
+
+#asset-tree-app .asset-tree-portal-form-title {
+    margin: 0;
+    color: #172b4d;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#asset-tree-app form.asset-tree-portal-add .asset-tree-portal-lead {
+    margin: 4px 0 0;
+    color: #6b778c;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#asset-tree-app form.asset-tree-portal-add .asset-tree-portal-conditions {
+    margin-top: 0;
+}
+
+#asset-tree-app form.asset-tree-portal-add .asset-tree-inline-actions {
+    margin-top: 4px;
+}
+
+@media (max-width: 860px) {
+    #asset-tree-app .asset-tree-flow-menu {
         grid-template-columns: 1fr;
+    }
+
+    #asset-tree-app .asset-tree-flow-board {
+        height: 420px;
+        min-height: 420px;
     }
 }
 
@@ -4886,6 +4935,8 @@ a.asset-tree-url {
 
 #asset-tree-app .asset-tree-portal-condition {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
 }
 
@@ -5064,17 +5115,24 @@ a.asset-tree-url {
     margin-bottom: 8px;
 }
 
-#asset-tree-app button.asset-tree-flow-add {
+#asset-tree-app button.asset-tree-btn.asset-tree-flow-add:not(.slim) {
     gap: 8px;
+    border: 1px solid #dfe1e6 !important;
     border-radius: 999px !important;
     padding: 0 14px 0 10px !important;
     background: #fff !important;
+    color: #172b4d !important;
     box-shadow: 0 1px 2px rgba(9, 30, 66, 0.08);
 }
 
-#asset-tree-app button.asset-tree-flow-add:hover {
+#asset-tree-app button.asset-tree-btn.asset-tree-flow-add:not(.slim):hover {
     background: #f4f5f7 !important;
     border-color: #b3bac5 !important;
+    color: #172b4d !important;
+}
+
+#asset-tree-app .asset-tree-flow-save {
+    margin-left: auto;
 }
 
 #asset-tree-app .asset-tree-flow-dot {
@@ -5100,9 +5158,9 @@ a.asset-tree-url {
 }
 
 #asset-tree-app .asset-tree-flow-board {
-    flex: 1 1 auto;
-    height: auto;
-    min-height: 0;
+    flex: 0 0 auto;
+    height: 560px;
+    min-height: 560px;
     overflow: auto;
     border: 1px solid #dfe1e6;
     border-radius: 12px;

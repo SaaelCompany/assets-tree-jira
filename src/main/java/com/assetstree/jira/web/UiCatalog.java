@@ -165,6 +165,8 @@ public final class UiCatalog {
             "portalSectionHint",
             "portalFieldsTitle",
             "portalFieldsHint",
+            "portalRulesTitle",
+            "portalNewRule",
             "portalIf",
             "portalEquals",
             "portalThen",
