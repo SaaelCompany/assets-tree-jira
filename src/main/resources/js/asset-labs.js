@@ -2299,9 +2299,17 @@
                 actions.appendChild(button('×', 'asset-tree-btn subtle', function () { popover.hidden = true; }));
                 popover.appendChild(actions);
                 var zoom = ui.map.zoom || 1;
-                popover.style.left = Math.round(spot.pin.x * zoom + 22) + 'px';
-                popover.style.top = Math.round(spot.pin.y * zoom - 10) + 'px';
+                var left = Math.round(spot.pin.x * zoom + 22);
+                var top = Math.round(spot.pin.y * zoom - 10);
+                popover.style.left = left + 'px';
+                popover.style.top = top + 'px';
                 popover.hidden = false;
+                var right = canvas.scrollLeft + canvas.clientWidth - 8;
+                var bottom = canvas.scrollTop + canvas.clientHeight - 8;
+                if (left + popover.offsetWidth > right) left = Math.round(spot.pin.x * zoom - 22 - popover.offsetWidth);
+                if (top + popover.offsetHeight > bottom) top = bottom - popover.offsetHeight;
+                popover.style.left = Math.max(canvas.scrollLeft + 8, left) + 'px';
+                popover.style.top = Math.max(canvas.scrollTop + 8, top) + 'px';
             }
 
             function track(onMove, onUp) {
@@ -2840,29 +2848,32 @@
             var height = 240;
             var max = 0;
             rows.forEach(function (row) { max = Math.max(max, row.value, row.second || 0); });
+            var ticks = 4;
             if (max > 0) {
-                var raw = max / 4;
-                var power = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+                var power = Math.pow(10, Math.floor(Math.log(max / 5) / Math.LN10));
                 var step = power;
                 [1, 2, 5, 10].some(function (factor) {
-                    step = factor * power;
-                    return step >= raw;
+                    step = Math.max(1, factor * power);
+                    return Math.ceil(max / step) <= 5;
                 });
-                if (step < 1) step = 1;
-                max = step * 4;
+                ticks = Math.max(1, Math.ceil(max / step));
+                max = step * ticks;
             }
             var svg = svgEl('svg', { viewBox: '0 0 ' + width + ' ' + height, 'class': 'asset-labs-columns', preserveAspectRatio: 'xMinYMin meet' });
             var top = 16;
             var bottom = 36;
             var plot = height - top - bottom;
-            for (var g = 0; g <= 4; g++) {
-                var y = top + plot - plot * g / 4;
+            for (var g = 0; g <= ticks; g++) {
+                var y = top + plot - plot * g / ticks;
                 svg.appendChild(svgEl('line', { x1: '30', x2: String(width), y1: String(y), y2: String(y), stroke: '#EBECF0' }));
                 var tick = svgEl('text', { x: '24', y: String(y + 4), 'class': 'asset-labs-axis is-y' });
-                tick.textContent = max ? String(Math.round(max * g / 4)) : '';
+                tick.textContent = max ? String(Math.round(max * g / ticks)) : '';
                 svg.appendChild(tick);
             }
             var slot = (width - 40) / Math.max(1, rows.length);
+            var longest = 0;
+            rows.forEach(function (row) { longest = Math.max(longest, String(row.label).length); });
+            var every = Math.max(1, Math.ceil(longest * 6.5 / slot));
             var dual = def.group === 'work';
             rows.forEach(function (row, index) {
                 var x = 40 + slot * index;
@@ -2881,6 +2892,7 @@
                     done.appendChild(tip2);
                     svg.appendChild(done);
                 }
+                if (index % every) return;
                 var label = svgEl('text', { x: String(x + slot / 2), y: String(height - 14), 'class': 'asset-labs-axis' });
                 label.textContent = row.label;
                 svg.appendChild(label);

@@ -520,6 +520,31 @@
     margin: 4px 0 0;
 }
 
+.asset-labs-approval-text .asset-tree-linkish {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #0052cc;
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.asset-labs-approval-text .asset-tree-linkish:hover {
+    text-decoration: underline;
+}
+
+.asset-labs-approval-text .asset-tree-linkish:focus {
+    outline: none;
+}
+
+.asset-labs-approval-text .asset-tree-linkish:focus-visible {
+    outline: 2px solid #4c9aff;
+    outline-offset: 2px;
+}
+
 .asset-labs-approval .asset-labs-actions {
     margin: 0;
     flex: 0 0 auto;
