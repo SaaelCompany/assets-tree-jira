@@ -1816,6 +1816,10 @@ a.asset-tree-url {
     .asset-tree-rule {
         grid-template-columns: 1fr;
     }
+
+    .asset-tree-rule-caption {
+        grid-column: auto;
+    }
 }
 
 /* Beat Jira's #content button rules. Those strip background and hide the control. */
@@ -2288,6 +2292,13 @@ a.asset-tree-url {
     width: 100%;
     min-height: 32px;
     box-sizing: border-box;
+}
+
+.asset-tree-rule-caption {
+    grid-column: 1 / 4;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
 }
 
 .asset-tree-queue-head {

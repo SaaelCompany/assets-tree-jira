@@ -1304,6 +1304,16 @@ public class AssetServiceImpl implements AssetService {
                 if (countStatus(project.getKey(), row.getStatusKey()) > 0) {
                     throw new AssetException(409, "asset-tree.error.status.inUse");
                 }
+                String fallback = null;
+                for (ProjectStatusEntity candidate : rows) {
+                    if (!row.getStatusKey().equals(candidate.getStatusKey())) {
+                        fallback = candidate.getStatusKey();
+                        break;
+                    }
+                }
+                if (fallback != null) {
+                    releasePlaceStatus(project.getKey(), row.getStatusKey(), fallback);
+                }
                 ao().delete(row);
                 return null;
             }
@@ -2818,7 +2828,11 @@ public class AssetServiceImpl implements AssetService {
                     Map<Integer, AssetEntity> index = indexAssets(rows);
                     Map<Integer, List<AssetAttributeEntity>> attributes = attributesByAsset(idsOf(rows));
                     for (AssetEntity row : rows) {
-                        String role = holderRole(row, attributes.get(row.getID()), types.get(row.getTypeKey()), holder);
+                        AssetTypeDto type = types.get(row.getTypeKey());
+                        if (type != null && type.isLocation()) {
+                            continue;
+                        }
+                        String role = holderRole(row, attributes.get(row.getID()), type, holder);
                         if (role == null) {
                             continue;
                         }
@@ -4449,8 +4463,12 @@ public class AssetServiceImpl implements AssetService {
     private List<StatusDto> statusDtos(String projectKey, AssetEntity[] assets) {
         ensureStatuses(projectKey);
         Map<String, Integer> counts = new HashMap<String, Integer>();
+        Set<String> places = locationTypeKeys(projectKey);
         if (assets != null) {
             for (AssetEntity asset : assets) {
+                if (asset.getTypeKey() != null && places.contains(asset.getTypeKey())) {
+                    continue;
+                }
                 String key = Statuses.canonical(asset.getStatus());
                 Integer count = counts.get(key);
                 counts.put(key, Integer.valueOf((count == null ? 0 : count.intValue()) + 1));
@@ -4476,12 +4494,45 @@ public class AssetServiceImpl implements AssetService {
 
     private int countStatus(String projectKey, String statusKey) {
         int count = 0;
+        Set<String> places = locationTypeKeys(projectKey);
         for (AssetEntity row : assetsIn(projectKey)) {
+            if (row.getTypeKey() != null && places.contains(row.getTypeKey())) {
+                continue;
+            }
             if (statusKey.equals(Statuses.canonical(row.getStatus()))) {
                 count++;
             }
         }
         return count;
+    }
+
+    /** Places store a status, but the screen never shows it. Keep that value off the equipment counts. */
+    private Set<String> locationTypeKeys(String projectKey) {
+        Set<String> keys = new HashSet<String>();
+        AssetTypeEntity[] found = ao().find(AssetTypeEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        if (found == null) {
+            return keys;
+        }
+        for (AssetTypeEntity type : found) {
+            if (type.isLocation() && ProjectKeys.same(type.getProjectKey(), projectKey) && type.getTypeKey() != null) {
+                keys.add(type.getTypeKey());
+            }
+        }
+        return keys;
+    }
+
+    private void releasePlaceStatus(String projectKey, String removed, String fallback) {
+        Set<String> places = locationTypeKeys(projectKey);
+        for (AssetEntity asset : assetsIn(projectKey)) {
+            if (asset.getTypeKey() == null || !places.contains(asset.getTypeKey())) {
+                continue;
+            }
+            if (!removed.equals(Statuses.canonical(asset.getStatus()))) {
+                continue;
+            }
+            asset.setStatus(fallback);
+            asset.save();
+        }
     }
 
     private String normalizeCategory(String category) {

@@ -907,7 +907,7 @@ def ensure_statuses(project_key, text):
 
 def status_dtos(project_key, text):
     rows = ensure_statuses(project_key, text)
-    assets = project_assets(project_key)
+    assets = [asset for asset in project_assets(project_key) if not is_location_id(asset["id"])]
     result = []
     for row in rows:
         count = len([asset for asset in assets if canonical(asset.get("status")) == row["statusKey"]])
@@ -3202,7 +3202,7 @@ form.vp-request-form .select2-container .select2-chosen { position: relative; z-
         if (el.__auiBox && el.__auiBox.parentNode) el.__auiBox.parentNode.removeChild(el.__auiBox);
         el.__auiDrop = null;
         el.__auiBox = null;
-        el.className = (el.className || '').replace(/\bselect2-offscreen\b/g, '').replace(/\s+/g, ' ');
+        el.className = (el.className || '').replace(/\\bselect2-offscreen\\b/g, '').replace(/\\s+/g, ' ');
         el.__auiData = {};
     }
     function chosenText(el) {
@@ -3262,7 +3262,7 @@ form.vp-request-form .select2-container .select2-chosen { position: relative; z-
         }
         function close() {
             drop.hidden = true;
-            box.className = box.className.replace(/\bselect2-dropdown-open\b/g, '').replace(/\s+/g, ' ');
+            box.className = box.className.replace(/\\bselect2-dropdown-open\\b/g, '').replace(/\\s+/g, ' ');
         }
         function shrink() {
             drop.style.width = '190px';
@@ -3448,6 +3448,8 @@ setTimeout(function () {
                 return 404, {"message": text["asset-tree.error.user"]}
             result = []
             for asset in STATE["assets"].values():
+                if is_location_id(asset["id"]):
+                    continue
                 role = text["asset-tree.ui.custodian"] if asset.get("custodianKey") == user_key else None
                 if role:
                     dto = asset_dto(asset, text, False)
@@ -3898,7 +3900,10 @@ setTimeout(function () {
             row["category"] = category
         if "inSummary" in (body or {}) and (body or {}).get("inSummary") is not None:
             row["summaryMode"] = 1 if body.get("inSummary") else 2
-        count = len([asset for asset in project_assets(project_key) if canonical(asset.get("status")) == status_key])
+        count = len([
+            asset for asset in project_assets(project_key)
+            if canonical(asset.get("status")) == status_key and not is_location_id(asset["id"])
+        ])
         return 200, status_payload(row, count)
 
     def delete_status(self, project_key, status_key, text):
@@ -3908,9 +3913,17 @@ setTimeout(function () {
         row = next((item for item in rows if item["statusKey"] == status_key), None)
         if not row:
             return 404, {"message": text["asset-tree.error.status"]}
-        used = any(canonical(asset.get("status")) == status_key for asset in project_assets(project_key))
+        used = any(
+            canonical(asset.get("status")) == status_key and not is_location_id(asset["id"])
+            for asset in project_assets(project_key)
+        )
         if used:
             return 409, {"message": text["asset-tree.error.status.inUse"]}
+        fallback = next((item["statusKey"] for item in rows if item["statusKey"] != status_key), None)
+        if fallback:
+            for asset in project_assets(project_key):
+                if is_location_id(asset["id"]) and canonical(asset.get("status")) == status_key:
+                    asset["status"] = fallback
         STATE["statuses"][project_key] = [item for item in rows if item["statusKey"] != status_key]
         return 204, None
 

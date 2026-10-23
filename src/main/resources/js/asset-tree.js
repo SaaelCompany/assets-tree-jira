@@ -8201,12 +8201,23 @@
         text.type = 'search';
         text.placeholder = t('custodianSearch');
         text.disabled = !!disabled;
-        text.value = userKey ? (label || userKey) : '';
+        var chosenKey = userKey || '';
+        var chosenLabel = userKey ? (label || userKey) : '';
+        text.value = chosenLabel;
         var list = el('div', 'asset-tree-user-results');
         var timer = null;
         var searchSeq = 0;
+        function rememberChoice(key, name) {
+            chosenKey = key || '';
+            chosenLabel = name || chosenKey;
+            hidden.value = chosenKey;
+            text.value = chosenLabel;
+        }
         text.addEventListener('input', function () {
-            hidden.value = '';
+            var typed = text.value.trim();
+            if (!typed) hidden.value = '';
+            else if (chosenKey && typed === String(chosenLabel).trim()) hidden.value = chosenKey;
+            else hidden.value = '';
             clearTimeout(timer);
             var query = text.value.trim();
             timer = setTimeout(function () {
@@ -8221,8 +8232,7 @@
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
                         var hit = button(user.displayName + (user.email ? ' · ' + user.email : ''), 'asset-tree-user-hit', function () {
-                            hidden.value = user.userKey;
-                            text.value = user.displayName;
+                            rememberChoice(user.userKey, user.displayName || user.userKey);
                             list.innerHTML = '';
                             var card = box.querySelector('.asset-tree-profile');
                             if (card) card.parentNode.removeChild(card);
@@ -8240,10 +8250,10 @@
     }
 
     function custodianField(id, profile) {
-        var box = userBox(profile ? profile.userKey : '', !state.canEdit);
+        var box = userBox(profile ? profile.userKey : '', !state.canEdit, profile ? (profile.displayName || '') : '');
         box.querySelector('.asset-tree-field-value').id = id;
         var text = box.querySelector('input[type="search"]');
-        if (profile && text) text.value = profile.displayName || '';
+        if (profile && text && !text.value) text.value = profile.displayName || '';
         var wrap = field(t('custodian'), box, true);
         if (profile) wrap.appendChild(profileCard(profile));
         return wrap;
@@ -9164,6 +9174,20 @@
         return panel;
     }
 
+    function copyRule(rule) {
+        var copy = {
+            field: rule.field,
+            op: rule.op,
+            value: rule.value || ''
+        };
+        if (rule.values && rule.values.length) copy.values = rule.values.slice();
+        if (rule.keys && rule.keys.length) copy.keys = rule.keys.slice();
+        if (rule.kind) copy.kind = rule.kind;
+        if (rule.label) copy.label = rule.label;
+        if (rule.caption) copy.caption = rule.caption;
+        return copy;
+    }
+
     function filterBar() {
         var bar = el('div', 'asset-tree-filterbar');
         bar.appendChild(el('span', 'asset-tree-filter-label', t('sortBy')));
@@ -9195,9 +9219,7 @@
             (state.savedFilters || []).forEach(function (filter) {
                 if (filter.id === picker.value) chosen = filter;
             });
-            state.rules = chosen ? chosen.rules.map(function (rule) {
-                return { field: rule.field, op: rule.op, value: rule.value || '' };
-            }) : [];
+            state.rules = chosen ? chosen.rules.map(copyRule) : [];
             refreshBrowse();
         });
         bar.appendChild(picker);
@@ -9241,9 +9263,7 @@
         var draft = {
             id: state.activeFilterId || '',
             name: '',
-            rules: (state.rules || []).map(function (rule) {
-                return { field: rule.field, op: rule.op, value: rule.value || '' };
-            })
+            rules: (state.rules || []).map(copyRule)
         };
         (state.savedFilters || []).forEach(function (filter) {
             if (filter.id === draft.id) draft.name = filter.name;
@@ -9269,6 +9289,10 @@
                 var rules = [];
                 for (var i = 0; i < rows.length; i++) {
                     var row = rows[i];
+                    if (row._kept) {
+                        rules.push(copyRule(row._kept));
+                        continue;
+                    }
                     var fieldBox = row.querySelector('.asset-tree-rule-field');
                     var opBox = row.querySelector('.asset-tree-rule-op');
                     var valueBox = row.querySelector('.asset-tree-rule-value');
@@ -9297,6 +9321,20 @@
                 if (!draft.rules.length) draft.rules.push({ field: 'name', op: 'contains', value: '' });
                 list.innerHTML = '';
                 draft.rules.forEach(function (rule, index) {
+                    if (rule.keys && rule.keys.length) {
+                        var locked = el('div', 'asset-tree-rule');
+                        locked.setAttribute('data-rule', String(index));
+                        locked._kept = copyRule(rule);
+                        var caption = el('span', 'asset-tree-rule-caption', rule.caption || (rule.label || rule.field));
+                        locked.appendChild(caption);
+                        locked.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
+                            draft.rules = readRules();
+                            draft.rules.splice(index, 1);
+                            paintRules(true);
+                        }));
+                        list.appendChild(locked);
+                        return;
+                    }
                     var spec = fieldSpec(rule.field);
                     var ops = opsFor(spec.kind);
                     if (ops.indexOf(rule.op) < 0) rule.op = ops[0];
@@ -9380,7 +9418,9 @@
             form.appendChild(error);
             function applyRules(save) {
                 var rules = readRules().filter(function (rule) {
+                    if (rule.keys && rule.keys.length) return true;
                     if (rule.op === 'empty' || rule.op === 'notEmpty') return true;
+                    if (rule.op === 'in' && rule.values && rule.values.length) return true;
                     return String(rule.value || '').trim().length > 0;
                 });
                 if (!rules.length) {
