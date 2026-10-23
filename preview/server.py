@@ -494,6 +494,7 @@ STATE = {
     "plan_seq": 1, "plans": {}, "mails": [],
     "cards": {}, "card_images": {},
     "assetKeys": {}, "ready": False, "views": {},
+    "site_maps": {},
 }
 
 
@@ -1096,7 +1097,60 @@ def seed():
         "color": "#0052CC", "icon": "building", "systemType": False, "location": True,
         "showInTree": True, "service": False, "sortOrder": 1, "fields": [],
     }
-    add_asset("STP", "stp-place", "Усть-Лабинск", None, "in_use", None, {}, "STP-1")
+    yard = add_asset("STP", "stp-place", "Усть-Лабинск", None, "in_use", None, {}, "STP-1")
+    pump_house = add_asset("STP", "stp-place", "Насосная", yard, "in_use", None, {}, "PLC-1")
+    hangar = add_asset("STP", "stp-place", "Ангар", yard, "in_use", None, {}, "PLC-2")
+    tower = add_asset("STP", "stp-place", "Водонапорная башня", yard, "in_use", None, {}, "PLC-3")
+    lab = add_asset("STP", "stp-place", "Лаборатория", yard, "in_use", None, {}, "PLC-4")
+    STATE["types"]["stp-pump"] = {
+        "typeKey": "stp-pump", "projectKey": "STP", "baseKey": "", "label": "Насос",
+        "color": "#00875A", "icon": "waterpump", "systemType": False, "location": False,
+        "showInTree": True, "service": True, "sortOrder": 2,
+        "fields": [{
+            "fieldKey": "verify", "label": "Поверка", "kind": "date", "required": False,
+            "position": 1, "showOnIssue": True, "options": [],
+        }],
+    }
+    STATE["types"]["stp-meter"] = {
+        "typeKey": "stp-meter", "projectKey": "STP", "baseKey": "", "label": "Счётчик",
+        "color": "#6554C0", "icon": "gauge", "systemType": False, "location": False,
+        "showInTree": True, "service": True, "sortOrder": 3, "fields": [],
+    }
+    today = datetime.date.today()
+    pump = add_asset("STP", "stp-pump", "Насос Н-1", pump_house, "in_use", "ivanov", {
+        "verify": (today + datetime.timedelta(days=5)).isoformat(),
+    }, "PLC-5")
+    meter = add_asset("STP", "stp-meter", "Счётчик СВ-2", lab, "maintenance", "petrova", {}, "PLC-6")
+    spare = add_asset("STP", "stp-pump", "Насос Н-2", hangar, "repair", None, {}, "PLC-7")
+    seed_plan(pump, "ТО насоса", (today + datetime.timedelta(days=4) - datetime.timedelta(days=14)).isoformat(), 14, "day")
+    seed_plan(meter, "Поверка счётчика", (today - datetime.timedelta(days=6) - datetime.timedelta(days=30)).isoformat(), 30, "day")
+    seed_plan(spare, "Капремонт", (today + datetime.timedelta(days=18) - datetime.timedelta(days=90)).isoformat(), 90, "day")
+    STATE["site_maps"]["STP"] = {
+        "snap": 0, "showGrid": True, "background": "#F4F5F7",
+        "showLabels": True, "showFloors": True, "showCount": True,
+        "buildings": [
+            {"assetId": yard, "shape": "rect", "x": 40, "y": 36, "w": 640, "h": 420,
+             "rotation": 0, "color": "#DEEBFF", "floors": 1, "opacity": 40, "label": "", "note": "Площадка", "points": "", "hidden": False},
+            {"assetId": pump_house, "shape": "l", "x": 78, "y": 70, "w": 210, "h": 168,
+             "rotation": 12, "color": "#0052CC", "floors": 2, "opacity": 100, "label": "", "note": "", "points": "", "hidden": False},
+            {"assetId": hangar, "shape": "hangar", "x": 340, "y": 250, "w": 280, "h": 110,
+             "rotation": -8, "color": "#FF8B00", "floors": 1, "opacity": 100, "label": "", "note": "", "points": "", "hidden": False},
+            {"assetId": tower, "shape": "tower", "x": 360, "y": 70, "w": 78, "h": 210,
+             "rotation": 0, "color": "#00875A", "floors": 8, "opacity": 100, "label": "", "note": "", "points": "", "hidden": False},
+            {"assetId": lab, "shape": "circle", "x": 500, "y": 86, "w": 150, "h": 150,
+             "rotation": 0, "color": "#6554C0", "floors": 3, "opacity": 90, "label": "", "note": "", "points": "", "hidden": False},
+        ],
+    }
+    STATE["assetKeys"]["STP"] = "PLC"
+
+
+def seed_plan(asset_id, name, last_done, count, unit):
+    plan_id = STATE["plan_seq"]
+    STATE["plan_seq"] += 1
+    STATE["plans"][plan_id] = {
+        "id": plan_id, "assetId": asset_id, "name": name, "lastDone": last_done,
+        "everyCount": count, "everyUnit": unit, "statusKey": "", "notify": True, "appliedFor": "",
+    }
 
 
 def normalize_parent(parent_id):
@@ -1437,10 +1491,10 @@ def asset_dto(asset, text, with_issues):
         "cardImage": asset["id"] in STATE["card_images"],
         "custodian": holder, "attributes": attributes,
         "serviceDue": service_due_names(asset["id"]),
+        "plans": plan_dtos(asset["id"]),
         "offeredTypes": list(asset.get("offeredTypes") or []) if is_location_id(asset["id"]) else [],
     }
     if with_issues:
-        dto["plans"] = plan_dtos(asset["id"])
         dto["issues"] = [dict(ISSUES_BY_ID[link["issueId"]]) for link in STATE["links"] if link["assetId"] == asset["id"] and link["issueId"] in ISSUES_BY_ID]
         dto["comments"] = [comment_dto(row) for row in comments_of(asset["id"])]
         dto["files"] = [file_dto(row) for row in files_of(asset["id"])]
@@ -2756,6 +2810,35 @@ def flow_link_allowed(source, target):
     return source["kind"] == "issue" and target["kind"] == "status"
 
 
+def person_key(raw):
+    text = str(raw or "").strip()
+    if len(text) > 255:
+        text = text[:255]
+    if any(ord(char) < 32 or char in '"\\' for char in text):
+        return ""
+    return text
+
+
+def clip_text(raw, limit):
+    text = " ".join(str(raw or "").split())
+    return text[:limit]
+
+
+def bound_days(raw):
+    try:
+        days = int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(365, days))
+
+
+def flow_color(raw):
+    text = str(raw or "").strip()
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", text):
+        return text.upper()
+    return ""
+
+
 def normalize_flow_book(raw):
     processes = []
     seen = set()
@@ -2775,7 +2858,21 @@ def normalize_flow_book(raw):
         removed = (item.get("removedStatus") or "").strip()
         if not re.fullmatch(r"[a-z0-9_-]{1,40}", removed):
             removed = ""
-        processes.append({"id": node_id, "name": name, "removedStatus": removed, "nodes": graph["nodes"], "links": graph["links"]})
+        processes.append({
+            "id": node_id,
+            "name": name,
+            "removedStatus": removed,
+            "enabled": item.get("enabled") is not False,
+            "requireApproval": item.get("requireApproval") is True,
+            "notifyApprover": item.get("notifyApprover") is True,
+            "slaDays": bound_days(item.get("slaDays")),
+            "approverKey": person_key(item.get("approverKey")),
+            "approverName": clip_text(item.get("approverName"), 120),
+            "note": clip_text(item.get("note"), 240),
+            "color": flow_color(item.get("color")),
+            "nodes": graph["nodes"],
+            "links": graph["links"],
+        })
         if len(processes) >= 20:
             break
     return {"processes": processes}
@@ -2788,6 +2885,14 @@ def flow_book_named(book):
         named["id"] = process.get("id") or ""
         named["name"] = process.get("name") or ""
         named["removedStatus"] = process.get("removedStatus") or ""
+        named["enabled"] = process.get("enabled") is not False
+        named["requireApproval"] = process.get("requireApproval") is True
+        named["notifyApprover"] = process.get("notifyApprover") is True
+        named["slaDays"] = bound_days(process.get("slaDays"))
+        named["approverKey"] = process.get("approverKey") or ""
+        named["approverName"] = process.get("approverName") or ""
+        named["note"] = process.get("note") or ""
+        named["color"] = process.get("color") or ""
         processes.append(named)
     return {"processes": processes}
 
@@ -2797,6 +2902,8 @@ def removed_status_for(project_key, issue_type_id):
     if not stored or "processes" not in stored:
         return None
     for process in normalize_flow_book(stored)["processes"]:
+        if process.get("enabled") is False:
+            continue
         status = process.get("removedStatus") or ""
         if not status:
             continue
@@ -2823,6 +2930,8 @@ def apply_removed_flow(asset_id, issue, status_before=""):
 def flow_rules_from_book(project_key, book, names):
     chosen = {}
     for process in (book or {}).get("processes") or []:
+        if process.get("enabled") is False:
+            continue
         for rule in flow_rules_from_graph(project_key, process, names):
             if rule["issueTypeId"] not in chosen:
                 chosen[rule["issueTypeId"]] = rule
@@ -2846,6 +2955,9 @@ def normalize_flow_graph(raw):
             "issueTypeId": (item.get("issueTypeId") or "").strip() if kind == "request" else "",
             "issueStatusId": (item.get("issueStatusId") or "").strip() if kind == "issue" else "",
             "statusKey": (item.get("statusKey") or "").strip() if kind == "status" else "",
+            "approverKey": person_key(item.get("approverKey")),
+            "approverName": clip_text(item.get("approverName"), 120),
+            "note": clip_text(item.get("note"), 240),
         }
         nodes.append(node)
         if len(nodes) >= 40:
@@ -2880,6 +2992,110 @@ def flow_graph_named(graph):
             copy["issueStatusName"] = statuses.get(copy.get("issueStatusId") or "", "")
         nodes.append(copy)
     return {"nodes": nodes, "links": [dict(link) for link in graph.get("links") or []]}
+
+
+def normalize_site_map(raw):
+    shapes = {"rect", "l", "u", "t", "cross", "circle", "hex", "tower", "hangar", "poly"}
+    snap = raw.get("snap") if isinstance(raw, dict) else 0
+    snap = snap if snap in (8, 16, 32) else 0
+    background = str((raw or {}).get("background") or "")
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", background):
+        background = "#F4F5F7"
+    buildings = []
+    seen = set()
+    for item in (raw or {}).get("buildings") or []:
+        try:
+            asset_id = int(item.get("assetId") or 0)
+        except (TypeError, ValueError):
+            continue
+        asset = STATE["assets"].get(asset_id)
+        if not asset or not is_location_id(asset_id) or asset_id in seen:
+            continue
+        seen.add(asset_id)
+        shape = str(item.get("shape") or "rect").strip().lower()
+        points = site_points(item.get("points"))
+        if shape not in shapes or (shape == "poly" and not points):
+            shape = "rect"
+            points = ""
+        if shape != "poly":
+            points = ""
+        rotation = int(item.get("rotation") or 0) % 360
+        floors = int(item.get("floors") or 1)
+        floors = min(40, max(1, floors))
+        opacity = int(item.get("opacity") or 100)
+        if opacity <= 0:
+            opacity = 100
+        opacity = min(100, max(30, opacity))
+        buildings.append({
+            "assetId": asset_id,
+            "shape": shape,
+            "x": site_coord(item.get("x")),
+            "y": site_coord(item.get("y")),
+            "w": site_size(item.get("w"), 160),
+            "h": site_size(item.get("h"), 110),
+            "rotation": rotation,
+            "color": flow_color(item.get("color")),
+            "floors": floors,
+            "opacity": opacity,
+            "label": clip_text(item.get("label"), 80),
+            "note": clip_text(item.get("note"), 240),
+            "points": points,
+            "hidden": item.get("hidden") is True,
+        })
+        if len(buildings) >= 200:
+            break
+    return {
+        "snap": snap,
+        "showGrid": (raw or {}).get("showGrid") is True,
+        "background": background.upper(),
+        "showLabels": (raw or {}).get("showLabels") is not False,
+        "showFloors": (raw or {}).get("showFloors") is not False,
+        "showCount": (raw or {}).get("showCount") is not False,
+        "buildings": buildings,
+    }
+
+
+def site_coord(raw):
+    try:
+        value = float(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+    value = min(8000, max(0, value))
+    return round(value, 1)
+
+
+def site_size(raw, fallback):
+    try:
+        value = float(raw or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        value = fallback
+    return round(min(800, max(48, value)), 1)
+
+
+def site_points(raw):
+    kept = []
+    for part in str(raw or "").split(";"):
+        pair = part.split(",")
+        if len(pair) != 2:
+            continue
+        try:
+            x = min(100, max(0, float(pair[0])))
+            y = min(100, max(0, float(pair[1])))
+        except ValueError:
+            continue
+        kept.append("%s,%s" % (site_number(x), site_number(y)))
+        if len(kept) >= 12:
+            break
+    return ";".join(kept) if len(kept) >= 3 else ""
+
+
+def site_number(value):
+    rounded = round(float(value), 1)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return str(rounded)
 
 
 def flow_graph_from_rules(project_key):
@@ -3413,7 +3629,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.11",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.4.0",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3536,6 +3752,16 @@ setTimeout(function () {
             STATE["flow_graphs"][project_key] = book
             STATE["flows"][project_key] = flow_rules_from_book(project_key, book, names)
             return 200, flow_book_named(book)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/site-map", path)
+        if match and method in ("GET", "PUT"):
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "GET":
+                return 200, normalize_site_map(STATE["site_maps"].get(project_key) or {})
+            stored = normalize_site_map(self.read_json() or {})
+            STATE["site_maps"][project_key] = stored
+            return 200, stored
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-statuses", path)
         if match and method == "GET":
             if match.group(1) not in {item["key"] for item in PROJECTS}:

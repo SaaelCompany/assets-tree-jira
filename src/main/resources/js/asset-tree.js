@@ -425,7 +425,18 @@
         cardDraft: null,
         cardDrag: '',
         cardSuppressClick: false,
-        cardSelected: ''
+        cardSelected: '',
+        board: 'list',
+        boardReady: false,
+        calCursor: '',
+        calDay: '',
+        calPanel: false,
+        mapSelected: 0,
+        mapView: null,
+        mapDraft: null,
+        mapReady: false,
+        mapLoading: false,
+        mapDraw: null
     };
     var idIndex = null;
     var childIndex = null;
@@ -3770,11 +3781,16 @@
             }));
         }
         if (state.canArrange && !emptyRoot) tools.appendChild(columnsButton());
+        if (!remote && !projectFiltering()) tools.appendChild(boardSwitch());
         if (tools.childNodes.length) head.appendChild(tools);
         var showSummary = !asset && !remote && !projectFiltering();
         if (showSummary) head.classList.add('is-with-summary');
         section.appendChild(head);
         if (showSummary) section.appendChild(summaryBand());
+        if (!remote && !projectFiltering() && state.board === 'map') {
+            section.appendChild(renderSiteMap(asset));
+            return section;
+        }
         section.appendChild(filterBar());
         var editor = columnsEditor();
         if (editor) section.appendChild(editor);
@@ -8080,6 +8096,7 @@
         });
         if (!match && state.projects.length) match = state.projects[0];
         state.projectKey = match ? match.key : '';
+        resetMapState();
         applyRights(match);
         state.grants = null;
         state.portalRules = null;
@@ -8104,6 +8121,7 @@
 
     function switchProject(key, selectedId) {
         state.projectKey = key;
+        resetMapState();
         state.columnDraft = null;
         state.selectedId = selectedId || null;
         state.query = '';
@@ -8523,26 +8541,24 @@
             focusMatches({ field: 'custodian', op: 'empty', value: '' });
         }, report.unassigned ? 'warn' : ''));
 
-        var row = el('div', 'asset-tree-dash');
-        row.appendChild(summaryChartCard());
+        node.appendChild(el('p', 'asset-tree-hint asset-tree-dash-note', t('dashHint')));
+        node.appendChild(totals);
+        node.appendChild(calendarCard());
 
+        var row = el('div', 'asset-tree-dash');
         var typeRows = (report.byType || []).filter(function (item) { return item.count > 0; });
         typeRows.sort(function (left, right) { return right.count - left.count; });
         typeRows = typeRows.slice(0, 6);
         row.appendChild(dashCard(t('reportByType'), typeRows.length ? typeList(typeRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
 
-        var side = el('div', 'asset-tree-dash-stack');
         var placeRows = (report.places || []).filter(function (place) { return place.equipment > 0; });
         placeRows.sort(function (left, right) { return right.equipment - left.equipment; });
         placeRows = placeRows.slice(0, 5);
-        side.appendChild(dashCard(t('reportByPlace'), placeRows.length ? placeList(placeRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
+        row.appendChild(dashCard(t('reportByPlace'), placeRows.length ? placeList(placeRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
         var holderRows = (report.holders || []).slice();
         holderRows.sort(function (left, right) { return right.count - left.count; });
         holderRows = holderRows.slice(0, 5);
-        side.appendChild(dashCard(t('reportHolders'), holderRows.length ? holderList(holderRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
-        row.appendChild(side);
-        node.appendChild(el('p', 'asset-tree-hint asset-tree-dash-note', t('dashHint')));
-        node.appendChild(totals);
+        row.appendChild(dashCard(t('reportHolders'), holderRows.length ? holderList(holderRows) : el('p', 'asset-tree-hint', t('chartEmpty'))));
         node.appendChild(row);
     }
 
@@ -10476,7 +10492,10 @@
                 issueTypeName: node.issueTypeName || '',
                 issueStatusId: node.issueStatusId || '',
                 issueStatusName: node.issueStatusName || '',
-                statusKey: node.statusKey || ''
+                statusKey: node.statusKey || '',
+                approverKey: node.approverKey || '',
+                approverName: node.approverName || '',
+                note: node.note || ''
             });
         });
         ((graph && graph.links) || []).forEach(function (link) {
@@ -10493,6 +10512,14 @@
                 id: process.id,
                 name: process.name || '',
                 removedStatus: process.removedStatus || '',
+                enabled: process.enabled !== false,
+                requireApproval: !!process.requireApproval,
+                notifyApprover: !!process.notifyApprover,
+                slaDays: parseInt(process.slaDays, 10) || 0,
+                approverKey: process.approverKey || '',
+                approverName: process.approverName || '',
+                note: process.note || '',
+                color: process.color || '',
                 nodes: graph.nodes,
                 links: graph.links
             });
@@ -10541,7 +10568,30 @@
                     id: process.id,
                     name: process.name || '',
                     removedStatus: process.removedStatus || '',
-                    nodes: process.nodes || [],
+                    enabled: process.enabled !== false,
+                    requireApproval: !!process.requireApproval,
+                    notifyApprover: !!process.notifyApprover,
+                    slaDays: parseInt(process.slaDays, 10) || 0,
+                    approverKey: process.approverKey || '',
+                    approverName: process.approverName || '',
+                    note: process.note || '',
+                    color: process.color || '',
+                    nodes: (process.nodes || []).map(function (node) {
+                        return {
+                            id: node.id,
+                            kind: node.kind,
+                            x: node.x || 0,
+                            y: node.y || 0,
+                            issueTypeId: node.issueTypeId || '',
+                            issueTypeName: node.issueTypeName || '',
+                            issueStatusId: node.issueStatusId || '',
+                            issueStatusName: node.issueStatusName || '',
+                            statusKey: node.statusKey || '',
+                            approverKey: node.approverKey || '',
+                            approverName: node.approverName || '',
+                            note: node.note || ''
+                        };
+                    }),
                     links: process.links || []
                 };
             })
@@ -10635,6 +10685,14 @@
                 nodes: [],
                 links: []
             };
+            created.enabled = true;
+            created.requireApproval = false;
+            created.notifyApprover = false;
+            created.slaDays = 0;
+            created.approverKey = '';
+            created.approverName = '';
+            created.note = '';
+            created.color = '';
             book.processes.push(created);
             state.flowProcessId = created.id;
             saveFlowBook(null);
@@ -10693,6 +10751,7 @@
         menu.appendChild(removedRow);
         menu.appendChild(menuActions);
         block.appendChild(menu);
+        block.appendChild(flowProcessSettings(process));
         var tools = el('div', 'asset-tree-flow-tools');
         function addTool(label, kind) {
             var tool = button(label, 'asset-tree-btn asset-tree-flow-add', function () {
@@ -10922,6 +10981,7 @@
             }
             body.appendChild(el('label', 'asset-tree-flow-label', labelText));
             body.appendChild(select);
+            body.appendChild(flowNodeExtras(node, draft));
             card.appendChild(body);
             function attachPort(side) {
                 var port = el('button', 'asset-tree-flow-port is-' + side);
@@ -11634,6 +11694,1517 @@
         return section;
     }
 
+    function resetMapState() {
+        state.mapDraft = null;
+        state.mapReady = false;
+        state.mapLoading = false;
+        state.mapSelected = 0;
+        state.mapDraw = null;
+        state.mapView = null;
+        state.boardReady = false;
+        state.calDay = '';
+        state.calPanel = false;
+    }
+
+    function rememberedBoard() {
+        try {
+            return sessionStorage.getItem('asset-tree-board:' + (state.projectKey || '')) === 'map' ? 'map' : 'list';
+        } catch (error) {
+            return 'list';
+        }
+    }
+
+    function boardSwitch() {
+        if (!state.boardReady) {
+            state.board = rememberedBoard();
+            state.boardReady = true;
+        }
+        var modes = el('div', 'asset-tree-board-switch');
+        modes.setAttribute('role', 'group');
+        ['list', 'map'].forEach(function (mode) {
+            var active = state.board === mode;
+            var node = button(mode === 'map' ? t('mapOpen') : t('mapList'), 'asset-tree-btn slim' + (active ? ' primary' : ''), function () {
+                state.board = mode;
+                try { sessionStorage.setItem('asset-tree-board:' + (state.projectKey || ''), mode); } catch (error) { /* ignore */ }
+                renderFrame();
+            });
+            node.setAttribute('aria-pressed', active ? 'true' : 'false');
+            modes.appendChild(node);
+        });
+        return modes;
+    }
+
+    function pad2(value) {
+        var text = String(value);
+        return text.length < 2 ? '0' + text : text;
+    }
+
+    function isoDay(value) {
+        var text = String(value || '').trim();
+        var iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
+        if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
+        var local = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+        if (local) return local[3] + '-' + local[2] + '-' + local[1];
+        return '';
+    }
+
+    function todayIso() {
+        var now = new Date();
+        return now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate());
+    }
+
+    function calendarCursor() {
+        if (!/^\d{4}-\d{2}$/.test(state.calCursor || '')) {
+            state.calCursor = todayIso().slice(0, 7);
+        }
+        return state.calCursor;
+    }
+
+    function shiftMonth(cursor, delta) {
+        var parts = cursor.split('-');
+        var date = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1 + delta, 1);
+        return date.getFullYear() + '-' + pad2(date.getMonth() + 1);
+    }
+
+    function calSettings() {
+        var settings = { service: true, dates: true, color: 'status', monday: true, compact: false };
+        try {
+            var raw = JSON.parse(sessionStorage.getItem('asset-tree-cal') || 'null');
+            if (raw && typeof raw === 'object') {
+                settings.service = raw.service !== false;
+                settings.dates = raw.dates !== false;
+                settings.color = raw.color === 'type' ? 'type' : 'status';
+                settings.monday = raw.monday !== false;
+                settings.compact = !!raw.compact;
+            }
+        } catch (error) { /* keep defaults */ }
+        return settings;
+    }
+
+    function storeCalSettings(settings) {
+        try { sessionStorage.setItem('asset-tree-cal', JSON.stringify(settings)); } catch (error) { /* ignore */ }
+        state.calPanel = true;
+        var dash = document.getElementById('asset-tree-dashboard');
+        if (dash) fillDashboard(dash);
+    }
+
+    function calendarEvents(settings) {
+        var events = [];
+        equipmentRows().forEach(function (asset) {
+            var color = settings.color === 'type'
+                ? (asset.color || '#0052CC')
+                : statusColor(asset.status);
+            if (settings.service) {
+                (asset.plans || []).forEach(function (plan) {
+                    var day = isoDay(plan.nextDue);
+                    if (!day) return;
+                    events.push({
+                        day: day,
+                        label: (plan.name || t('calService')) + ' · ' + (asset.name || ''),
+                        color: color,
+                        overdue: !!plan.due || day < todayIso(),
+                        assetId: asset.id
+                    });
+                });
+            }
+            if (settings.dates) {
+                (asset.attributes || []).forEach(function (attribute) {
+                    if (!attribute || attribute.kind !== 'date') return;
+                    var day = isoDay(attribute.value);
+                    if (!day) return;
+                    events.push({
+                        day: day,
+                        label: (attribute.name || t('calDates')) + ' · ' + (asset.name || ''),
+                        color: color,
+                        overdue: day < todayIso(),
+                        assetId: asset.id
+                    });
+                });
+            }
+        });
+        events.sort(function (left, right) {
+            if (left.day !== right.day) return left.day < right.day ? -1 : 1;
+            return left.label.localeCompare(right.label, state.locale || 'ru');
+        });
+        return events;
+    }
+
+    function calendarCard() {
+        var settings = calSettings();
+        var cursor = calendarCursor();
+        var parts = cursor.split('-');
+        var year = parseInt(parts[0], 10);
+        var month = parseInt(parts[1], 10) - 1;
+        var card = el('section', 'asset-tree-cal' + (settings.compact ? ' is-compact' : ''));
+        var head = el('div', 'asset-tree-cal-head');
+        var title = el('div', 'asset-tree-cal-title');
+        title.appendChild(el('h3', null, t('calTitle')));
+        var monthName = new Date(year, month, 1).toLocaleDateString(state.locale || 'ru', { month: 'long', year: 'numeric' });
+        title.appendChild(el('strong', null, monthName));
+        head.appendChild(title);
+        var nav = el('div', 'asset-tree-cal-nav');
+        nav.appendChild(button('‹', 'asset-tree-btn slim', function () {
+            state.calCursor = shiftMonth(cursor, -1);
+            state.calDay = '';
+            var dash = document.getElementById('asset-tree-dashboard');
+            if (dash) fillDashboard(dash);
+        }));
+        nav.lastChild.title = t('calPrev');
+        nav.lastChild.setAttribute('aria-label', t('calPrev'));
+        nav.appendChild(button(t('calToday'), 'asset-tree-btn slim', function () {
+            state.calCursor = todayIso().slice(0, 7);
+            state.calDay = todayIso();
+            var dash = document.getElementById('asset-tree-dashboard');
+            if (dash) fillDashboard(dash);
+        }));
+        nav.appendChild(button('›', 'asset-tree-btn slim', function () {
+            state.calCursor = shiftMonth(cursor, 1);
+            state.calDay = '';
+            var dash = document.getElementById('asset-tree-dashboard');
+            if (dash) fillDashboard(dash);
+        }));
+        nav.lastChild.title = t('calNext');
+        nav.lastChild.setAttribute('aria-label', t('calNext'));
+        var gear = button(t('calSettings'), 'asset-tree-btn slim' + (state.calPanel ? ' primary' : ''), function () {
+            state.calPanel = !state.calPanel;
+            var dash = document.getElementById('asset-tree-dashboard');
+            if (dash) fillDashboard(dash);
+        });
+        gear.setAttribute('aria-expanded', state.calPanel ? 'true' : 'false');
+        nav.appendChild(gear);
+        head.appendChild(nav);
+        card.appendChild(head);
+        if (state.calPanel) card.appendChild(calendarSettings(settings));
+        var events = calendarEvents(settings);
+        var byDay = {};
+        var inMonth = 0;
+        events.forEach(function (event) {
+            if (event.day.slice(0, 7) !== cursor) return;
+            inMonth++;
+            if (!byDay[event.day]) byDay[event.day] = [];
+            byDay[event.day].push(event);
+        });
+        card.appendChild(calendarGrid(year, month, settings.monday, byDay));
+        if (!inMonth) card.appendChild(el('p', 'asset-tree-hint', t('calEmpty')));
+        if (state.calDay && state.calDay.slice(0, 7) === cursor) {
+            card.appendChild(calendarDayList(state.calDay, byDay[state.calDay] || []));
+        }
+        return card;
+    }
+
+    function calendarSettings(settings) {
+        var panel = el('div', 'asset-tree-cal-settings');
+        function toggle(key, label) {
+            var row = el('label', 'asset-tree-check');
+            var box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = !!settings[key];
+            box.addEventListener('change', function () {
+                settings[key] = box.checked;
+                storeCalSettings(settings);
+            });
+            row.appendChild(box);
+            row.appendChild(document.createTextNode(label));
+            return row;
+        }
+        panel.appendChild(toggle('service', t('calService')));
+        panel.appendChild(toggle('dates', t('calDates')));
+        panel.appendChild(toggle('monday', t('calMonday')));
+        panel.appendChild(toggle('compact', t('calCompact')));
+        var colors = el('div', 'asset-tree-cal-colors');
+        ['status', 'type'].forEach(function (mode) {
+            var node = button(mode === 'type' ? t('calByType') : t('calByStatus'), 'asset-tree-btn slim' + (settings.color === mode ? ' primary' : ''), function () {
+                settings.color = mode;
+                storeCalSettings(settings);
+            });
+            colors.appendChild(node);
+        });
+        panel.appendChild(colors);
+        return panel;
+    }
+
+    function calendarGrid(year, month, monday, byDay) {
+        var grid = el('div', 'asset-tree-cal-grid');
+        var names = [];
+        var origin = new Date(2026, 0, monday ? 5 : 4);
+        for (var i = 0; i < 7; i++) {
+            var named = new Date(origin.getFullYear(), origin.getMonth(), origin.getDate() + i);
+            var label = named.toLocaleDateString(state.locale || 'ru', { weekday: 'short' });
+            var weekend = named.getDay() === 0 || named.getDay() === 6;
+            grid.appendChild(el('div', 'asset-tree-cal-dow' + (weekend ? ' is-end' : ''), label));
+            names.push(label);
+        }
+        var first = new Date(year, month, 1);
+        var lead = first.getDay();
+        if (monday) lead = (lead + 6) % 7;
+        var days = new Date(year, month + 1, 0).getDate();
+        var today = todayIso();
+        var cells = lead + days;
+        var rows = Math.ceil(cells / 7) * 7;
+        for (var index = 0; index < rows; index++) {
+            var dayNumber = index - lead + 1;
+            var outside = dayNumber < 1 || dayNumber > days;
+            var iso = year + '-' + pad2(month + 1) + '-' + pad2(dayNumber);
+            var cell = el('div', 'asset-tree-cal-cell' + (outside ? ' is-outside' : '') + (!outside && iso === today ? ' is-today' : '') + (!outside && iso === state.calDay ? ' is-picked' : ''));
+            if (!outside) {
+                var number = button(String(dayNumber), 'asset-tree-cal-num', function (isoDay) {
+                    return function () {
+                        state.calDay = state.calDay === isoDay ? '' : isoDay;
+                        var dash = document.getElementById('asset-tree-dashboard');
+                        if (dash) fillDashboard(dash);
+                    };
+                }(iso));
+                cell.appendChild(number);
+                var list = byDay[iso] || [];
+                var limit = calSettings().compact ? 0 : 3;
+                list.slice(0, limit).forEach(function (event) {
+                    cell.appendChild(calendarChip(event));
+                });
+                if (list.length > limit) {
+                    var more = button(t('calMore', list.length - limit), 'asset-tree-cal-more', function (isoDay) {
+                        return function () {
+                            state.calDay = isoDay;
+                            var dash = document.getElementById('asset-tree-dashboard');
+                            if (dash) fillDashboard(dash);
+                        };
+                    }(iso));
+                    cell.appendChild(more);
+                }
+            }
+            grid.appendChild(cell);
+        }
+        return grid;
+    }
+
+    function calendarChip(event) {
+        var chip = button(event.label, 'asset-tree-cal-chip' + (event.overdue ? ' is-overdue' : ''), function () {
+            openCalendarAsset(event.assetId);
+        });
+        chip.style.setProperty('background', event.color || '#0052CC', 'important');
+        chip.style.setProperty('color', '#ffffff', 'important');
+        chip.title = (event.overdue ? t('calOverdue') + ' · ' : '') + event.label;
+        return chip;
+    }
+
+    function calendarDayList(day, events) {
+        var box = el('div', 'asset-tree-cal-day');
+        var title = new Date(day + 'T00:00:00').toLocaleDateString(state.locale || 'ru', { day: 'numeric', month: 'long' });
+        box.appendChild(el('div', 'asset-tree-section-title', title));
+        if (!events.length) {
+            box.appendChild(el('p', 'asset-tree-hint', t('calEmpty')));
+            return box;
+        }
+        events.forEach(function (event) {
+            var line = button(event.label, 'asset-tree-cal-line' + (event.overdue ? ' is-overdue' : ''), function () {
+                openCalendarAsset(event.assetId);
+            });
+            var dot = el('i');
+            dot.style.background = event.color || '#0052CC';
+            line.insertBefore(dot, line.firstChild);
+            if (event.overdue) line.appendChild(el('span', null, t('calOverdue')));
+            box.appendChild(line);
+        });
+        return box;
+    }
+
+    function openCalendarAsset(id) {
+        var asset = byId()[id];
+        if (!asset) return;
+        state.board = 'list';
+        state.pane = 'card';
+        selectAsset(id, true);
+    }
+
+    function flowCheck(label, checked, onChange) {
+        var row = el('label', 'asset-tree-check');
+        var box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!checked;
+        box.addEventListener('change', function () { onChange(box.checked); });
+        row.appendChild(box);
+        row.appendChild(document.createTextNode(label));
+        return row;
+    }
+
+    function flowPersonField(label, key, name, onPick) {
+        var wrap = el('div', 'asset-tree-flow-person');
+        wrap.appendChild(el('span', 'asset-tree-flow-label', label));
+        var chip = el('div', 'asset-tree-flow-person-chip', name || t('flowApproverNone'));
+        wrap.appendChild(chip);
+        var search = el('div', 'asset-tree-assign-search');
+        var input = el('input');
+        input.type = 'search';
+        input.className = 'asset-tree-text';
+        input.placeholder = t('flowApproverSearch');
+        input.setAttribute('aria-label', label);
+        var results = el('div', 'asset-tree-user-results');
+        var timer = null;
+        var seq = 0;
+        input.addEventListener('input', function () {
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                var query = input.value.replace(/^\s+|\s+$/g, '');
+                var token = ++seq;
+                results.innerHTML = '';
+                if (query.length < 2) return;
+                ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (token !== seq) return;
+                    results.innerHTML = '';
+                    if (status !== 200) return;
+                    (payload || []).forEach(function (user) {
+                        results.appendChild(button(user.displayName || user.userKey, 'asset-tree-user-hit', function () {
+                            onPick(user.userKey || '', user.displayName || '');
+                        }));
+                    });
+                });
+            }, 200);
+        });
+        search.appendChild(input);
+        search.appendChild(results);
+        wrap.appendChild(search);
+        if (key) {
+            wrap.appendChild(button(t('flowApproverClear'), 'asset-tree-linkish', function () {
+                onPick('', '');
+            }));
+        }
+        return wrap;
+    }
+
+    function flowProcessSettings(process) {
+        var box = el('div', 'asset-tree-flow-settings');
+        box.appendChild(flowPersonField(t('flowApprover'), process.approverKey, process.approverName, function (key, name) {
+            process.approverKey = key;
+            process.approverName = name;
+            renderFrame();
+        }));
+        box.appendChild(el('p', 'asset-tree-hint', t('flowApproverUses')));
+        var note = el('textarea', 'asset-tree-text');
+        note.rows = 2;
+        note.value = process.note || '';
+        note.placeholder = t('flowNote');
+        note.setAttribute('aria-label', t('flowNote'));
+        note.addEventListener('input', function () { process.note = note.value; });
+        var noteField = el('label', 'asset-tree-jira-field');
+        noteField.appendChild(el('span', null, t('flowNote')));
+        noteField.appendChild(note);
+        box.appendChild(noteField);
+        var colorRow = el('label', 'asset-tree-jira-field asset-tree-flow-color');
+        colorRow.appendChild(el('span', null, t('flowColor')));
+        var color = el('input');
+        color.type = 'color';
+        color.value = /^#[0-9A-Fa-f]{6}$/.test(process.color || '') ? process.color : '#6554C0';
+        color.addEventListener('input', function () { process.color = color.value; });
+        colorRow.appendChild(color);
+        box.appendChild(colorRow);
+        var flags = el('div', 'asset-tree-flow-flags');
+        flags.appendChild(flowCheck(t('flowEnabled'), process.enabled !== false, function (checked) { process.enabled = checked; }));
+        flags.appendChild(flowCheck(t('flowRequire'), !!process.requireApproval, function (checked) { process.requireApproval = checked; }));
+        flags.appendChild(flowCheck(t('flowNotify'), !!process.notifyApprover, function (checked) { process.notifyApprover = checked; }));
+        box.appendChild(flags);
+        var sla = el('input');
+        sla.type = 'number';
+        sla.min = '0';
+        sla.max = '365';
+        sla.className = 'asset-tree-text';
+        sla.value = String(parseInt(process.slaDays, 10) || 0);
+        sla.setAttribute('aria-label', t('flowSla'));
+        sla.addEventListener('input', function () {
+            var days = parseInt(sla.value, 10);
+            process.slaDays = isNaN(days) ? 0 : Math.max(0, Math.min(365, days));
+        });
+        var slaField = el('label', 'asset-tree-jira-field');
+        slaField.appendChild(el('span', null, t('flowSla')));
+        slaField.appendChild(sla);
+        box.appendChild(slaField);
+        if (process.approverName) {
+            var badge = el('p', 'asset-tree-flow-approver-badge', t('flowApprover') + ': ' + process.approverName);
+            if (process.requireApproval) badge.appendChild(document.createTextNode(' · ' + t('flowRequire')));
+            box.appendChild(badge);
+        }
+        return box;
+    }
+
+    function flowNodeExtras(node, process) {
+        var box = el('div', 'asset-tree-flow-step');
+        box.appendChild(flowPersonField(t('flowStepApprover'), node.approverKey, node.approverName, function (key, name) {
+            node.approverKey = key;
+            node.approverName = name;
+            renderFrame();
+        }));
+        if (!node.approverName && process && process.approverName) {
+            box.appendChild(el('p', 'asset-tree-hint', process.approverName));
+        }
+        var note = el('input');
+        note.type = 'text';
+        note.className = 'asset-tree-text';
+        note.value = node.note || '';
+        note.placeholder = t('flowStepNote');
+        note.setAttribute('aria-label', t('flowStepNote'));
+        note.addEventListener('input', function () { node.note = note.value; });
+        box.appendChild(note);
+        return box;
+    }
+
+    var MAP_SHAPES = {
+        rect: [[0, 0], [100, 0], [100, 100], [0, 100]],
+        l: [[0, 0], [62, 0], [62, 42], [100, 42], [100, 100], [0, 100]],
+        u: [[0, 0], [30, 0], [30, 62], [70, 62], [70, 0], [100, 0], [100, 100], [0, 100]],
+        t: [[0, 0], [100, 0], [100, 34], [68, 34], [68, 100], [32, 100], [32, 34], [0, 34]],
+        cross: [[36, 0], [64, 0], [64, 36], [100, 36], [100, 64], [64, 64], [64, 100], [36, 100], [36, 64], [0, 64], [0, 36], [36, 36]],
+        hex: [[50, 2], [96, 26], [96, 74], [50, 98], [4, 74], [4, 26]],
+        tower: [[28, 0], [72, 0], [72, 100], [28, 100]],
+        hangar: [[0, 22], [100, 22], [100, 78], [0, 78]]
+    };
+
+    function mapPresets() {
+        return [
+            { id: 'office', shape: 'rect', w: 168, h: 112, floors: 4, label: t('mapPresetOffice') },
+            { id: 'l', shape: 'l', w: 210, h: 168, floors: 3, label: t('mapPresetL') },
+            { id: 'u', shape: 'u', w: 220, h: 170, floors: 2, label: t('mapPresetU') },
+            { id: 't', shape: 't', w: 200, h: 168, floors: 3, label: t('mapPresetT') },
+            { id: 'cross', shape: 'cross', w: 180, h: 180, floors: 5, label: t('mapPresetCross') },
+            { id: 'circle', shape: 'circle', w: 150, h: 150, floors: 1, label: t('mapPresetCircle') },
+            { id: 'hex', shape: 'hex', w: 160, h: 160, floors: 2, label: t('mapPresetHex') },
+            { id: 'tower', shape: 'tower', w: 78, h: 210, floors: 12, label: t('mapPresetTower') },
+            { id: 'hangar', shape: 'hangar', w: 260, h: 96, floors: 1, label: t('mapPresetHangar') },
+            { id: 'poly', shape: 'poly', w: 180, h: 140, floors: 1, label: t('mapPresetPoly') }
+        ];
+    }
+
+    function mapView() {
+        if (!state.mapView) state.mapView = { x: 36, y: 28, z: 1 };
+        return state.mapView;
+    }
+
+    function mapDraft() {
+        if (!state.mapDraft) {
+            state.mapDraft = {
+                snap: 0,
+                showGrid: false,
+                background: '#F4F5F7',
+                showLabels: true,
+                showFloors: true,
+                showCount: true,
+                buildings: []
+            };
+        }
+        return state.mapDraft;
+    }
+
+    function loadSiteMap() {
+        if (state.mapLoading || (state.mapReady && state.mapProject === state.projectKey)) return;
+        state.mapLoading = true;
+        var projectKey = state.projectKey;
+        ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/site-map', null, function (status, payload) {
+            if (state.projectKey !== projectKey) return;
+            state.mapLoading = false;
+            state.mapReady = true;
+            state.mapProject = projectKey;
+            if (status === 200 && payload) state.mapDraft = payload;
+            else state.mapDraft = null;
+            if (state.board === 'map') renderFrame();
+        });
+    }
+
+    function saveSiteMap(done) {
+        var draft = mapDraft();
+        var body = {
+            snap: draft.snap || 0,
+            showGrid: !!draft.showGrid,
+            background: draft.background || '#F4F5F7',
+            showLabels: draft.showLabels !== false,
+            showFloors: draft.showFloors !== false,
+            showCount: draft.showCount !== false,
+            buildings: (draft.buildings || []).map(function (building) {
+                return {
+                    assetId: building.assetId,
+                    shape: building.shape || 'rect',
+                    x: building.x || 0,
+                    y: building.y || 0,
+                    w: building.w || 160,
+                    h: building.h || 110,
+                    rotation: building.rotation || 0,
+                    color: building.color || '',
+                    floors: building.floors || 1,
+                    opacity: building.opacity || 100,
+                    label: building.label || '',
+                    note: building.note || '',
+                    points: building.points || '',
+                    hidden: !!building.hidden
+                };
+            })
+        };
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/site-map', body, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                state.mapDraft = payload || body;
+                state.mapReady = true;
+                if (done) done();
+                else notify(t('mapSaved'));
+            } else {
+                notify((payload && payload.message) || t('errorTitle'));
+            }
+        });
+    }
+
+    function queueMapSave() {
+        clearTimeout(state.mapTimer);
+        state.mapTimer = setTimeout(function () { saveSiteMap(function () {}); }, 400);
+    }
+
+    function scopePlaces(root) {
+        var places = (state.assets || []).filter(isFolder);
+        if (!root) return places;
+        var allowed = {};
+        function walk(id) {
+            childrenOf(id).forEach(function (child) {
+                if (!isFolder(child) || allowed[child.id]) return;
+                allowed[child.id] = true;
+                walk(child.id);
+            });
+        }
+        allowed[root.id] = true;
+        walk(root.id);
+        return places.filter(function (place) { return allowed[place.id]; });
+    }
+
+    function scatterSpot(index) {
+        var angle = index * 2.399963229728653;
+        var radius = 86 + index * 36;
+        return {
+            x: Math.round((220 + Math.cos(angle) * radius) * 10) / 10,
+            y: Math.round((180 + Math.sin(angle) * radius * 0.78) * 10) / 10
+        };
+    }
+
+    function buildingRecord(assetId, create) {
+        var draft = mapDraft();
+        var found = null;
+        (draft.buildings || []).forEach(function (building) {
+            if (building.assetId === assetId) found = building;
+        });
+        if (found || !create) return found;
+        var index = draft.buildings.length;
+        var spot = scatterSpot(index);
+        found = {
+            assetId: assetId,
+            shape: 'rect',
+            x: spot.x,
+            y: spot.y,
+            w: 160,
+            h: 108,
+            rotation: 0,
+            color: '',
+            floors: 1,
+            opacity: 100,
+            label: '',
+            note: '',
+            points: '',
+            hidden: false
+        };
+        draft.buildings.push(found);
+        return found;
+    }
+
+    function placeEquipment(placeId) {
+        var count = 0;
+        function walk(id) {
+            childrenOf(id).forEach(function (child) {
+                if (isFolder(child)) walk(child.id);
+                else count++;
+            });
+        }
+        walk(placeId);
+        return count;
+    }
+
+    function descendantPlaces(placeId) {
+        var ids = [];
+        function walk(id) {
+            childrenOf(id).forEach(function (child) {
+                if (!isFolder(child)) return;
+                ids.push(child.id);
+                walk(child.id);
+            });
+        }
+        walk(placeId);
+        return ids;
+    }
+
+    function snapStep(value, step) {
+        if (!step) return Math.round(value * 10) / 10;
+        return Math.round(value / step) * step;
+    }
+
+    function renderSiteMap(root) {
+        var wrap = el('div', 'asset-tree-map');
+        if (!state.mapReady) {
+            wrap.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadSiteMap();
+            return wrap;
+        }
+        var draft = mapDraft();
+        var places = scopePlaces(root);
+        var bar = el('div', 'asset-tree-map-bar');
+        bar.appendChild(el('p', 'asset-tree-hint', t('mapDragHint')));
+        var tools = el('div', 'asset-tree-map-tools');
+        if (state.canPlaces) {
+            tools.appendChild(button(t('mapNew'), 'asset-tree-btn primary', function () {
+                openBuildingDialog(mapPresets()[0], null, root);
+            }));
+        }
+        tools.appendChild(button('+', 'asset-tree-btn slim', function () {
+            mapView().z = Math.min(2.4, Math.round((mapView().z + 0.15) * 100) / 100);
+            renderFrame();
+        }));
+        tools.lastChild.title = t('mapZoomIn');
+        tools.lastChild.setAttribute('aria-label', t('mapZoomIn'));
+        tools.appendChild(button('−', 'asset-tree-btn slim', function () {
+            mapView().z = Math.max(0.45, Math.round((mapView().z - 0.15) * 100) / 100);
+            renderFrame();
+        }));
+        tools.lastChild.title = t('mapZoomOut');
+        tools.lastChild.setAttribute('aria-label', t('mapZoomOut'));
+        tools.appendChild(button(t('mapFit'), 'asset-tree-btn slim', function () {
+            fitMap(places);
+            renderFrame();
+        }));
+        bar.appendChild(tools);
+        wrap.appendChild(bar);
+        if (state.mapDraw) wrap.appendChild(el('p', 'asset-tree-map-draw-hint', t('mapDrawHint')));
+        var stage = el('div', 'asset-tree-map-stage');
+        var canvas = svgEl('svg');
+        canvas.setAttribute('class', 'asset-tree-map-svg');
+        canvas.setAttribute('role', 'img');
+        var world = svgEl('g');
+        var view = mapView();
+        world.setAttribute('transform', 'translate(' + view.x + ' ' + view.y + ') scale(' + view.z + ')');
+        if (draft.showGrid) {
+            for (var line = 0; line < 40; line++) {
+                var horizontal = svgEl('line');
+                horizontal.setAttribute('x1', '0');
+                horizontal.setAttribute('x2', '2400');
+                horizontal.setAttribute('y1', String(line * 48));
+                horizontal.setAttribute('y2', String(line * 48));
+                horizontal.setAttribute('class', 'asset-tree-map-grid');
+                world.appendChild(horizontal);
+                var vertical = svgEl('line');
+                vertical.setAttribute('y1', '0');
+                vertical.setAttribute('y2', '1800');
+                vertical.setAttribute('x1', String(line * 48));
+                vertical.setAttribute('x2', String(line * 48));
+                vertical.setAttribute('class', 'asset-tree-map-grid');
+                world.appendChild(vertical);
+            }
+        }
+        var created = false;
+        places.forEach(function (place) {
+            var before = (mapDraft().buildings || []).length;
+            buildingRecord(place.id, true);
+            if ((mapDraft().buildings || []).length !== before) created = true;
+        });
+        if (created) queueMapSave();
+        var visible = places.map(function (place) {
+            return { place: place, building: buildingRecord(place.id, false) };
+        }).filter(function (item) { return item.building && !item.building.hidden; });
+        var picked = false;
+        visible.forEach(function (item) {
+            if (item.place.id === state.mapSelected) picked = true;
+        });
+        if (!picked && visible.length) state.mapSelected = visible[0].place.id;
+        visible.forEach(function (item) {
+            world.appendChild(buildingShape(item.place, item.building, draft));
+        });
+        if (state.mapDraw && state.mapDraw.points.length) {
+            var preview = svgEl('polyline');
+            preview.setAttribute('class', 'asset-tree-map-draft');
+            preview.setAttribute('points', state.mapDraw.points.map(function (point) {
+                return point.x + ',' + point.y;
+            }).join(' '));
+            world.appendChild(preview);
+        }
+        canvas.appendChild(world);
+        canvas.style.background = draft.background || '#F4F5F7';
+        bindMapPointer(canvas, world);
+        stage.appendChild(canvas);
+        wrap.appendChild(stage);
+        if (!visible.length && !state.mapDraw) wrap.appendChild(el('p', 'asset-tree-map-empty', t('mapEmpty')));
+        wrap.appendChild(mapInspector(root, visible, draft));
+        if (state.mapDraw) {
+            var drawActions = el('div', 'asset-tree-inline-actions');
+            drawActions.appendChild(button(t('mapFinishDraw'), 'asset-tree-btn primary', finishOutline));
+            drawActions.appendChild(button(t('mapCancelDraw'), 'asset-tree-btn', function () {
+                state.mapDraw = null;
+                renderFrame();
+            }));
+            wrap.appendChild(drawActions);
+        }
+        return wrap;
+    }
+
+    function buildingShape(place, building, draft) {
+        var group = svgEl('g');
+        group.setAttribute('class', 'asset-tree-map-building' + (state.mapSelected === place.id ? ' is-selected' : ''));
+        group.setAttribute('data-asset', String(place.id));
+        group.setAttribute('transform', buildingTransform(building));
+        var fill = building.color || place.color || '#0052CC';
+        var shape = building.shape || 'rect';
+        var node;
+        if (shape === 'circle') {
+            node = svgEl('ellipse');
+            node.setAttribute('cx', String(building.w / 2));
+            node.setAttribute('cy', String(building.h / 2));
+            node.setAttribute('rx', String(building.w / 2));
+            node.setAttribute('ry', String(building.h / 2));
+        } else {
+            node = svgEl('polygon');
+            node.setAttribute('points', shapePoints(building));
+        }
+        node.setAttribute('fill', fill);
+        node.setAttribute('fill-opacity', String((building.opacity || 100) / 100));
+        node.setAttribute('stroke', '#172B4D');
+        node.setAttribute('stroke-width', state.mapSelected === place.id ? '3' : '1.4');
+        group.appendChild(node);
+        if (draft.showLabels !== false) {
+            var label = svgEl('text');
+            label.setAttribute('x', String(building.w / 2));
+            label.setAttribute('y', String(building.h / 2));
+            label.setAttribute('text-anchor', 'middle');
+            label.setAttribute('class', 'asset-tree-map-label');
+            label.setAttribute('transform', 'rotate(' + (-(building.rotation || 0)) + ' ' + (building.w / 2) + ' ' + (building.h / 2) + ')');
+            label.textContent = building.label || place.name || '';
+            group.appendChild(label);
+            var meta = [];
+            if (draft.showFloors !== false) meta.push(t('mapFloorsShort', building.floors || 1));
+            if (draft.showCount !== false) meta.push(String(placeEquipment(place.id)));
+            if (meta.length) {
+                var sub = svgEl('text');
+                sub.setAttribute('x', String(building.w / 2));
+                sub.setAttribute('y', String(building.h / 2 + 16));
+                sub.setAttribute('text-anchor', 'middle');
+                sub.setAttribute('class', 'asset-tree-map-meta');
+                sub.setAttribute('transform', 'rotate(' + (-(building.rotation || 0)) + ' ' + (building.w / 2) + ' ' + (building.h / 2 + 16) + ')');
+                sub.textContent = meta.join(' · ');
+                group.appendChild(sub);
+            }
+        }
+        if (state.mapSelected === place.id && state.canPlaces) {
+            var rotate = svgEl('circle');
+            rotate.setAttribute('class', 'asset-tree-map-handle is-rotate');
+            rotate.setAttribute('cx', String(building.w / 2));
+            rotate.setAttribute('cy', '-16');
+            rotate.setAttribute('r', '7');
+            group.appendChild(rotate);
+            var resize = svgEl('rect');
+            resize.setAttribute('class', 'asset-tree-map-handle is-resize');
+            resize.setAttribute('x', String(building.w - 7));
+            resize.setAttribute('y', String(building.h - 7));
+            resize.setAttribute('width', '12');
+            resize.setAttribute('height', '12');
+            group.appendChild(resize);
+        }
+        group.addEventListener('pointerdown', function (event) {
+            if (state.mapDraw) return;
+            event.preventDefault();
+            event.stopPropagation();
+            state.mapSelected = place.id;
+            var handle = event.target && event.target.getAttribute ? (event.target.getAttribute('class') || '') : '';
+            if (handle.indexOf('is-rotate') >= 0) {
+                dragRotation(building, event);
+                return;
+            }
+            if (handle.indexOf('is-resize') >= 0) {
+                dragSize(building, event);
+                return;
+            }
+            dragBuilding(place, building, event);
+        });
+        group.addEventListener('dblclick', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            state.pane = 'list';
+            state.board = 'list';
+            selectAsset(place.id, true);
+        });
+        return group;
+    }
+
+    function buildingTransform(building) {
+        var cx = (building.x || 0) + (building.w || 0) / 2;
+        var cy = (building.y || 0) + (building.h || 0) / 2;
+        return 'translate(' + cx + ' ' + cy + ') rotate(' + (building.rotation || 0) + ') translate(' + (-(building.w || 0) / 2) + ' ' + (-(building.h || 0) / 2) + ')';
+    }
+
+    function shapePoints(building) {
+        var source = building.shape === 'poly' ? parseOutline(building.points) : MAP_SHAPES[building.shape];
+        if (!source || source.length < 3) source = MAP_SHAPES.rect;
+        return source.map(function (point) {
+            return (point[0] / 100 * building.w) + ',' + (point[1] / 100 * building.h);
+        }).join(' ');
+    }
+
+    function parseOutline(raw) {
+        var points = [];
+        String(raw || '').split(';').forEach(function (part) {
+            var pair = part.split(',');
+            if (pair.length !== 2) return;
+            var x = parseFloat(pair[0]);
+            var y = parseFloat(pair[1]);
+            if (isNaN(x) || isNaN(y)) return;
+            points.push([x, y]);
+        });
+        return points.length >= 3 ? points : null;
+    }
+
+    function worldPoint(event, canvas) {
+        var rect = canvas.getBoundingClientRect();
+        var view = mapView();
+        return {
+            x: (event.clientX - rect.left - view.x) / view.z,
+            y: (event.clientY - rect.top - view.y) / view.z
+        };
+    }
+
+    function bindMapPointer(canvas) {
+        canvas.addEventListener('pointerdown', function (event) {
+            if (event.target !== canvas && event.target.getAttribute('class') !== 'asset-tree-map-grid') {
+                if (!state.mapDraw) return;
+            }
+            if (state.mapDraw) {
+                state.mapDraw.points.push(worldPoint(event, canvas));
+                renderFrame();
+                return;
+            }
+            var startX = event.clientX;
+            var startY = event.clientY;
+            var originX = mapView().x;
+            var originY = mapView().y;
+            function move(ev) {
+                mapView().x = originX + ev.clientX - startX;
+                mapView().y = originY + ev.clientY - startY;
+                var world = canvas.querySelector('g');
+                if (world) world.setAttribute('transform', 'translate(' + mapView().x + ' ' + mapView().y + ') scale(' + mapView().z + ')');
+            }
+            function up() {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+            }
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+        });
+        canvas.addEventListener('dblclick', function (event) {
+            if (!state.mapDraw) return;
+            event.preventDefault();
+            finishOutline();
+        });
+        canvas.addEventListener('wheel', function (event) {
+            event.preventDefault();
+            var next = mapView().z * (event.deltaY > 0 ? 0.92 : 1.08);
+            mapView().z = Math.max(0.45, Math.min(2.4, next));
+            var world = canvas.querySelector('g');
+            if (world) world.setAttribute('transform', 'translate(' + mapView().x + ' ' + mapView().y + ') scale(' + mapView().z + ')');
+        }, { passive: false });
+    }
+
+    function dragBuilding(place, building, event) {
+        var canvas = event.currentTarget.ownerSVGElement;
+        var start = worldPoint(event, canvas);
+        var originX = building.x || 0;
+        var originY = building.y || 0;
+        var kids = descendantPlaces(place.id).map(function (id) {
+            var item = buildingRecord(id, true);
+            return { item: item, x: item.x || 0, y: item.y || 0 };
+        });
+        function move(ev) {
+            var point = worldPoint(ev, canvas);
+            var dx = point.x - start.x;
+            var dy = point.y - start.y;
+            building.x = Math.max(0, originX + dx);
+            building.y = Math.max(0, originY + dy);
+            kids.forEach(function (kid) {
+                kid.item.x = Math.max(0, kid.x + dx);
+                kid.item.y = Math.max(0, kid.y + dy);
+            });
+            paintMoved([building].concat(kids.map(function (kid) { return kid.item; })));
+        }
+        function up() {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            var step = mapDraft().snap || 0;
+            if (step) {
+                building.x = snapStep(building.x, step);
+                building.y = snapStep(building.y, step);
+                kids.forEach(function (kid) {
+                    kid.item.x = snapStep(kid.item.x, step);
+                    kid.item.y = snapStep(kid.item.y, step);
+                });
+            }
+            queueMapSave();
+            renderFrame();
+        }
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+    }
+
+    function paintMoved(buildings) {
+        var groups = document.querySelectorAll('.asset-tree-map-building');
+        buildings.forEach(function (building) {
+            for (var i = 0; i < groups.length; i++) {
+                if (groups[i].getAttribute('data-asset') === String(building.assetId)) {
+                    groups[i].setAttribute('transform', buildingTransform(building));
+                }
+            }
+        });
+    }
+
+    function paintSized(building) {
+        var groups = document.querySelectorAll('.asset-tree-map-building');
+        for (var i = 0; i < groups.length; i++) {
+            if (groups[i].getAttribute('data-asset') !== String(building.assetId)) continue;
+            groups[i].setAttribute('transform', buildingTransform(building));
+            var node = groups[i].querySelector('ellipse, polygon');
+            if (node && String(node.tagName).toLowerCase() === 'ellipse') {
+                node.setAttribute('cx', String(building.w / 2));
+                node.setAttribute('cy', String(building.h / 2));
+                node.setAttribute('rx', String(building.w / 2));
+                node.setAttribute('ry', String(building.h / 2));
+            } else if (node) {
+                node.setAttribute('points', shapePoints(building));
+            }
+            var texts = groups[i].querySelectorAll('text');
+            if (texts[0]) {
+                texts[0].setAttribute('x', String(building.w / 2));
+                texts[0].setAttribute('y', String(building.h / 2));
+                texts[0].setAttribute('transform', 'rotate(' + (-(building.rotation || 0)) + ' ' + (building.w / 2) + ' ' + (building.h / 2) + ')');
+            }
+            if (texts[1]) {
+                texts[1].setAttribute('x', String(building.w / 2));
+                texts[1].setAttribute('y', String(building.h / 2 + 16));
+                texts[1].setAttribute('transform', 'rotate(' + (-(building.rotation || 0)) + ' ' + (building.w / 2) + ' ' + (building.h / 2 + 16) + ')');
+            }
+            var rotate = groups[i].querySelector('.is-rotate');
+            if (rotate) rotate.setAttribute('cx', String(building.w / 2));
+            var resize = groups[i].querySelector('.is-resize');
+            if (resize) {
+                resize.setAttribute('x', String(building.w - 7));
+                resize.setAttribute('y', String(building.h - 7));
+            }
+            return;
+        }
+    }
+
+    function dragRotation(building, event) {
+        var canvas = event.currentTarget.ownerSVGElement;
+        function move(ev) {
+            var point = worldPoint(ev, canvas);
+            var cx = (building.x || 0) + (building.w || 0) / 2;
+            var cy = (building.y || 0) + (building.h || 0) / 2;
+            building.rotation = Math.round(Math.atan2(point.y - cy, point.x - cx) * 180 / Math.PI + 90);
+            if (building.rotation < 0) building.rotation += 360;
+            paintMoved([building]);
+        }
+        function up() {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            queueMapSave();
+            renderFrame();
+        }
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+    }
+
+    function dragSize(building, event) {
+        var canvas = event.currentTarget.ownerSVGElement;
+        var start = worldPoint(event, canvas);
+        var originW = building.w || 160;
+        var originH = building.h || 110;
+        var rotation = (building.rotation || 0) * Math.PI / 180;
+        function move(ev) {
+            var point = worldPoint(ev, canvas);
+            var dx = point.x - start.x;
+            var dy = point.y - start.y;
+            var localX = dx * Math.cos(-rotation) - dy * Math.sin(-rotation);
+            var localY = dx * Math.sin(-rotation) + dy * Math.cos(-rotation);
+            building.w = Math.max(48, originW + localX);
+            building.h = Math.max(48, originH + localY);
+            paintSized(building);
+        }
+        function up() {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            queueMapSave();
+            renderFrame();
+        }
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+        event.stopPropagation();
+    }
+
+    function finishOutline() {
+        if (!state.mapDraw) return;
+        var points = state.mapDraw.points.slice();
+        var target = state.mapDraw.assetId || 0;
+        state.mapDraw = null;
+        if (points.length >= 2) {
+            var last = points[points.length - 1];
+            var prev = points[points.length - 2];
+            if (Math.abs(last.x - prev.x) < 2 && Math.abs(last.y - prev.y) < 2) points.pop();
+        }
+        if (points.length < 3) {
+            renderFrame();
+            return;
+        }
+        var outline = outlineOf(points);
+        if (target) {
+            var building = buildingRecord(target, true);
+            building.shape = 'poly';
+            building.x = outline.x;
+            building.y = outline.y;
+            building.w = outline.w;
+            building.h = outline.h;
+            building.points = outline.points;
+            queueMapSave();
+            renderFrame();
+            return;
+        }
+        openBuildingDialog(mapPresets().filter(function (item) { return item.id === 'poly'; })[0], outline, null);
+    }
+
+    function outlineOf(points) {
+        var minX = points[0].x;
+        var minY = points[0].y;
+        var maxX = points[0].x;
+        var maxY = points[0].y;
+        points.forEach(function (point) {
+            minX = Math.min(minX, point.x);
+            minY = Math.min(minY, point.y);
+            maxX = Math.max(maxX, point.x);
+            maxY = Math.max(maxY, point.y);
+        });
+        var width = Math.max(48, maxX - minX);
+        var height = Math.max(48, maxY - minY);
+        var encoded = points.map(function (point) {
+            var x = Math.round(((point.x - minX) / width) * 1000) / 10;
+            var y = Math.round(((point.y - minY) / height) * 1000) / 10;
+            return x + ',' + y;
+        }).join(';');
+        return { x: minX, y: minY, w: width, h: height, points: encoded };
+    }
+
+    function fitMap(places) {
+        if (!places.length) {
+            state.mapView = { x: 36, y: 28, z: 1 };
+            return;
+        }
+        var minX = Infinity;
+        var minY = Infinity;
+        var maxX = -Infinity;
+        var maxY = -Infinity;
+        places.forEach(function (place) {
+            var building = buildingRecord(place.id, true);
+            if (!building || building.hidden) return;
+            minX = Math.min(minX, building.x);
+            minY = Math.min(minY, building.y);
+            maxX = Math.max(maxX, building.x + building.w);
+            maxY = Math.max(maxY, building.y + building.h);
+        });
+        if (!isFinite(minX)) {
+            state.mapView = { x: 36, y: 28, z: 1 };
+            return;
+        }
+        var stage = document.querySelector('.asset-tree-map-stage');
+        var width = stage ? stage.clientWidth : 860;
+        var height = stage ? stage.clientHeight : 520;
+        var spanX = Math.max(80, maxX - minX);
+        var spanY = Math.max(80, maxY - minY);
+        var zoom = Math.max(0.45, Math.min(1.6, Math.min((width - 80) / spanX, (height - 80) / spanY)));
+        state.mapView = {
+            z: zoom,
+            x: (width - spanX * zoom) / 2 - minX * zoom,
+            y: (height - spanY * zoom) / 2 - minY * zoom
+        };
+    }
+
+    function mapInspector(root, visible, draft) {
+        var aside = el('aside', 'asset-tree-map-inspector');
+        aside.appendChild(el('h3', null, t('mapInspector')));
+        var selected = null;
+        visible.forEach(function (item) {
+            if (item.place.id === state.mapSelected) selected = item;
+        });
+        if (!selected && visible.length) selected = visible[0];
+        if (selected) state.mapSelected = selected.place.id;
+        if (selected && state.canPlaces) aside.appendChild(buildingInspector(selected.place, selected.building));
+        else if (!selected) aside.appendChild(el('p', 'asset-tree-hint', t('mapEmpty')));
+        aside.appendChild(el('h3', null, t('calSettings')));
+        aside.appendChild(mapCanvasSettings(draft));
+        return aside;
+    }
+
+    function buildingInspector(place, building) {
+        var box = el('div', 'asset-tree-map-form');
+        box.appendChild(el('strong', null, place.name || ''));
+        var shape = el('select', 'asset-tree-text');
+        shape.setAttribute('aria-label', t('mapPresetOffice'));
+        mapPresets().forEach(function (preset) {
+            var option = el('option', null, preset.label);
+            option.value = preset.shape;
+            if (preset.shape === (building.shape || 'rect')) option.selected = true;
+            shape.appendChild(option);
+        });
+        shape.addEventListener('change', function () {
+            if (shape.value === 'poly' && !parseOutline(building.points)) {
+                state.mapDraw = { points: [], assetId: place.id };
+                renderFrame();
+                return;
+            }
+            building.shape = shape.value;
+            var preset = mapPresets().filter(function (item) { return item.shape === shape.value; })[0];
+            if (preset && shape.value !== 'poly') {
+                building.w = preset.w;
+                building.h = preset.h;
+            }
+            queueMapSave();
+            renderFrame();
+        });
+        box.appendChild(labeledControl(t('mapShape'), shape));
+        box.appendChild(numberControl(t('mapFloors'), building.floors || 1, 1, 40, function (value) {
+            building.floors = value;
+            queueMapSave();
+        }));
+        box.appendChild(numberControl(t('mapRotate'), building.rotation || 0, 0, 359, function (value) {
+            building.rotation = value;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(numberControl(t('mapWidth'), Math.round(building.w || 160), 48, 800, function (value) {
+            building.w = value;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(numberControl(t('mapHeight'), Math.round(building.h || 110), 48, 800, function (value) {
+            building.h = value;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(numberControl(t('mapOpacity'), building.opacity || 100, 30, 100, function (value) {
+            building.opacity = value;
+            queueMapSave();
+            renderFrame();
+        }));
+        var color = el('input');
+        color.type = 'color';
+        color.value = /^#[0-9A-Fa-f]{6}$/.test(building.color || '') ? building.color : (place.color || '#0052CC');
+        color.addEventListener('input', function () {
+            building.color = color.value;
+            queueMapSave();
+            var groups = document.querySelectorAll('.asset-tree-map-building');
+            for (var i = 0; i < groups.length; i++) {
+                if (groups[i].getAttribute('data-asset') !== String(place.id)) continue;
+                var node = groups[i].querySelector('ellipse, polygon');
+                if (node) node.setAttribute('fill', color.value);
+            }
+        });
+        box.appendChild(labeledControl(t('mapColor'), color));
+        var note = el('textarea', 'asset-tree-text');
+        note.rows = 2;
+        note.value = building.note || '';
+        note.setAttribute('aria-label', t('mapNote'));
+        note.addEventListener('input', function () {
+            building.note = note.value;
+            queueMapSave();
+        });
+        box.appendChild(labeledControl(t('mapNote'), note));
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('mapOpenCard'), 'asset-tree-btn', function () {
+            state.board = 'list';
+            state.pane = 'card';
+            selectAsset(place.id, true);
+        }));
+        if (state.canPlaces) {
+            actions.appendChild(button(t('mapDelete'), 'asset-tree-btn', function () {
+                if (!window.confirm(t('mapDeleteConfirm'))) return;
+                ajax('DELETE', '/assets/' + place.id + '?cascade=true', null, function (status, payload) {
+                    if (status >= 200 && status < 300) {
+                        mapDraft().buildings = (mapDraft().buildings || []).filter(function (item) {
+                            return item.assetId !== place.id;
+                        });
+                        state.mapSelected = 0;
+                        saveSiteMap(function () {
+                            reloadTree(function () { renderFrame(); });
+                        });
+                    } else {
+                        notify((payload && payload.message) || t('errorTitle'));
+                    }
+                });
+            }));
+        }
+        box.appendChild(actions);
+        return box;
+    }
+
+    function mapCanvasSettings(draft) {
+        var box = el('div', 'asset-tree-map-form');
+        var snap = el('select', 'asset-tree-text');
+        snap.setAttribute('aria-label', t('mapSnap'));
+        [[0, t('mapSnapOff')], [8, '8'], [16, '16'], [32, '32']].forEach(function (item) {
+            var option = el('option', null, item[1]);
+            option.value = String(item[0]);
+            if ((draft.snap || 0) === item[0]) option.selected = true;
+            snap.appendChild(option);
+        });
+        snap.addEventListener('change', function () {
+            draft.snap = parseInt(snap.value, 10) || 0;
+            queueMapSave();
+        });
+        box.appendChild(labeledControl(t('mapSnap'), snap));
+        box.appendChild(flowCheck(t('mapGrid'), !!draft.showGrid, function (checked) {
+            draft.showGrid = checked;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(flowCheck(t('mapLabels'), draft.showLabels !== false, function (checked) {
+            draft.showLabels = checked;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(flowCheck(t('mapShowFloors'), draft.showFloors !== false, function (checked) {
+            draft.showFloors = checked;
+            queueMapSave();
+            renderFrame();
+        }));
+        box.appendChild(flowCheck(t('mapShowCount'), draft.showCount !== false, function (checked) {
+            draft.showCount = checked;
+            queueMapSave();
+            renderFrame();
+        }));
+        var background = el('input');
+        background.type = 'color';
+        background.value = /^#[0-9A-Fa-f]{6}$/.test(draft.background || '') ? draft.background : '#F4F5F7';
+        background.addEventListener('input', function () {
+            draft.background = background.value;
+            queueMapSave();
+            var canvas = document.querySelector('.asset-tree-map-svg');
+            if (canvas) canvas.style.background = background.value;
+        });
+        box.appendChild(labeledControl(t('mapBackground'), background));
+        return box;
+    }
+
+    function labeledControl(label, control) {
+        var row = el('label', 'asset-tree-jira-field');
+        row.appendChild(el('span', null, label));
+        row.appendChild(control);
+        return row;
+    }
+
+    function numberControl(label, value, min, max, onChange) {
+        var input = el('input');
+        input.type = 'number';
+        input.className = 'asset-tree-text';
+        input.min = String(min);
+        input.max = String(max);
+        input.value = String(value);
+        input.setAttribute('aria-label', label);
+        input.addEventListener('change', function () {
+            var next = parseInt(input.value, 10);
+            if (isNaN(next)) next = min;
+            next = Math.max(min, Math.min(max, next));
+            input.value = String(next);
+            onChange(next);
+        });
+        return labeledControl(label, input);
+    }
+
+    function openBuildingDialog(preset, outline, root) {
+        if (needsAssetKey()) {
+            notify(state.canArrange ? t('assetKeyHint') : t('assetKeyDenied'));
+            return;
+        }
+        var chosen = preset || mapPresets()[0];
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, t('mapNew')));
+            var gallery = el('div', 'asset-tree-map-gallery');
+            var preview = el('div', 'asset-tree-map-gallery-preview');
+            function paintPreview() {
+                preview.innerHTML = '';
+                preview.appendChild(presetSvg(chosen, outline));
+                preview.appendChild(el('span', null, chosen.label));
+            }
+            mapPresets().forEach(function (item) {
+                var pick = button('', 'asset-tree-map-preset' + (item.id === chosen.id ? ' is-selected' : ''), function () {
+                    if (item.id === 'poly' && !outline) {
+                        closeModal();
+                        state.mapDraw = { points: [], assetId: 0 };
+                        renderFrame();
+                        return;
+                    }
+                    chosen = item;
+                    paintPreview();
+                    var nodes = gallery.querySelectorAll('.asset-tree-map-preset');
+                    for (var i = 0; i < nodes.length; i++) nodes[i].classList.toggle('is-selected', nodes[i] === pick);
+                });
+                pick.appendChild(presetSvg(item, item.id === 'poly' ? outline : null));
+                pick.appendChild(el('span', null, item.label));
+                pick.title = item.label;
+                gallery.appendChild(pick);
+            });
+            dialog.appendChild(gallery);
+            paintPreview();
+            dialog.appendChild(preview);
+            var name = input('map-building-name', chosen.label, false);
+            dialog.appendChild(field(t('mapName'), name, true));
+            var types = (state.types || []).filter(function (type) { return type.location; });
+            var typeBox = el('select', 'asset-tree-text');
+            typeBox.id = 'map-building-type';
+            types.forEach(function (type) {
+                var option = el('option', null, type.label);
+                option.value = type.typeKey;
+                typeBox.appendChild(option);
+            });
+            var fresh = el('option', null, t('mapNewType'));
+            fresh.value = '__new__';
+            if (!types.length) fresh.selected = true;
+            typeBox.appendChild(fresh);
+            dialog.appendChild(field(t('mapType'), typeBox, true));
+            var typeName = input('map-type-name', t('mapPresetOffice'), false);
+            var typeNameField = field(t('mapNewType'), typeName, true);
+            typeNameField.hidden = types.length > 0;
+            typeBox.addEventListener('change', function () { typeNameField.hidden = typeBox.value !== '__new__'; });
+            dialog.appendChild(typeNameField);
+            var floors = input('map-floors', String(chosen.floors || 1), false);
+            floors.type = 'number';
+            dialog.appendChild(field(t('mapFloors'), floors, true));
+            var rotation = input('map-rotation', '0', false);
+            rotation.type = 'number';
+            dialog.appendChild(field(t('mapRotate'), rotation, true));
+            var error = el('div', 'asset-tree-form-error');
+            error.hidden = true;
+            dialog.appendChild(error);
+            var actions = el('div', 'asset-tree-dialog-actions');
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
+            actions.appendChild(button(t('create'), 'asset-tree-btn primary', function () {
+                var label = name.value.replace(/^\s+|\s+$/g, '');
+                if (!label) {
+                    error.hidden = false;
+                    error.textContent = t('mapNeedName');
+                    return;
+                }
+                var parentId = root && isFolder(root) ? root.id : null;
+                function placeAsset(typeKey) {
+                    ajax('POST', '/assets', {
+                        name: label,
+                        projectKey: state.projectKey,
+                        typeKey: typeKey,
+                        status: 'in_stock',
+                        description: '',
+                        custodianKey: '',
+                        parentId: parentId,
+                        attributes: []
+                    }, function (status, payload) {
+                        if (status < 200 || status >= 300) {
+                            error.hidden = false;
+                            error.textContent = (payload && payload.message) || t('errorTitle');
+                            return;
+                        }
+                        closeModal();
+                        reloadTree(function () {
+                            var spot = viewCenter(chosen);
+                            var building = {
+                                assetId: payload.id,
+                                shape: outline ? 'poly' : chosen.shape,
+                                x: outline ? outline.x : spot.x,
+                                y: outline ? outline.y : spot.y,
+                                w: outline ? outline.w : chosen.w,
+                                h: outline ? outline.h : chosen.h,
+                                rotation: parseInt(rotation.value, 10) || 0,
+                                color: '',
+                                floors: Math.max(1, Math.min(40, parseInt(floors.value, 10) || chosen.floors || 1)),
+                                opacity: 100,
+                                label: '',
+                                note: '',
+                                points: outline ? outline.points : '',
+                                hidden: false
+                            };
+                            mapDraft().buildings.push(building);
+                            state.mapSelected = payload.id;
+                            state.board = 'map';
+                            saveSiteMap(function () { renderFrame(); });
+                        });
+                    });
+                }
+                if (typeBox.value === '__new__') {
+                    var typeLabel = typeName.value.replace(/^\s+|\s+$/g, '');
+                    if (!typeLabel) {
+                        error.hidden = false;
+                        error.textContent = t('typeNameRequired');
+                        return;
+                    }
+                    ajax('POST', '/types', {
+                        label: typeLabel,
+                        color: '#0052CC',
+                        icon: 'building',
+                        projectKey: state.projectKey,
+                        location: true,
+                        showInTree: true,
+                        service: false,
+                        placeCaption: '',
+                        parentTypeKey: ''
+                    }, function (status, payload) {
+                        if (status < 200 || status >= 300 || !payload || !payload.typeKey) {
+                            error.hidden = false;
+                            error.textContent = (payload && payload.message) || t('errorTitle');
+                            return;
+                        }
+                        state.types.push(payload);
+                        placeAsset(payload.typeKey);
+                    });
+                    return;
+                }
+                placeAsset(typeBox.value);
+            }));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function viewCenter(preset) {
+        var stage = document.querySelector('.asset-tree-map-stage');
+        var width = stage ? stage.clientWidth : 860;
+        var height = stage ? stage.clientHeight : 520;
+        var view = mapView();
+        return {
+            x: Math.max(0, (width / 2 - view.x) / view.z - (preset.w || 160) / 2),
+            y: Math.max(0, (height / 2 - view.y) / view.z - (preset.h || 110) / 2)
+        };
+    }
+
+    function presetSvg(preset, outline) {
+        var svg = svgEl('svg');
+        svg.setAttribute('viewBox', '0 0 100 100');
+        svg.setAttribute('class', 'asset-tree-map-mini');
+        var shape = preset.shape;
+        var node;
+        if (shape === 'circle') {
+            node = svgEl('ellipse');
+            node.setAttribute('cx', '50');
+            node.setAttribute('cy', '50');
+            node.setAttribute('rx', '42');
+            node.setAttribute('ry', '42');
+        } else if (shape === 'poly' && outline && outline.points) {
+            node = svgEl('polygon');
+            node.setAttribute('points', outline.points.split(';').map(function (part) {
+                return part.replace(',', ' ');
+            }).join(' '));
+        } else {
+            var source = MAP_SHAPES[shape] || MAP_SHAPES.rect;
+            node = svgEl('polygon');
+            node.setAttribute('points', source.map(function (point) { return point[0] + ',' + point[1]; }).join(' '));
+        }
+        node.setAttribute('fill', '#0052CC');
+        svg.appendChild(node);
+        return svg;
+    }
+
+
     function boot() {
         state.loading = true;
         state.error = null;
@@ -11716,6 +13287,10 @@
             }
         }
         if (event.key === 'Escape') {
+            if (state.mapDraw) {
+                state.mapDraw = null;
+                renderFrame();
+            }
             closeColorMenu();
             closeModal();
         }

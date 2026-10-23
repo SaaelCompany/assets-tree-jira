@@ -42,6 +42,7 @@ import com.assetstree.jira.ao.AssetCounterEntity;
 import com.assetstree.jira.ao.AssetEntity;
 import com.assetstree.jira.ao.AssetFieldEntity;
 import com.assetstree.jira.ao.FlowGraphEntity;
+import com.assetstree.jira.ao.SiteMapEntity;
 import com.assetstree.jira.ao.FlowRuleEntity;
 import com.assetstree.jira.ao.AssetFileEntity;
 import com.assetstree.jira.ao.AssetIssueLinkEntity;
@@ -68,6 +69,7 @@ import com.assetstree.jira.dto.BulkResultDto;
 import com.assetstree.jira.dto.CommentDto;
 import com.assetstree.jira.dto.FieldDto;
 import com.assetstree.jira.dto.FlowBookDto;
+import com.assetstree.jira.dto.SiteMapDto;
 import com.assetstree.jira.dto.FlowGraphDto;
 import com.assetstree.jira.dto.FlowNodeDto;
 import com.assetstree.jira.dto.FlowProcessDto;
@@ -110,6 +112,7 @@ import com.assetstree.jira.model.FieldChoices;
 import com.assetstree.jira.model.FieldDates;
 import com.assetstree.jira.model.FieldDraft;
 import com.assetstree.jira.model.FlowBook;
+import com.assetstree.jira.model.SiteMap;
 import com.assetstree.jira.model.FlowGraph;
 import com.assetstree.jira.model.PickerLayout;
 import com.assetstree.jira.model.PlaceArrangeDraft;
@@ -2066,6 +2069,7 @@ public class AssetServiceImpl implements AssetService {
                     throw new AssetException(400, "asset-tree.error.flow.issue");
                 }
             }
+            rememberApprover(process);
         }
         return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
             @Override
@@ -2106,6 +2110,42 @@ public class AssetServiceImpl implements AssetService {
                 }
                 nameFlowBook(book, names, issueStatuses);
                 return book;
+            }
+        });
+    }
+
+    @Override
+    public SiteMapDto siteMap(ApplicationUser user, String projectKey) {
+        final Project project = requireVisibleProject(user, projectKey);
+        return ao().executeInTransaction(new TransactionCallback<SiteMapDto>() {
+            @Override
+            public SiteMapDto doInTransaction() {
+                SiteMapEntity stored = findSiteMap(project.getKey());
+                SiteMap.Canvas canvas = stored == null || stored.getBody() == null
+                        ? SiteMap.normalize(null) : SiteMap.read(stored.getBody());
+                return SiteMap.toDto(keepPlaces(project.getKey(), canvas));
+            }
+        });
+    }
+
+    @Override
+    public SiteMapDto saveSiteMap(ApplicationUser user, String projectKey, final SiteMapDto draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.PLACES);
+        return ao().executeInTransaction(new TransactionCallback<SiteMapDto>() {
+            @Override
+            public SiteMapDto doInTransaction() {
+                SiteMap.Canvas canvas = keepPlaces(project.getKey(), SiteMap.normalize(SiteMap.fromDto(draft)));
+                String body = SiteMap.write(canvas);
+                SiteMapEntity stored = findSiteMap(project.getKey());
+                if (stored == null) {
+                    ao().create(SiteMapEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("BODY", body));
+                } else {
+                    stored.setBody(body);
+                    stored.save();
+                }
+                return SiteMap.toDto(SiteMap.read(body));
             }
         });
     }
@@ -2510,6 +2550,53 @@ public class AssetServiceImpl implements AssetService {
     private FlowGraphEntity findFlowGraph(String projectKey) {
         FlowGraphEntity[] found = ao().find(FlowGraphEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
         return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private SiteMapEntity findSiteMap(String projectKey) {
+        SiteMapEntity[] found = ao().find(SiteMapEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        return found == null || found.length == 0 ? null : found[0];
+    }
+
+    private SiteMap.Canvas keepPlaces(String projectKey, SiteMap.Canvas canvas) {
+        SiteMap.Canvas copy = new SiteMap.Canvas();
+        if (canvas == null) {
+            return SiteMap.normalize(copy);
+        }
+        copy.setSnap(canvas.getSnap());
+        copy.setShowGrid(canvas.isShowGrid());
+        copy.setBackground(canvas.getBackground());
+        copy.setShowLabels(canvas.isShowLabels());
+        copy.setShowFloors(canvas.isShowFloors());
+        copy.setShowCount(canvas.isShowCount());
+        for (SiteMap.Building building : canvas.getBuildings()) {
+            AssetEntity asset = ao().get(AssetEntity.class, building.getAssetId());
+            if (asset == null || !ProjectKeys.same(asset.getProjectKey(), projectKey) || !isLocation(asset)) {
+                continue;
+            }
+            copy.getBuildings().add(building);
+        }
+        return SiteMap.normalize(copy);
+    }
+
+    private void rememberApprover(FlowProcessDto process) {
+        process.setApproverName(liveApproverName(process.getApproverKey(), process.getApproverName()));
+        if (process.getNodes() == null) {
+            return;
+        }
+        for (FlowNodeDto node : process.getNodes()) {
+            node.setApproverName(liveApproverName(node.getApproverKey(), node.getApproverName()));
+        }
+    }
+
+    private String liveApproverName(String key, String fallback) {
+        if (key == null || key.trim().isEmpty()) {
+            return "";
+        }
+        UserProfileDto profile = profile(key.trim());
+        if (profile != null && profile.getDisplayName() != null && !profile.getDisplayName().trim().isEmpty()) {
+            return profile.getDisplayName();
+        }
+        return fallback == null ? "" : fallback;
     }
 
     private void nameFlowBook(FlowBookDto book, Map<String, String> names, Map<String, String> issueStatuses) {
@@ -4718,13 +4805,13 @@ public class AssetServiceImpl implements AssetService {
         dto.setAttributes(attributeDtos(type, attributes));
         List<ServicePlanEntity> plans = plansOf(entity.getID());
         dto.setServiceDue(dueNames(plans, LocalDate.now()));
+        dto.setPlans(planDtos(plans, LocalDate.now()));
         dto.setOfferedTypes(type != null && type.isLocation() ? offeredLines(entity.getOfferedTypes()) : new ArrayList<String>());
         if (withIssues) {
             dto.setIssues(issuesFor(entity.getID()));
             dto.setComments(commentDtos(entity.getID()));
             dto.setFiles(fileDtos(entity.getID()));
             dto.setActivities(activityDtos(entity.getID()));
-            dto.setPlans(planDtos(plans, LocalDate.now()));
         }
         return dto;
     }

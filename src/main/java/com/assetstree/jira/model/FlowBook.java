@@ -57,6 +57,9 @@ public final class FlowBook {
 
     public static String equipmentStatus(List<FlowProcessDto> processes, String issueTypeId, String issueStatusId, boolean onTransition) {
         for (FlowProcessDto process : normalize(processes)) {
+            if (!process.isEnabled()) {
+                continue;
+            }
             String found = FlowGraph.equipmentStatus(graphOf(process), issueTypeId, issueStatusId, onTransition);
             if (found != null && !found.trim().isEmpty()) {
                 return found;
@@ -72,6 +75,9 @@ public final class FlowBook {
     public static String removedStatus(List<FlowProcessDto> processes, String issueTypeId) {
         String wanted = issueTypeId == null ? "" : issueTypeId.trim();
         for (FlowProcessDto process : normalize(processes)) {
+            if (!process.isEnabled()) {
+                continue;
+            }
             String status = process.getRemovedStatus();
             if (status == null || status.isEmpty()) {
                 continue;
@@ -98,6 +104,9 @@ public final class FlowBook {
     public static List<FlowRuleDto> pairs(List<FlowProcessDto> processes) {
         Map<String, String> statusByType = new LinkedHashMap<String, String>();
         for (FlowProcessDto process : normalize(processes)) {
+            if (!process.isEnabled()) {
+                continue;
+            }
             for (FlowRuleDto pair : FlowGraph.pairs(graphOf(process))) {
                 if (pair.getIssueTypeId() == null || statusByType.containsKey(pair.getIssueTypeId())) {
                     continue;
@@ -168,6 +177,18 @@ public final class FlowBook {
             out.append(",\"removedStatus\":");
             FlowGraph.quote(out, process.getRemovedStatus());
         }
+        out.append(",\"enabled\":").append(process.isEnabled() ? "true" : "false");
+        out.append(",\"requireApproval\":").append(process.isRequireApproval() ? "true" : "false");
+        out.append(",\"notifyApprover\":").append(process.isNotifyApprover() ? "true" : "false");
+        out.append(",\"slaDays\":").append(boundDays(process.getSlaDays()));
+        out.append(",\"approverKey\":");
+        FlowGraph.quote(out, process.getApproverKey() == null ? "" : process.getApproverKey());
+        out.append(",\"approverName\":");
+        FlowGraph.quote(out, process.getApproverName() == null ? "" : process.getApproverName());
+        out.append(",\"note\":");
+        FlowGraph.quote(out, process.getNote() == null ? "" : process.getNote());
+        out.append(",\"color\":");
+        FlowGraph.quote(out, process.getColor() == null ? "" : process.getColor());
         out.append(",\"nodes\":[");
         List<FlowNodeDto> nodes = process.getNodes();
         for (int i = 0; i < nodes.size(); i++) {
@@ -197,6 +218,14 @@ public final class FlowBook {
         process.setId(text(map.get("id")));
         process.setName(text(map.get("name")));
         process.setRemovedStatus(text(map.get("removedStatus")));
+        process.setEnabled(flag(map.get("enabled"), true));
+        process.setRequireApproval(flag(map.get("requireApproval"), false));
+        process.setNotifyApprover(flag(map.get("notifyApprover"), false));
+        process.setSlaDays(whole(map.get("slaDays")));
+        process.setApproverKey(text(map.get("approverKey")));
+        process.setApproverName(text(map.get("approverName")));
+        process.setNote(text(map.get("note")));
+        process.setColor(text(map.get("color")));
         Object nodes = map.get("nodes");
         if (nodes instanceof List) {
             for (Object item : (List<?>) nodes) {
@@ -230,6 +259,9 @@ public final class FlowBook {
         node.setIssueTypeId(text(map.get("issueTypeId")));
         node.setIssueStatusId(text(map.get("issueStatusId")));
         node.setStatusKey(text(map.get("statusKey")));
+        node.setApproverKey(text(map.get("approverKey")));
+        node.setApproverName(text(map.get("approverName")));
+        node.setNote(text(map.get("note")));
         return node;
     }
 
@@ -246,6 +278,14 @@ public final class FlowBook {
         clean.setId(id);
         clean.setName(clip(process.getName()));
         clean.setRemovedStatus(statusKey(process.getRemovedStatus()));
+        clean.setEnabled(process.isEnabled());
+        clean.setRequireApproval(process.isRequireApproval());
+        clean.setNotifyApprover(process.isNotifyApprover());
+        clean.setSlaDays(boundDays(process.getSlaDays()));
+        clean.setApproverKey(personKey(process.getApproverKey()));
+        clean.setApproverName(clip(process.getApproverName(), 120));
+        clean.setNote(clip(process.getNote(), 240));
+        clean.setColor(colorOf(process.getColor()));
         clean.setNodes(graph.getNodes());
         clean.setLinks(graph.getLinks());
         return clean;
@@ -259,14 +299,64 @@ public final class FlowBook {
     }
 
     private static String clip(String value) {
+        return clip(value, NAME);
+    }
+
+    private static String clip(String value, int max) {
         if (value == null) {
             return "";
         }
         String trimmed = value.trim();
-        if (trimmed.length() > NAME) {
-            return trimmed.substring(0, NAME);
+        if (trimmed.length() > max) {
+            return trimmed.substring(0, max);
         }
         return trimmed;
+    }
+
+    private static int boundDays(int days) {
+        if (days < 0) {
+            return 0;
+        }
+        return Math.min(days, 365);
+    }
+
+    private static boolean flag(Object value, boolean fallback) {
+        return value instanceof Boolean ? ((Boolean) value).booleanValue() : fallback;
+    }
+
+    private static int whole(Object value) {
+        if (!(value instanceof Number)) {
+            return 0;
+        }
+        return boundDays((int) Math.round(((Number) value).doubleValue()));
+    }
+
+    private static String personKey(String value) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() > 255) {
+            trimmed = trimmed.substring(0, 255);
+        }
+        for (int i = 0; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (c < 0x20 || c == '"' || c == '\\') {
+                return "";
+            }
+        }
+        return trimmed;
+    }
+
+    private static String colorOf(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String text = raw.trim();
+        if (!text.matches("#[0-9A-Fa-f]{6}")) {
+            return "";
+        }
+        return text.toUpperCase(Locale.ROOT);
     }
 
     private static String statusKey(String value) {

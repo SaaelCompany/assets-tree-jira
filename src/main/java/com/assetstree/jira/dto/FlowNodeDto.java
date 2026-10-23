@@ -14,6 +14,9 @@ public class FlowNodeDto {
     private String issueStatusId;
     private String issueStatusName;
     private String statusKey;
+    private String approverKey = "";
+    private String approverName = "";
+    private String note = "";
 
     public String getId() {
         return id;
@@ -85,5 +88,29 @@ public class FlowNodeDto {
 
     public void setStatusKey(String statusKey) {
         this.statusKey = statusKey;
+    }
+
+    public String getApproverKey() {
+        return approverKey;
+    }
+
+    public void setApproverKey(String approverKey) {
+        this.approverKey = approverKey;
+    }
+
+    public String getApproverName() {
+        return approverName;
+    }
+
+    public void setApproverName(String approverName) {
+        this.approverName = approverName;
+    }
+
+    public String getNote() {
+        return note;
+    }
+
+    public void setNote(String note) {
+        this.note = note;
     }
 }
