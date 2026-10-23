@@ -46,4 +46,15 @@ public interface ServicePlanEntity extends Entity {
     String getAppliedFor();
 
     void setAppliedFor(String appliedFor);
+
+    /** to, kts, or verify. Empty on rows created before kinds existed. */
+    @StringLength(16)
+    String getKind();
+
+    void setKind(String kind);
+
+    @StringLength(255)
+    String getAssigneeKey();
+
+    void setAssigneeKey(String assigneeKey);
 }

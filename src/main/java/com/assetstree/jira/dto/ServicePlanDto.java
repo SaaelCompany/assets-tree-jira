@@ -14,6 +14,9 @@ public class ServicePlanDto {
     private boolean notify;
     private String nextDue;
     private boolean due;
+    private String kind;
+    private String assigneeKey;
+    private String assigneeName;
 
     public int getId() {
         return id;
@@ -85,5 +88,29 @@ public class ServicePlanDto {
 
     public void setDue(boolean due) {
         this.due = due;
+    }
+
+    public String getKind() {
+        return kind;
+    }
+
+    public void setKind(String kind) {
+        this.kind = kind;
+    }
+
+    public String getAssigneeKey() {
+        return assigneeKey;
+    }
+
+    public void setAssigneeKey(String assigneeKey) {
+        this.assigneeKey = assigneeKey;
+    }
+
+    public String getAssigneeName() {
+        return assigneeName;
+    }
+
+    public void setAssigneeName(String assigneeName) {
+        this.assigneeName = assigneeName;
     }
 }

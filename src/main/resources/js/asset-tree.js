@@ -425,7 +425,32 @@
         cardDraft: null,
         cardDrag: '',
         cardSuppressClick: false,
-        cardSelected: ''
+        cardSelected: '',
+        scheduleYear: 0,
+        scheduleMonth: 0,
+        scheduleRows: null,
+        scheduleOpen: false,
+        scheduleLoading: false,
+        scheduleToken: 0,
+        scheduleError: '',
+        floors: null,
+        floorId: 0,
+        mapTool: 'select',
+        mapAssetId: 0,
+        mapDraft: null,
+        mapLoading: false,
+        mapToken: 0,
+        mapSelection: null,
+        reportCatalog: null,
+        reportKey: 'status',
+        reportView: null,
+        reportOpen: false,
+        galleryToken: 0,
+        galleryLoading: false,
+        life: {},
+        lifeLoading: {},
+        lifeFailed: {},
+        lifeToken: {}
     };
     var idIndex = null;
     var childIndex = null;
@@ -4303,6 +4328,15 @@
             unit.appendChild(option);
         });
         unit.value = plan && plan.everyUnit === 'day' ? 'day' : 'month';
+        var kind = document.createElement('select');
+        kind.setAttribute('aria-label', t('schedulesKind'));
+        [['to', 'kindTo'], ['kts', 'kindKts'], ['verify', 'kindVerify']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            kind.appendChild(option);
+        });
+        kind.value = plan && (plan.kind === 'kts' || plan.kind === 'verify') ? plan.kind : 'to';
         var everyWrap = el('div', 'asset-tree-plan-every');
         everyWrap.appendChild(every);
         everyWrap.appendChild(unit);
@@ -4328,6 +4362,7 @@
         function payload(done) {
             var body = {
                 name: name.value.trim(),
+                kind: kind.value,
                 lastDone: last.value,
                 everyCount: parseInt(every.value, 10) || 0,
                 everyUnit: unit.value,
@@ -4347,6 +4382,7 @@
             });
         }
         row.appendChild(planField(t('serviceName'), name));
+        row.appendChild(planField(t('schedulesKind'), kind));
         row.appendChild(planField(t('serviceLast'), last));
         row.appendChild(planField(t('serviceEvery'), everyWrap));
         row.appendChild(planField(t('status'), status));
@@ -6130,7 +6166,7 @@
         var service = serviceBlock(asset);
         if (service) main.appendChild(service);
         if (moduleOn('life') && !isFolder(asset)) {
-            main.appendChild(moduleBlock(t('lifeTitle'), el('p', 'asset-tree-hint', t('lifeHint'))));
+            main.appendChild(lifeBlock(asset));
         }
         main.appendChild(descriptionModule(asset, true));
         main.appendChild(fileBlock(asset));
@@ -8162,6 +8198,27 @@
         state.dirty = false;
         state.report = null;
         state.reportFailed = false;
+        state.scheduleRows = null;
+        state.scheduleOpen = false;
+        state.scheduleLoading = false;
+        state.scheduleToken++;
+        state.scheduleError = '';
+        state.floors = null;
+        state.floorId = 0;
+        state.mapDraft = null;
+        state.mapLoading = false;
+        state.mapToken++;
+        state.mapSelection = null;
+        state.reportCatalog = null;
+        state.reportKey = 'status';
+        state.reportView = null;
+        state.reportOpen = false;
+        state.galleryToken++;
+        state.galleryLoading = false;
+        state.life = {};
+        state.lifeLoading = {};
+        state.lifeFailed = {};
+        state.lifeToken = {};
         state.importResult = null;
         state.picked = {};
         state.pickScope = '';
@@ -10561,84 +10618,1249 @@
         selectAsset(asset.id, true);
     }
 
+    function equipmentAssets() {
+        return (state.assets || []).filter(function (asset) {
+            return asset && !isFolder(asset);
+        }).sort(function (left, right) {
+            return String(left.name || '').localeCompare(String(right.name || ''));
+        });
+    }
+
+    function placeAssets() {
+        return (state.assets || []).filter(function (asset) { return isFolder(asset); });
+    }
+
+    function parseIsoDate(value) {
+        var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+        if (!match) return null;
+        var date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+        if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1) return null;
+        return date;
+    }
+
+    function isoDate(date) {
+        var month = date.getMonth() + 1;
+        var day = date.getDate();
+        return date.getFullYear() + '-' + (month < 10 ? '0' : '') + month + '-' + (day < 10 ? '0' : '') + day;
+    }
+
+    function dayNumber(date) {
+        return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+    }
+
+    function shiftDays(date, count) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
+    }
+
+    function shiftMonths(date, count) {
+        var day = date.getDate();
+        var next = new Date(date.getFullYear(), date.getMonth() + count, 1);
+        var last = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(day, last));
+        return next;
+    }
+
+    function planNextDate(lastDone, count, unit) {
+        var last = parseIsoDate(lastDone);
+        if (!last || count < 1) return null;
+        if (unit === 'day' && count <= 3650) return shiftDays(last, count);
+        if (unit === 'month' && count <= 120) return shiftMonths(last, count);
+        return null;
+    }
+
+    function monthDates(plan, year, month) {
+        var count = parseInt(plan.everyCount, 10) || 0;
+        var unit = plan.everyUnit === 'day' ? 'day' : (plan.everyUnit === 'month' ? 'month' : '');
+        var first = planNextDate(plan.lastDone, count, unit);
+        if (!first || month < 1 || month > 12) return [];
+        var start = new Date(year, month - 1, 1);
+        var end = new Date(year, month, 0);
+        var cursor = new Date(first.getTime());
+        if (dayNumber(cursor) < dayNumber(start)) {
+            if (unit === 'day') {
+                var steps = Math.floor((dayNumber(start) - dayNumber(first)) / count);
+                cursor = shiftDays(first, steps * count);
+                if (dayNumber(cursor) < dayNumber(start)) cursor = shiftDays(cursor, count);
+            } else {
+                var months = (start.getFullYear() - first.getFullYear()) * 12 + (start.getMonth() - first.getMonth());
+                var jumped = Math.floor(months / count);
+                cursor = shiftMonths(first, jumped * count);
+                var guard = 0;
+                while (dayNumber(cursor) < dayNumber(start) && guard < 24) {
+                    cursor = shiftMonths(cursor, count);
+                    guard++;
+                }
+            }
+        }
+        var found = [];
+        var seen = 0;
+        var endN = dayNumber(end);
+        var startN = dayNumber(start);
+        while (cursor && dayNumber(cursor) <= endN && seen < 40) {
+            if (dayNumber(cursor) >= startN) found.push(isoDate(cursor));
+            cursor = planNextDate(isoDate(cursor), count, unit);
+            seen++;
+        }
+        return found;
+    }
+
+    function kindName(kind) {
+        if (kind === 'kts') return t('kindKts');
+        if (kind === 'verify') return t('kindVerify');
+        return t('kindTo');
+    }
+
+    function kindColor(kind) {
+        if (kind === 'kts') return '#FF8B00';
+        if (kind === 'verify') return '#6554C0';
+        return '#0052CC';
+    }
+
+    function monthTitle(year, month) {
+        var locale = String(state.locale || 'ru').toLowerCase().indexOf('en') === 0 ? 'en-US' : 'ru-RU';
+        try {
+            return new Date(year, month - 1, 1).toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+        } catch (error) {
+            return year + '-' + month;
+        }
+    }
+
+    function weekdayLabels() {
+        var locale = String(state.locale || 'ru').toLowerCase().indexOf('en') === 0 ? 'en-US' : 'ru-RU';
+        var labels = [];
+        var day;
+        for (day = 0; day < 7; day++) {
+            try {
+                labels.push(new Date(2026, 0, 5 + day).toLocaleDateString(locale, { weekday: 'short' }));
+            } catch (error) {
+                labels.push('');
+            }
+        }
+        return labels;
+    }
+
+    function userPick(labelText, currentName, onPick) {
+        var wrap = el('div', 'asset-tree-userpick');
+        var chosen = el('div', 'asset-tree-userpick-name', currentName || '');
+        var input = document.createElement('input');
+        input.type = 'search';
+        input.placeholder = t('custodianSearch');
+        input.setAttribute('aria-label', labelText);
+        var results = el('div', 'asset-tree-user-results');
+        var timer = null;
+        var seq = 0;
+        input.addEventListener('input', function () {
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                var query = input.value.trim();
+                var mark = ++seq;
+                results.innerHTML = '';
+                if (query.length < 2) return;
+                ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (mark !== seq) return;
+                    results.innerHTML = '';
+                    (payload || []).forEach(function (user) {
+                        results.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                            chosen.textContent = user.displayName;
+                            input.value = user.displayName;
+                            results.innerHTML = '';
+                            onPick(user);
+                        }));
+                    });
+                });
+            }, 200);
+        });
+        wrap.appendChild(chosen);
+        wrap.appendChild(input);
+        wrap.appendChild(results);
+        return wrap;
+    }
+
+    function loadSchedules() {
+        if (state.scheduleLoading) return;
+        state.scheduleLoading = true;
+        var token = ++state.scheduleToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/schedule', null, function (status, payload) {
+            if (token !== state.scheduleToken) return;
+            state.scheduleLoading = false;
+            if (status === 200 && Object.prototype.toString.call(payload) === '[object Array]') {
+                state.scheduleRows = payload;
+                state.scheduleError = '';
+            } else {
+                state.scheduleRows = [];
+                state.scheduleError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'schedules') renderFrame();
+        });
+    }
+
+    function blankScheduleDraft() {
+        return { name: '', kind: 'to', lastDone: '', everyCount: '1', everyUnit: 'month', assetIds: {}, assigneeKey: '', assigneeName: '' };
+    }
+
+    function scheduleForm() {
+        var draft = state.scheduleDraft || blankScheduleDraft();
+        state.scheduleDraft = draft;
+        var form = el('form', 'asset-tree-schedule-form');
+        form.addEventListener('submit', function (event) { event.preventDefault(); });
+        var name = document.createElement('input');
+        name.value = draft.name;
+        name.placeholder = t('serviceName');
+        name.setAttribute('aria-label', t('serviceName'));
+        name.addEventListener('input', function () { draft.name = name.value; });
+        var kind = document.createElement('select');
+        kind.setAttribute('aria-label', t('schedulesKind'));
+        [['to', 'kindTo'], ['kts', 'kindKts'], ['verify', 'kindVerify']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            kind.appendChild(option);
+        });
+        kind.value = draft.kind || 'to';
+        kind.addEventListener('change', function () { draft.kind = kind.value; });
+        var last = document.createElement('input');
+        last.type = 'date';
+        last.value = draft.lastDone || '';
+        last.setAttribute('aria-label', t('serviceLast'));
+        last.addEventListener('change', function () { draft.lastDone = last.value; });
+        var every = document.createElement('input');
+        every.type = 'number';
+        every.min = '1';
+        every.value = draft.everyCount || '1';
+        every.setAttribute('aria-label', t('serviceEvery'));
+        every.addEventListener('input', function () { draft.everyCount = every.value; });
+        var unit = document.createElement('select');
+        [['month', 'serviceUnitMonth'], ['day', 'serviceUnitDay']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            unit.appendChild(option);
+        });
+        unit.value = draft.everyUnit === 'day' ? 'day' : 'month';
+        unit.addEventListener('change', function () { draft.everyUnit = unit.value; });
+        var everyWrap = el('div', 'asset-tree-plan-every');
+        everyWrap.appendChild(every);
+        everyWrap.appendChild(unit);
+        var assets = el('div', 'asset-tree-schedule-assets');
+        equipmentAssets().forEach(function (asset) {
+            var label = el('label', 'asset-tree-check');
+            var box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = !!draft.assetIds[asset.id];
+            box.setAttribute('aria-label', asset.name || asset.objectKey || '');
+            box.addEventListener('change', function () {
+                if (box.checked) draft.assetIds[asset.id] = true;
+                else delete draft.assetIds[asset.id];
+            });
+            label.appendChild(box);
+            label.appendChild(document.createTextNode((asset.name || asset.objectKey || '') + (asset.objectKey ? ' · ' + asset.objectKey : '')));
+            assets.appendChild(label);
+        });
+        form.appendChild(planField(t('serviceName'), name));
+        form.appendChild(planField(t('schedulesKind'), kind));
+        form.appendChild(planField(t('schedulesAssignee'), userPick(t('schedulesAssignee'), draft.assigneeName, function (user) {
+            draft.assigneeKey = user.userKey;
+            draft.assigneeName = user.displayName;
+        })));
+        form.appendChild(planField(t('serviceLast'), last));
+        form.appendChild(planField(t('serviceEvery'), everyWrap));
+        var assetField = el('div', 'asset-tree-plan-field');
+        assetField.appendChild(el('span', null, t('schedulesAssets')));
+        assetField.appendChild(assets);
+        form.appendChild(assetField);
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('schedulesNew'), 'asset-tree-btn primary', function () {
+            var ids = [];
+            Object.keys(draft.assetIds).forEach(function (id) {
+                if (draft.assetIds[id]) ids.push(parseInt(id, 10));
+            });
+            if (!ids.length || !last.value) {
+                notify(t('schedulesAssets'));
+                return;
+            }
+            var body = {
+                assetIds: ids,
+                name: draft.name.trim(),
+                kind: kind.value,
+                lastDone: last.value,
+                everyCount: parseInt(every.value, 10) || 0,
+                everyUnit: unit.value,
+                notify: true
+            };
+            if (draft.assigneeKey) body.assigneeKey = draft.assigneeKey;
+            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/schedule', body, function (status, payload) {
+                if (status >= 200 && status < 300) {
+                    state.scheduleOpen = false;
+                    state.scheduleDraft = null;
+                    state.scheduleRows = null;
+                    state.scheduleLoading = false;
+                    renderFrame();
+                } else notify((payload && payload.message) || t('errorTitle'));
+            });
+        }));
+        actions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            state.scheduleOpen = false;
+            renderFrame();
+        }));
+        form.appendChild(actions);
+        return form;
+    }
+
+    function openPlanEvent(plan, iso) {
+        openModal(function (dialog) {
+            dialog.appendChild(el('h2', null, kindName(plan.kind)));
+            dialog.appendChild(el('p', null, (plan.assetName || '') + (plan.objectKey ? ' · ' + plan.objectKey : '')));
+            var meta = formatFieldDate(iso);
+            if (plan.assigneeName) meta += ' · ' + plan.assigneeName;
+            if (plan.name) meta += ' · ' + plan.name;
+            dialog.appendChild(el('p', null, meta));
+            var actions = el('div', 'asset-tree-inline-actions');
+            if (state.canEdit) {
+                actions.appendChild(button(t('serviceDone'), 'asset-tree-btn primary', function () {
+                    ajax('PUT', '/assets/' + plan.assetId + '/plans/' + plan.id, { done: true }, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            closeModal();
+                            state.scheduleRows = null;
+                            state.scheduleLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+                actions.appendChild(button(t('delete'), 'asset-tree-btn', function () {
+                    if (!window.confirm(t('serviceDeleteConfirm', plan.name || kindName(plan.kind)))) return;
+                    ajax('DELETE', '/assets/' + plan.assetId + '/plans/' + plan.id, null, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            closeModal();
+                            state.scheduleRows = null;
+                            state.scheduleLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            actions.appendChild(button(plan.assetName || t('open'), 'asset-tree-btn', function () {
+                closeModal();
+                var asset = byId()[plan.assetId];
+                if (asset) openListedAsset(asset);
+            }));
+            actions.appendChild(button(t('close'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
     function renderSchedules() {
-        var panel = el('section', 'asset-tree-report');
+        if (!state.scheduleYear) {
+            var now = new Date();
+            state.scheduleYear = now.getFullYear();
+            state.scheduleMonth = now.getMonth() + 1;
+        }
+        var panel = el('section', 'asset-tree-report asset-tree-calendar-page');
         panel.appendChild(el('h2', null, t('menuSchedules')));
         panel.appendChild(el('p', 'asset-tree-hint', t('schedulesHint')));
-        var rows = (state.assets || []).filter(function (asset) {
-            return asset && !isFolder(asset) && (asset.serviceDue || typeOffersService(asset));
-        });
-        if (!rows.length) {
-            panel.appendChild(el('p', 'asset-tree-hint', t('schedulesEmpty')));
+        if (state.scheduleRows == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadSchedules();
             return panel;
         }
-        var list = el('div', 'asset-tree-module-list');
-        rows.forEach(function (asset) {
-            var row = button('', 'asset-tree-module-link', function () {
-                openListedAsset(asset);
+        if (state.scheduleError) panel.appendChild(el('p', 'asset-tree-hint', state.scheduleError));
+        var bar = el('div', 'asset-tree-calendar-bar');
+        bar.appendChild(button(t('schedulesPrev'), 'asset-tree-btn', function () {
+            state.scheduleMonth -= 1;
+            if (state.scheduleMonth < 1) {
+                state.scheduleMonth = 12;
+                state.scheduleYear -= 1;
+            }
+            renderFrame();
+        }));
+        bar.appendChild(el('strong', 'asset-tree-calendar-title', monthTitle(state.scheduleYear, state.scheduleMonth)));
+        bar.appendChild(button(t('schedulesNext'), 'asset-tree-btn', function () {
+            state.scheduleMonth += 1;
+            if (state.scheduleMonth > 12) {
+                state.scheduleMonth = 1;
+                state.scheduleYear += 1;
+            }
+            renderFrame();
+        }));
+        if (state.canEdit) {
+            bar.appendChild(button(t('schedulesNew'), 'asset-tree-btn primary', function () {
+                state.scheduleOpen = !state.scheduleOpen;
+                if (state.scheduleOpen && !state.scheduleDraft) state.scheduleDraft = blankScheduleDraft();
+                renderFrame();
+            }));
+        }
+        panel.appendChild(bar);
+        if (state.scheduleOpen && state.canEdit) panel.appendChild(scheduleForm());
+        var byDay = {};
+        var monthCount = 0;
+        (state.scheduleRows || []).forEach(function (plan) {
+            monthDates(plan, state.scheduleYear, state.scheduleMonth).forEach(function (iso) {
+                if (!byDay[iso]) byDay[iso] = [];
+                byDay[iso].push(plan);
+                monthCount++;
             });
-            row.appendChild(el('strong', null, asset.name || asset.objectKey || ''));
-            var meta = asset.objectKey || '';
-            if (asset.serviceDue) meta += (meta ? ' · ' : '') + asset.serviceDue;
-            if (meta) row.appendChild(el('span', null, meta));
-            list.appendChild(row);
         });
-        panel.appendChild(list);
+        if (!monthCount) panel.appendChild(el('p', 'asset-tree-hint', t('schedulesEmpty')));
+        var grid = el('div', 'asset-tree-calendar');
+        weekdayLabels().forEach(function (label) {
+            grid.appendChild(el('div', 'asset-tree-weekday', label));
+        });
+        var start = new Date(state.scheduleYear, state.scheduleMonth - 1, 1);
+        var days = new Date(state.scheduleYear, state.scheduleMonth, 0).getDate();
+        var lead = (start.getDay() + 6) % 7;
+        var today = isoDate(new Date());
+        var index;
+        for (index = 0; index < lead; index++) grid.appendChild(el('div', 'asset-tree-day is-out'));
+        for (index = 1; index <= days; index++) {
+            var date = new Date(state.scheduleYear, state.scheduleMonth - 1, index);
+            var iso = isoDate(date);
+            var cell = el('div', 'asset-tree-day' + (iso === today ? ' is-today' : ''));
+            cell.setAttribute('data-date', iso);
+            cell.appendChild(el('span', 'asset-tree-day-num', String(index)));
+            var events = byDay[iso] || [];
+            events.slice(0, 3).forEach(function (plan) {
+                var chip = button(kindName(plan.kind) + ' · ' + (plan.assetName || plan.name || ''), 'asset-tree-chip-event', function () {
+                    openPlanEvent(plan, iso);
+                });
+                chip.style.background = kindColor(plan.kind);
+                if (plan.due && plan.nextDue === iso) chip.className += ' is-due';
+                cell.appendChild(chip);
+            });
+            if (events.length > 3) cell.appendChild(el('span', 'asset-tree-day-more', '+' + (events.length - 3)));
+            grid.appendChild(cell);
+        }
+        while ((lead + days) % 7 !== 0) {
+            grid.appendChild(el('div', 'asset-tree-day is-out'));
+            days++;
+        }
+        panel.appendChild(grid);
         return panel;
+    }
+
+    function csvCell(value) {
+        var text = String(value == null ? '' : value);
+        if (/[",\n;]/.test(text)) return '"' + text.split('"').join('""') + '"';
+        return text;
+    }
+
+    function downloadReport(view) {
+        var rows = [csvCell(t('keyLabel')) + ',' + csvCell(t('name')) + ',' + csvCell(t('detailsTitle'))];
+        (view.lines || []).forEach(function (line) {
+            rows.push([csvCell(line.objectKey), csvCell(line.name), csvCell(line.detail)].join(','));
+        });
+        var blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'report.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function loadGallery() {
+        if (state.galleryLoading) return;
+        state.galleryLoading = true;
+        var token = ++state.galleryToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/reports', null, function (status, payload) {
+            if (token !== state.galleryToken) return;
+            state.reportCatalog = status === 200 && Object.prototype.toString.call(payload) === '[object Array]' ? payload : [];
+            fetchGalleryView(token);
+        });
+    }
+
+    function fetchGalleryView(token) {
+        var key = state.reportKey || 'status';
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/reports/' + encodeURIComponent(key), null, function (status, payload) {
+            if (token !== state.galleryToken) return;
+            state.galleryLoading = false;
+            if (status === 200 && payload) {
+                state.reportView = payload;
+                state.reportError = '';
+            } else {
+                state.reportView = null;
+                state.reportError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'reports') renderFrame();
+        });
+    }
+
+    function openGallery(id) {
+        state.reportKey = id;
+        state.reportView = null;
+        state.galleryLoading = true;
+        var token = ++state.galleryToken;
+        renderFrame();
+        fetchGalleryView(token);
+    }
+
+    function reportCreateForm() {
+        if (!state.reportDraft) state.reportDraft = { name: '', groupBy: 'status', filterField: '', filterValue: '' };
+        var draft = state.reportDraft;
+        var form = el('form', 'asset-tree-report-form');
+        form.addEventListener('submit', function (event) { event.preventDefault(); });
+        var name = document.createElement('input');
+        name.value = draft.name;
+        name.setAttribute('aria-label', t('reportName'));
+        name.addEventListener('input', function () { draft.name = name.value; });
+        var group = document.createElement('select');
+        group.setAttribute('aria-label', t('reportGroup'));
+        [['status', 'reportGroupStatus'], ['type', 'reportGroupType'], ['place', 'reportGroupPlace'], ['holder', 'reportGroupHolder']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            group.appendChild(option);
+        });
+        group.value = draft.groupBy || 'status';
+        group.addEventListener('change', function () { draft.groupBy = group.value; });
+        var filter = document.createElement('select');
+        filter.setAttribute('aria-label', t('reportFilter'));
+        [['', 'reportFilterNone'], ['status', 'reportGroupStatus'], ['type', 'reportGroupType'], ['holder', 'reportGroupHolder']].forEach(function (pair) {
+            var option = document.createElement('option');
+            option.value = pair[0];
+            option.textContent = t(pair[1]);
+            filter.appendChild(option);
+        });
+        filter.value = draft.filterField || '';
+        filter.addEventListener('change', function () { draft.filterField = filter.value; });
+        var value = document.createElement('input');
+        value.value = draft.filterValue || '';
+        value.placeholder = t('reportFilter');
+        value.setAttribute('aria-label', t('reportFilter'));
+        value.addEventListener('input', function () { draft.filterValue = value.value; });
+        form.appendChild(planField(t('reportName'), name));
+        form.appendChild(planField(t('reportGroup'), group));
+        form.appendChild(planField(t('reportFilter'), filter));
+        form.appendChild(planField(t('reportFilter'), value));
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('reportCreate'), 'asset-tree-btn primary', function () {
+            var body = { name: name.value.trim(), groupBy: group.value };
+            if (filter.value && value.value.trim()) {
+                body.filterField = filter.value;
+                body.filterValue = value.value.trim();
+            }
+            ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/reports', body, function (status, payload) {
+                if (status >= 200 && status < 300 && payload && payload.id) {
+                    state.reportOpen = false;
+                    state.reportDraft = null;
+                    state.reportKey = payload.id;
+                    state.reportCatalog = null;
+                    state.reportView = null;
+                    state.galleryLoading = false;
+                    renderFrame();
+                } else notify((payload && payload.message) || t('errorTitle'));
+            });
+        }));
+        actions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            state.reportOpen = false;
+            renderFrame();
+        }));
+        form.appendChild(actions);
+        return form;
     }
 
     function renderReports() {
-        if (!state.report) {
-            var waiting = renderReport();
-            if (!state.reportFailed) loadReport();
-            else waiting.appendChild(el('p', 'asset-tree-hint', t('errorTitle')));
-            return waiting;
+        var panel = el('section', 'asset-tree-report asset-tree-gallery-page');
+        panel.appendChild(el('h2', null, t('menuReports')));
+        if (state.reportCatalog == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadGallery();
+            return panel;
         }
-        var panel = renderReport();
-        var actions = el('div', 'asset-tree-inline-actions');
-        actions.appendChild(button(t('reportCsv'), 'asset-tree-btn', function () {
-            var frame = document.createElement('iframe');
-            frame.hidden = true;
-            frame.src = state.rest + '/projects/' + encodeURIComponent(state.projectKey) + '/equipment.csv';
-            document.body.appendChild(frame);
-            setTimeout(function () {
-                if (frame.parentNode) frame.parentNode.removeChild(frame);
-            }, 60000);
-        }));
-        var hint = panel.querySelector('.asset-tree-hint');
-        if (hint && hint.nextSibling) panel.insertBefore(actions, hint.nextSibling);
-        else panel.appendChild(actions);
+        var layout = el('div', 'asset-tree-gallery');
+        var side = el('aside', 'asset-tree-gallery-side');
+        if (state.canEdit) {
+            side.appendChild(button(t('reportCreate'), 'asset-tree-btn', function () {
+                state.reportOpen = !state.reportOpen;
+                renderFrame();
+            }));
+        }
+        if (state.reportOpen && state.canEdit) side.appendChild(reportCreateForm());
+        var standard = el('div', 'asset-tree-gallery-list');
+        standard.appendChild(el('h3', null, t('reportStandard')));
+        var saved = el('div', 'asset-tree-gallery-list');
+        saved.appendChild(el('h3', null, t('reportSavedTitle')));
+        var savedCount = 0;
+        (state.reportCatalog || []).forEach(function (item) {
+            var link = button(item.name || item.id, 'asset-tree-report-link' + (item.id === state.reportKey ? ' is-current' : ''), function () {
+                openGallery(item.id);
+            });
+            (item.standard ? standard : saved).appendChild(link);
+            if (!item.standard) savedCount++;
+        });
+        side.appendChild(standard);
+        if (savedCount) side.appendChild(saved);
+        layout.appendChild(side);
+        var main = el('div', 'asset-tree-gallery-main');
+        if (state.galleryLoading || !state.reportView) {
+            main.appendChild(el('p', 'asset-tree-hint', state.reportError || t('loading')));
+        } else {
+            var view = state.reportView;
+            main.appendChild(el('h3', null, view.title || ''));
+            if (view.hint) main.appendChild(el('p', 'asset-tree-hint', view.hint));
+            var facts = el('p', 'asset-tree-report-total', String(view.total || 0));
+            if (view.sum) facts.appendChild(document.createTextNode(' · ' + t('lifeBook') + ' ' + view.sum));
+            main.appendChild(facts);
+            if (view.rows && view.rows.length) main.appendChild(barChart(view.rows));
+            if (!view.lines || !view.lines.length) {
+                main.appendChild(el('p', 'asset-tree-hint', t('reportEmptyLines')));
+            } else {
+                var lines = el('div', 'asset-tree-module-list');
+                view.lines.forEach(function (line) {
+                    var row = button('', 'asset-tree-module-link', function () {
+                        var asset = byId()[line.assetId];
+                        if (asset) openListedAsset(asset);
+                    });
+                    row.appendChild(el('strong', null, line.name || line.objectKey || ''));
+                    var meta = line.objectKey || '';
+                    if (line.detail) meta += (meta ? ' · ' : '') + line.detail;
+                    if (meta) row.appendChild(el('span', null, meta));
+                    lines.appendChild(row);
+                });
+                main.appendChild(lines);
+            }
+            var actions = el('div', 'asset-tree-inline-actions');
+            actions.appendChild(button(t('reportCsv'), 'asset-tree-btn', function () { downloadReport(view); }));
+            if (!view.standard && state.canEdit) {
+                actions.appendChild(button(t('reportDelete'), 'asset-tree-btn', function () {
+                    if (!window.confirm(t('reportDelete'))) return;
+                    ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/reports/' + encodeURIComponent(view.id), null, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            state.reportKey = 'status';
+                            state.reportCatalog = null;
+                            state.reportView = null;
+                            state.galleryLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            main.appendChild(actions);
+        }
+        layout.appendChild(main);
+        panel.appendChild(layout);
         return panel;
     }
 
+    function clampNum(value, min, max) {
+        var number = Math.round(Number(value) || 0);
+        if (number < min) return min;
+        if (number > max) return max;
+        return number;
+    }
+
+    function clampRoom(room) {
+        var x = clampNum(room.x, 0, 1000 - 36);
+        var y = clampNum(room.y, 0, 640 - 36);
+        var w = Math.max(36, Math.round(Number(room.w) || 36));
+        var h = Math.max(36, Math.round(Number(room.h) || 36));
+        if (x + w > 1000) w = 1000 - x;
+        if (y + h > 640) h = 640 - y;
+        return { name: room.name || t('mapRoom'), x: x, y: y, w: w, h: h };
+    }
+
+    function cloneFloor(floor) {
+        return {
+            id: floor.id,
+            name: floor.name || '',
+            level: floor.level || 0,
+            placeId: floor.placeId || 0,
+            rooms: (floor.rooms || []).map(function (room) { return clampRoom(room); }),
+            pins: (floor.pins || []).map(function (pin) {
+                return {
+                    assetId: pin.assetId,
+                    assetName: pin.assetName || '',
+                    objectKey: pin.objectKey || '',
+                    x: clampNum(pin.x, 0, 1000),
+                    y: clampNum(pin.y, 0, 640)
+                };
+            })
+        };
+    }
+
+    function clearMapDrag() {
+        if (state.mapMove) {
+            window.removeEventListener('mousemove', state.mapMove);
+            window.removeEventListener('mouseup', state.mapUp);
+        }
+        state.mapMove = null;
+        state.mapUp = null;
+        state.mapDrag = null;
+    }
+
+    function svgPoint(svg, event) {
+        var rect = svg.getBoundingClientRect();
+        return {
+            x: ((event.clientX - rect.left) / (rect.width || 1)) * 1000,
+            y: ((event.clientY - rect.top) / (rect.height || 1)) * 640
+        };
+    }
+
+    function paintRoomPreview(svg) {
+        var drag = state.mapDrag;
+        var node = svg.querySelector('#asset-tree-room-preview');
+        if (!drag || drag.kind !== 'room') {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+            return;
+        }
+        if (!node) {
+            node = svgEl('rect');
+            node.id = 'asset-tree-room-preview';
+            svg.appendChild(node);
+        }
+        var x = Math.min(drag.x0, drag.x1);
+        var y = Math.min(drag.y0, drag.y1);
+        node.setAttribute('x', String(Math.round(x)));
+        node.setAttribute('y', String(Math.round(y)));
+        node.setAttribute('width', String(Math.max(1, Math.round(Math.abs(drag.x1 - drag.x0)))));
+        node.setAttribute('height', String(Math.max(1, Math.round(Math.abs(drag.y1 - drag.y0)))));
+    }
+
+    function beginDrag(svg, drag, onMove, onUp) {
+        clearMapDrag();
+        state.mapDrag = drag;
+        state.mapMove = function (event) { onMove(event, svg); };
+        state.mapUp = function () {
+            var finished = state.mapDrag;
+            clearMapDrag();
+            onUp(finished);
+        };
+        window.addEventListener('mousemove', state.mapMove);
+        window.addEventListener('mouseup', state.mapUp);
+    }
+
+    function storeFloor(floor) {
+        var next = [];
+        var found = false;
+        (state.floors || []).forEach(function (item) {
+            if (item.id === floor.id) {
+                next.push(floor);
+                found = true;
+            } else next.push(item);
+        });
+        if (!found) next.push(floor);
+        next.sort(function (left, right) { return (left.level - right.level) || (left.id - right.id); });
+        state.floors = next;
+        state.floorId = floor.id;
+        state.mapDraft = cloneFloor(floor);
+    }
+
+    function loadFloors() {
+        if (state.mapLoading) return;
+        state.mapLoading = true;
+        var token = ++state.mapToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/floors', null, function (status, payload) {
+            if (token !== state.mapToken) return;
+            state.mapLoading = false;
+            state.floors = status === 200 && Object.prototype.toString.call(payload) === '[object Array]' ? payload : [];
+            var current = null;
+            state.floors.forEach(function (floor) {
+                if (floor.id === state.floorId) current = floor;
+            });
+            if (!current && state.floors.length) current = state.floors[0];
+            state.floorId = current ? current.id : 0;
+            state.mapDraft = current ? cloneFloor(current) : null;
+            if (state.view === 'map') renderFrame();
+        });
+    }
+
+    function placePin(point) {
+        if (!state.mapAssetId || !state.mapDraft) return;
+        var asset = byId()[state.mapAssetId];
+        var pins = state.mapDraft.pins;
+        var found = null;
+        pins.forEach(function (pin) {
+            if (pin.assetId === state.mapAssetId) found = pin;
+        });
+        var x = clampNum(point.x, 0, 1000);
+        var y = clampNum(point.y, 0, 640);
+        if (found) {
+            found.x = x;
+            found.y = y;
+            return;
+        }
+        if (pins.length >= 200) return;
+        pins.push({
+            assetId: state.mapAssetId,
+            assetName: asset ? (asset.name || '') : '',
+            objectKey: asset ? (asset.objectKey || '') : '',
+            x: x,
+            y: y
+        });
+    }
+
+    function floorCanvas(draft) {
+        var svg = svgEl('svg');
+        svg.setAttribute('viewBox', '0 0 1000 640');
+        svg.setAttribute('class', 'asset-tree-canvas');
+        svg.setAttribute('role', 'img');
+        draft.rooms.forEach(function (room, index) {
+            var rect = svgEl('rect');
+            var selected = state.mapSelection && state.mapSelection.kind === 'room' && state.mapSelection.index === index;
+            rect.setAttribute('class', 'asset-tree-room' + (selected ? ' is-selected' : ''));
+            rect.setAttribute('x', String(room.x));
+            rect.setAttribute('y', String(room.y));
+            rect.setAttribute('width', String(room.w));
+            rect.setAttribute('height', String(room.h));
+            rect.addEventListener('mousedown', function (event) {
+                if (state.mapTool !== 'select') return;
+                event.stopPropagation();
+                state.mapSelection = { kind: 'room', index: index };
+                renderFrame();
+            });
+            svg.appendChild(rect);
+            var label = svgEl('text');
+            label.setAttribute('class', 'asset-tree-room-label');
+            label.setAttribute('data-room-label', String(index));
+            label.setAttribute('x', String(room.x + 8));
+            label.setAttribute('y', String(room.y + 22));
+            label.textContent = room.name || t('mapRoom');
+            svg.appendChild(label);
+        });
+        draft.pins.forEach(function (pin, index) {
+            var circle = svgEl('circle');
+            var selected = state.mapSelection && state.mapSelection.kind === 'pin' && state.mapSelection.index === index;
+            circle.setAttribute('class', 'asset-tree-pin' + (selected ? ' is-selected' : ''));
+            circle.setAttribute('data-pin', String(index));
+            circle.setAttribute('cx', String(pin.x));
+            circle.setAttribute('cy', String(pin.y));
+            circle.setAttribute('r', '8');
+            circle.addEventListener('mousedown', function (event) {
+                event.stopPropagation();
+                event.preventDefault();
+                if (!state.canEdit) {
+                    state.mapSelection = { kind: 'pin', index: index };
+                    renderFrame();
+                    return;
+                }
+                var originX = pin.x;
+                var originY = pin.y;
+                beginDrag(svg, { kind: 'pin', index: index }, function (moveEvent, board) {
+                    var next = svgPoint(board, moveEvent);
+                    pin.x = clampNum(next.x, 0, 1000);
+                    pin.y = clampNum(next.y, 0, 640);
+                    var node = board.querySelector('[data-pin="' + index + '"]');
+                    if (node) {
+                        node.setAttribute('cx', String(pin.x));
+                        node.setAttribute('cy', String(pin.y));
+                    }
+                    var text = board.querySelector('[data-pin-label="' + index + '"]');
+                    if (text) {
+                        text.setAttribute('x', String(pin.x + 12));
+                        text.setAttribute('y', String(pin.y + 4));
+                    }
+                }, function () {
+                    if (Math.abs(pin.x - originX) + Math.abs(pin.y - originY) < 4) {
+                        state.mapSelection = { kind: 'pin', index: index };
+                    }
+                    renderFrame();
+                });
+            });
+            svg.appendChild(circle);
+            var caption = svgEl('text');
+            caption.setAttribute('class', 'asset-tree-pin-label');
+            caption.setAttribute('data-pin-label', String(index));
+            caption.setAttribute('x', String(pin.x + 12));
+            caption.setAttribute('y', String(pin.y + 4));
+            caption.textContent = pin.assetName || pin.objectKey || '';
+            svg.appendChild(caption);
+        });
+        svg.addEventListener('mousedown', function (event) {
+            if (!state.canEdit || !state.mapDraft) return;
+            if (event.button !== 0) return;
+            var point = svgPoint(svg, event);
+            if (state.mapTool === 'room') {
+                event.preventDefault();
+                beginDrag(svg, { kind: 'room', x0: point.x, y0: point.y, x1: point.x, y1: point.y }, function (moveEvent, board) {
+                    var next = svgPoint(board, moveEvent);
+                    if (!state.mapDrag) return;
+                    state.mapDrag.x1 = next.x;
+                    state.mapDrag.y1 = next.y;
+                    paintRoomPreview(board);
+                }, function (drag) {
+                    var preview = document.getElementById('asset-tree-room-preview');
+                    if (preview && preview.parentNode) preview.parentNode.removeChild(preview);
+                    if (!drag || !state.mapDraft) return;
+                    var x = Math.min(drag.x0, drag.x1);
+                    var y = Math.min(drag.y0, drag.y1);
+                    var w = Math.abs(drag.x1 - drag.x0);
+                    var h = Math.abs(drag.y1 - drag.y0);
+                    if (w >= 36 && h >= 36 && state.mapDraft.rooms.length < 80) {
+                        state.mapDraft.rooms.push(clampRoom({ name: t('mapRoom'), x: x, y: y, w: w, h: h }));
+                        state.mapSelection = { kind: 'room', index: state.mapDraft.rooms.length - 1 };
+                        renderFrame();
+                    }
+                });
+            } else if (state.mapTool === 'pin') {
+                if (event.target && event.target.getAttribute && event.target.getAttribute('data-pin') != null) return;
+                placePin(point);
+                renderFrame();
+            }
+        });
+        return svg;
+    }
+
     function renderMap() {
-        var panel = el('section', 'asset-tree-report');
+        var panel = el('section', 'asset-tree-report asset-tree-map-page');
         panel.appendChild(el('h2', null, t('menuMap')));
         panel.appendChild(el('p', 'asset-tree-hint', t('mapHint')));
-        var places = (state.assets || []).filter(function (asset) { return isFolder(asset); });
-        if (!places.length) {
-            panel.appendChild(el('p', 'asset-tree-hint', t('mapEmpty')));
+        if (state.floors == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadFloors();
             return panel;
         }
-        var list = el('div', 'asset-tree-module-list');
-        places.forEach(function (place) {
-            var card = el('section', 'asset-tree-project-card');
-            card.appendChild(el('h3', 'asset-tree-settings-title', place.name || ''));
-            var gear = childrenOf(place.id).filter(function (asset) { return !isFolder(asset); });
-            if (!gear.length) {
-                card.appendChild(el('p', 'asset-tree-hint', t('portalNone')));
-            } else {
-                gear.forEach(function (asset) {
-                    var row = button(asset.name || asset.objectKey || '', 'asset-tree-linkish', function () {
-                        openListedAsset(asset);
-                    });
-                    card.appendChild(row);
-                });
-            }
-            list.appendChild(card);
+        var layout = el('div', 'asset-tree-map');
+        var rail = el('aside', 'asset-tree-map-rail');
+        if (!state.floors.length) rail.appendChild(el('p', 'asset-tree-hint', t('mapEmpty')));
+        state.floors.forEach(function (floor) {
+            rail.appendChild(button((floor.name || '') + ' · ' + floor.level, 'asset-tree-report-link' + (floor.id === state.floorId ? ' is-current' : ''), function () {
+                clearMapDrag();
+                state.floorId = floor.id;
+                state.mapDraft = cloneFloor(floor);
+                state.mapSelection = null;
+                renderFrame();
+            }));
         });
-        panel.appendChild(list);
+        if (state.canEdit) {
+            var create = el('form', 'asset-tree-floor-form');
+            create.addEventListener('submit', function (event) { event.preventDefault(); });
+            var floorName = document.createElement('input');
+            floorName.value = state.mapNewName || '';
+            floorName.placeholder = t('mapFloorName');
+            floorName.setAttribute('aria-label', t('mapFloorName'));
+            floorName.addEventListener('input', function () { state.mapNewName = floorName.value; });
+            var level = document.createElement('input');
+            level.type = 'number';
+            level.value = state.mapNewLevel || '1';
+            level.setAttribute('aria-label', t('mapLevel'));
+            level.addEventListener('input', function () { state.mapNewLevel = level.value; });
+            var place = document.createElement('select');
+            place.setAttribute('aria-label', t('columnLocation'));
+            var none = document.createElement('option');
+            none.value = '0';
+            none.textContent = t('root');
+            place.appendChild(none);
+            placeAssets().forEach(function (item) {
+                var option = document.createElement('option');
+                option.value = String(item.id);
+                option.textContent = item.name || '';
+                place.appendChild(option);
+            });
+            place.value = state.mapNewPlace || '0';
+            place.addEventListener('change', function () { state.mapNewPlace = place.value; });
+            create.appendChild(floorName);
+            create.appendChild(level);
+            create.appendChild(place);
+            create.appendChild(button(t('mapAddFloor'), 'asset-tree-btn primary', function () {
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/floors', {
+                    name: floorName.value.trim(),
+                    level: parseInt(level.value, 10),
+                    placeId: parseInt(place.value, 10) || 0
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        state.mapNewName = '';
+                        storeFloor(payload);
+                        state.mapSelection = null;
+                        renderFrame();
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            rail.appendChild(create);
+        }
+        layout.appendChild(rail);
+        var stage = el('div', 'asset-tree-map-stage');
+        var draft = state.mapDraft;
+        if (!draft) {
+            stage.appendChild(el('p', 'asset-tree-hint', t('mapEmpty')));
+        } else {
+            var tools = el('div', 'asset-tree-calendar-bar');
+            if (state.canEdit) {
+                [['select', 'edit'], ['room', 'mapDraw'], ['pin', 'mapPin']].forEach(function (pair) {
+                    tools.appendChild(button(t(pair[1]), 'asset-tree-btn' + (state.mapTool === pair[0] ? ' primary' : ''), function () {
+                        state.mapTool = pair[0];
+                        renderFrame();
+                    }));
+                });
+                tools.appendChild(button(t('mapSave'), 'asset-tree-btn primary', function () {
+                    ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/floors/' + draft.id, {
+                        name: draft.name,
+                        level: parseInt(draft.level, 10) || 0,
+                        placeId: parseInt(draft.placeId, 10) || 0,
+                        rooms: draft.rooms,
+                        pins: draft.pins.map(function (pin) { return { assetId: pin.assetId, x: pin.x, y: pin.y }; })
+                    }, function (status, payload) {
+                        if (status >= 200 && status < 300 && payload) {
+                            storeFloor(payload);
+                            notify(t('mapSave'));
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+                tools.appendChild(button(t('mapDeleteFloor'), 'asset-tree-btn', function () {
+                    if (!window.confirm(t('mapDeleteFloor'))) return;
+                    ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/floors/' + draft.id, null, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            state.floors = (state.floors || []).filter(function (floor) { return floor.id !== draft.id; });
+                            state.floorId = 0;
+                            state.mapDraft = null;
+                            state.mapSelection = null;
+                            if (state.floors.length) {
+                                state.floorId = state.floors[0].id;
+                                state.mapDraft = cloneFloor(state.floors[0]);
+                            }
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            stage.appendChild(tools);
+            var name = document.createElement('input');
+            name.value = draft.name;
+            name.setAttribute('aria-label', t('mapFloorName'));
+            name.disabled = !state.canEdit;
+            name.addEventListener('input', function () { draft.name = name.value; });
+            var levelInput = document.createElement('input');
+            levelInput.type = 'number';
+            levelInput.value = String(draft.level);
+            levelInput.setAttribute('aria-label', t('mapLevel'));
+            levelInput.disabled = !state.canEdit;
+            levelInput.addEventListener('input', function () { draft.level = levelInput.value; });
+            var placeSelect = document.createElement('select');
+            placeSelect.setAttribute('aria-label', t('columnLocation'));
+            placeSelect.disabled = !state.canEdit;
+            var root = document.createElement('option');
+            root.value = '0';
+            root.textContent = t('root');
+            placeSelect.appendChild(root);
+            placeAssets().forEach(function (item) {
+                var option = document.createElement('option');
+                option.value = String(item.id);
+                option.textContent = item.name || '';
+                placeSelect.appendChild(option);
+            });
+            placeSelect.value = String(draft.placeId || 0);
+            placeSelect.addEventListener('change', function () { draft.placeId = parseInt(placeSelect.value, 10) || 0; });
+            var gear = document.createElement('select');
+            gear.setAttribute('aria-label', t('mapGear'));
+            gear.disabled = !state.canEdit;
+            var blank = document.createElement('option');
+            blank.value = '0';
+            blank.textContent = t('mapGear');
+            gear.appendChild(blank);
+            equipmentAssets().forEach(function (asset) {
+                var option = document.createElement('option');
+                option.value = String(asset.id);
+                option.textContent = asset.name || asset.objectKey || '';
+                gear.appendChild(option);
+            });
+            gear.value = state.mapAssetId ? String(state.mapAssetId) : '0';
+            gear.addEventListener('change', function () {
+                state.mapAssetId = parseInt(gear.value, 10) || 0;
+                if (state.mapAssetId) state.mapTool = 'pin';
+                renderFrame();
+            });
+            var fields = el('div', 'asset-tree-map-fields');
+            fields.appendChild(name);
+            fields.appendChild(levelInput);
+            fields.appendChild(placeSelect);
+            fields.appendChild(gear);
+            stage.appendChild(fields);
+            if (state.mapSelection && state.mapSelection.kind === 'room' && draft.rooms[state.mapSelection.index]) {
+                var room = draft.rooms[state.mapSelection.index];
+                var roomName = document.createElement('input');
+                roomName.value = room.name || '';
+                roomName.setAttribute('aria-label', t('mapRoom'));
+                roomName.addEventListener('input', function () {
+                    room.name = roomName.value;
+                    var label = document.querySelector('[data-room-label="' + state.mapSelection.index + '"]');
+                    if (label) label.textContent = room.name || t('mapRoom');
+                });
+                var roomRow = el('div', 'asset-tree-inline-actions');
+                roomRow.appendChild(roomName);
+                roomRow.appendChild(button(t('delete'), 'asset-tree-btn', function () {
+                    draft.rooms.splice(state.mapSelection.index, 1);
+                    state.mapSelection = null;
+                    renderFrame();
+                }));
+                stage.appendChild(roomRow);
+            }
+            if (state.mapSelection && state.mapSelection.kind === 'pin' && draft.pins[state.mapSelection.index]) {
+                var selectedPin = draft.pins[state.mapSelection.index];
+                var pinRow = el('div', 'asset-tree-inline-actions');
+                pinRow.appendChild(el('span', null, selectedPin.assetName || ''));
+                pinRow.appendChild(button(selectedPin.assetName || t('open'), 'asset-tree-btn', function () {
+                    var asset = byId()[selectedPin.assetId];
+                    if (asset) openListedAsset(asset);
+                }));
+                pinRow.appendChild(button(t('delete'), 'asset-tree-btn', function () {
+                    draft.pins.splice(state.mapSelection.index, 1);
+                    state.mapSelection = null;
+                    renderFrame();
+                }));
+                stage.appendChild(pinRow);
+            }
+            stage.appendChild(floorCanvas(draft));
+        }
+        layout.appendChild(stage);
+        panel.appendChild(layout);
         return panel;
+    }
+
+    function warrantyNote(life) {
+        if (!life || !life.warrantyUntil) return '';
+        if (!life.warrantyActive) return t('lifeWarrantyOff');
+        var end = parseIsoDate(life.warrantyUntil);
+        if (!end) return t('lifeWarrantyOn');
+        var today = new Date();
+        var days = dayNumber(end) - dayNumber(new Date(today.getFullYear(), today.getMonth(), today.getDate()));
+        if (days <= 90) return t('lifeWarrantySoon');
+        return t('lifeWarrantyOn');
+    }
+
+    function loadLife(assetId) {
+        if (state.lifeLoading[assetId]) return;
+        state.lifeLoading[assetId] = true;
+        state.lifeFailed[assetId] = false;
+        var token = (state.lifeToken[assetId] || 0) + 1;
+        state.lifeToken[assetId] = token;
+        ajax('GET', '/assets/' + assetId + '/lifecycle', null, function (status, payload) {
+            if (state.lifeToken[assetId] !== token) return;
+            state.lifeLoading[assetId] = false;
+            if (status === 200 && payload) state.life[assetId] = payload;
+            else state.lifeFailed[assetId] = true;
+            if (state.detail && state.detail.id === assetId && document.getElementById('asset-tree-detail')) {
+                showDetail(state.detail, false);
+            }
+        });
+    }
+
+    function lifeForm(asset, life) {
+        var locked = life.writeoffState === 'approved';
+        var editable = mayEdit(asset) && !locked;
+        var body = el('div', 'asset-tree-life');
+        body.appendChild(el('p', 'asset-tree-hint', t('lifeHint')));
+        var purchased = document.createElement('input');
+        purchased.type = 'date';
+        purchased.value = life.purchased || '';
+        purchased.disabled = !editable;
+        purchased.setAttribute('aria-label', t('lifePurchase'));
+        var supplier = document.createElement('input');
+        supplier.value = life.supplier || '';
+        supplier.disabled = !editable;
+        supplier.setAttribute('aria-label', t('lifeSupplier'));
+        var price = document.createElement('input');
+        price.value = life.price || '';
+        price.disabled = !editable;
+        price.setAttribute('aria-label', t('lifePrice'));
+        var warranty = document.createElement('input');
+        warranty.type = 'date';
+        warranty.value = life.warrantyUntil || '';
+        warranty.disabled = !editable;
+        warranty.setAttribute('aria-label', t('lifeWarranty'));
+        var months = document.createElement('input');
+        months.type = 'number';
+        months.min = '0';
+        months.max = '600';
+        months.value = life.lifeMonths ? String(life.lifeMonths) : '';
+        months.disabled = !editable;
+        months.setAttribute('aria-label', t('lifeMonths'));
+        var residual = document.createElement('input');
+        residual.value = life.residual || '';
+        residual.disabled = !editable;
+        residual.setAttribute('aria-label', t('lifeResidual'));
+        body.appendChild(planField(t('lifePurchase'), purchased));
+        body.appendChild(planField(t('lifeSupplier'), supplier));
+        body.appendChild(planField(t('lifePrice'), price));
+        body.appendChild(planField(t('lifeWarranty'), warranty));
+        body.appendChild(planField(t('lifeMonths'), months));
+        body.appendChild(planField(t('lifeResidual'), residual));
+        var facts = el('div', 'asset-tree-life-facts');
+        if (life.monthly) facts.appendChild(el('span', 'asset-tree-life-monthly', t('lifeMonthly') + ': ' + life.monthly));
+        if (life.book) facts.appendChild(el('span', 'asset-tree-life-book', t('lifeBook') + ': ' + life.book));
+        var note = warrantyNote(life);
+        if (note) facts.appendChild(el('span', 'asset-tree-life-warranty', note));
+        body.appendChild(facts);
+        if (editable) {
+            body.appendChild(button(t('lifeSave'), 'asset-tree-btn primary', function () {
+                ajax('PUT', '/assets/' + asset.id + '/lifecycle', {
+                    purchased: purchased.value,
+                    supplier: supplier.value.trim(),
+                    price: price.value.trim(),
+                    warrantyUntil: warranty.value,
+                    lifeMonths: parseInt(months.value, 10) || 0,
+                    residual: residual.value.trim()
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        state.life[asset.id] = payload;
+                        showDetail(state.detail || asset, false);
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+        }
+        var writeoff = el('div', 'asset-tree-life-writeoff');
+        writeoff.appendChild(el('h3', null, t('lifeWriteoff')));
+        var stateLabel = life.writeoffState === 'pending' ? t('lifePending') : (life.writeoffState === 'approved' ? t('lifeApproved') : (life.writeoffState === 'rejected' ? t('lifeRejected') : ''));
+        if (stateLabel) writeoff.appendChild(el('p', 'asset-tree-life-state', stateLabel));
+        if (life.writeoffReason) writeoff.appendChild(el('p', null, life.writeoffReason));
+        if (life.approverName) writeoff.appendChild(el('p', null, t('lifeApprover') + ': ' + life.approverName));
+        if (life.writeoffState === 'pending' && life.approverKey && life.approverKey === state.userKey) {
+            var decision = el('div', 'asset-tree-inline-actions');
+            decision.appendChild(button(t('lifeApprove'), 'asset-tree-btn primary', function () {
+                ajax('POST', '/assets/' + asset.id + '/lifecycle/decision', { approve: true }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        state.life[asset.id] = payload;
+                        reloadCard(asset.id);
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            decision.appendChild(button(t('lifeReject'), 'asset-tree-btn', function () {
+                ajax('POST', '/assets/' + asset.id + '/lifecycle/decision', { approve: false }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        state.life[asset.id] = payload;
+                        showDetail(state.detail || asset, false);
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            writeoff.appendChild(decision);
+        }
+        if (mayEdit(asset) && life.writeoffState !== 'approved' && life.writeoffState !== 'pending') {
+            var reason = document.createElement('textarea');
+            reason.setAttribute('aria-label', t('lifeReason'));
+            reason.placeholder = t('lifeReason');
+            var approverKey = '';
+            writeoff.appendChild(planField(t('lifeReason'), reason));
+            writeoff.appendChild(planField(t('lifeApprover'), userPick(t('lifeApprover'), '', function (user) {
+                approverKey = user.userKey;
+            })));
+            writeoff.appendChild(button(t('lifeRequest'), 'asset-tree-btn', function () {
+                ajax('POST', '/assets/' + asset.id + '/lifecycle/writeoff', {
+                    reason: reason.value.trim(),
+                    approverKey: approverKey
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        state.life[asset.id] = payload;
+                        showDetail(state.detail || asset, false);
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+        }
+        body.appendChild(writeoff);
+        return body;
+    }
+
+    function lifeBlock(asset) {
+        var host = el('div', 'asset-tree-life-host');
+        if (state.life[asset.id]) host.appendChild(lifeForm(asset, state.life[asset.id]));
+        else if (state.lifeFailed[asset.id]) {
+            host.appendChild(el('p', 'asset-tree-hint', t('errorTitle')));
+            host.appendChild(button(t('retry'), 'asset-tree-btn', function () {
+                state.lifeFailed[asset.id] = false;
+                state.lifeLoading[asset.id] = false;
+                loadLife(asset.id);
+            }));
+        } else {
+            host.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadLife(asset.id);
+        }
+        return moduleBlock(t('lifeTitle'), host);
     }
 
     function renderExchangeSettings(panel) {

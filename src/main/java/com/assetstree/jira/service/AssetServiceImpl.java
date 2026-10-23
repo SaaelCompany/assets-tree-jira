@@ -52,6 +52,11 @@ import com.assetstree.jira.ao.ProjectAssetKeyEntity;
 import com.assetstree.jira.ao.ProjectGrantEntity;
 import com.assetstree.jira.ao.ProjectStatusEntity;
 import com.assetstree.jira.ao.ProjectViewEntity;
+import com.assetstree.jira.ao.FloorEntity;
+import com.assetstree.jira.ao.LifecycleEntity;
+import com.assetstree.jira.ao.PinEntity;
+import com.assetstree.jira.ao.RoomEntity;
+import com.assetstree.jira.ao.SavedReportEntity;
 import com.assetstree.jira.ao.ServicePlanEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
@@ -90,6 +95,14 @@ import com.assetstree.jira.dto.ReportBucketDto;
 import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.ReportHolderDto;
 import com.assetstree.jira.dto.ReportPlaceDto;
+import com.assetstree.jira.dto.FloorDto;
+import com.assetstree.jira.dto.LifecycleDto;
+import com.assetstree.jira.dto.PinDto;
+import com.assetstree.jira.dto.ReportLineDto;
+import com.assetstree.jira.dto.ReportViewDto;
+import com.assetstree.jira.dto.RoomDto;
+import com.assetstree.jira.dto.SavedReportDto;
+import com.assetstree.jira.dto.ScheduleRowDto;
 import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.UserProfileDto;
@@ -129,7 +142,16 @@ import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
+import com.assetstree.jira.model.Depreciation;
+import com.assetstree.jira.model.FloorBounds;
+import com.assetstree.jira.model.LifecycleDraft;
+import com.assetstree.jira.model.MoneyText;
+import com.assetstree.jira.model.ReportCatalog;
+import com.assetstree.jira.model.SavedReportDraft;
+import com.assetstree.jira.model.ScheduleDraft;
 import com.assetstree.jira.model.ServiceDue;
+import com.assetstree.jira.model.WorkKind;
+import com.assetstree.jira.model.WriteoffDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.Statuses;
@@ -826,6 +848,8 @@ public class AssetServiceImpl implements AssetService {
                 deleteRows(AssetFileEntity.class, "ASSET_ID", toDelete);
                 deleteRows(AssetActivityEntity.class, "ASSET_ID", toDelete);
                 deleteRows(ServicePlanEntity.class, "ASSET_ID", toDelete);
+                deleteRows(LifecycleEntity.class, "ASSET_ID", toDelete);
+                deleteRows(PinEntity.class, "ASSET_ID", toDelete);
                 List<Integer> ruleIds = new ArrayList<Integer>();
                 for (PortalRuleEntity rule : findIn(PortalRuleEntity.class, "ASSET_ID", toDelete, null)) {
                     ruleIds.add(Integer.valueOf(rule.getID()));
@@ -5700,6 +5724,20 @@ public class AssetServiceImpl implements AssetService {
             boolean notify = draft.getNotify() == null || draft.getNotify().booleanValue();
             row.setNotifyFlag(notify ? 1 : 0);
         }
+        if (draft.getKind() != null || creating) {
+            String kind = WorkKind.clean(draft.getKind());
+            if (kind.isEmpty()) {
+                throw new AssetException(400, "asset-tree.error.service");
+            }
+            row.setKind(kind);
+        }
+        if (draft.getAssigneeKey() != null || creating) {
+            String assignee = draft.getAssigneeKey() == null ? "" : draft.getAssigneeKey().trim();
+            if (!assignee.isEmpty() && userManager().getUserByKey(assignee) == null) {
+                throw new AssetException(400, "asset-tree.error.user");
+            }
+            row.setAssigneeKey(assignee);
+        }
         if (row.getName() == null || row.getLastDone() == null || row.getEveryUnit() == null) {
             throw new AssetException(400, "asset-tree.error.service");
         }
@@ -5748,6 +5786,9 @@ public class AssetServiceImpl implements AssetService {
         dto.setEveryUnit(row.getEveryUnit() == null ? "" : row.getEveryUnit());
         dto.setStatusKey(row.getStatusKey() == null ? "" : row.getStatusKey());
         dto.setNotify(row.getNotifyFlag() == 1);
+        dto.setKind(WorkKind.clean(row.getKind()));
+        dto.setAssigneeKey(row.getAssigneeKey() == null ? "" : row.getAssigneeKey());
+        dto.setAssigneeName(displayName(row.getAssigneeKey()));
         LocalDate next = ServiceDue.next(row.getLastDone(), row.getEveryCount(), row.getEveryUnit());
         dto.setNextDue(next == null ? "" : next.toString());
         dto.setDue(ServiceDue.reached(next, today));
@@ -5770,6 +5811,987 @@ public class AssetServiceImpl implements AssetService {
             names.append(row.getName() == null ? "" : row.getName());
         }
         return names.toString();
+    }
+
+    private void requireModule(String projectKey, String module) {
+        if (!moduleOn(projectKey, module)) {
+            throw new AssetException(400, "asset-tree.error.module.off");
+        }
+    }
+
+    @Override
+    public List<ScheduleRowDto> schedule(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        return ao().executeInTransaction(new TransactionCallback<List<ScheduleRowDto>>() {
+            @Override
+            public List<ScheduleRowDto> doInTransaction() {
+                return scheduleRows(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public List<ScheduleRowDto> createSchedule(ApplicationUser user, String projectKey, final ScheduleDraft draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        if (draft == null || draft.getAssetIds() == null || draft.getAssetIds().isEmpty() || draft.getAssetIds().size() > 40) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        final String kind = WorkKind.clean(draft.getKind());
+        if (kind.isEmpty() || !ServiceDue.countAllowed(draft.getEveryCount() == null ? 0 : draft.getEveryCount().intValue(), ServiceDue.unit(draft.getEveryUnit()))) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        String supplied = draft.getName() == null ? "" : draft.getName().trim();
+        if (supplied.length() > 80) {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        final String name = supplied.isEmpty() ? kindLabel(kind) : supplied;
+        final String assignee = draft.getAssigneeKey() == null ? "" : draft.getAssigneeKey().trim();
+        if (!assignee.isEmpty() && userManager().getUserByKey(assignee) == null) {
+            throw new AssetException(400, "asset-tree.error.user");
+        }
+        final List<ServiceNotice> notices = new ArrayList<ServiceNotice>();
+        List<ScheduleRowDto> created = ao().executeInTransaction(new TransactionCallback<List<ScheduleRowDto>>() {
+            @Override
+            public List<ScheduleRowDto> doInTransaction() {
+                List<ScheduleRowDto> rows = new ArrayList<ScheduleRowDto>();
+                LocalDate today = LocalDate.now();
+                for (Integer assetId : draft.getAssetIds()) {
+                    if (assetId == null) {
+                        throw new AssetException(400, "asset-tree.error.service");
+                    }
+                    AssetEntity asset = ao().get(AssetEntity.class, assetId.intValue());
+                    if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey()) || isLocation(asset)) {
+                        throw new AssetException(400, "asset-tree.error.service");
+                    }
+                    if (plansOf(asset.getID()).size() >= MAX_PLANS) {
+                        throw new AssetException(400, "asset-tree.error.service.limit");
+                    }
+                    ServicePlanDraft plan = new ServicePlanDraft();
+                    plan.setName(name);
+                    plan.setKind(kind);
+                    plan.setAssigneeKey(assignee);
+                    plan.setLastDone(draft.getLastDone());
+                    plan.setEveryCount(draft.getEveryCount());
+                    plan.setEveryUnit(draft.getEveryUnit());
+                    plan.setStatusKey(draft.getStatusKey() == null ? "" : draft.getStatusKey());
+                    plan.setNotify(draft.getNotify() == null ? Boolean.TRUE : draft.getNotify());
+                    ServicePlanEntity row = ao().create(ServicePlanEntity.class, new DBParam("ASSET_ID", asset.getID()));
+                    fillPlan(row, asset, plan, true);
+                    row.save();
+                    rows.add(scheduleRow(row, asset, today));
+                }
+                applyDueQuietly(project.getKey(), notices);
+                return rows;
+            }
+        });
+        dispatchNotices(notices);
+        return created;
+    }
+
+    private List<ScheduleRowDto> scheduleRows(String projectKey) {
+        Map<Integer, AssetEntity> assets = new HashMap<Integer, AssetEntity>();
+        for (AssetEntity asset : assetsIn(projectKey)) {
+            assets.put(Integer.valueOf(asset.getID()), asset);
+        }
+        ServicePlanEntity[] plans = ao().find(ServicePlanEntity.class);
+        List<ScheduleRowDto> rows = new ArrayList<ScheduleRowDto>();
+        LocalDate today = LocalDate.now();
+        if (plans != null) {
+            for (ServicePlanEntity plan : plans) {
+                AssetEntity asset = assets.get(Integer.valueOf(plan.getAssetId()));
+                if (asset == null || isLocation(asset)) {
+                    continue;
+                }
+                rows.add(scheduleRow(plan, asset, today));
+            }
+        }
+        return rows;
+    }
+
+    private ScheduleRowDto scheduleRow(ServicePlanEntity plan, AssetEntity asset, LocalDate today) {
+        ServicePlanDto source = planDto(plan, today);
+        ScheduleRowDto row = new ScheduleRowDto();
+        row.setId(source.getId());
+        row.setAssetId(asset.getID());
+        row.setAssetName(asset.getName() == null ? "" : asset.getName());
+        row.setObjectKey(asset.getObjectKey() == null ? "" : asset.getObjectKey());
+        row.setName(source.getName());
+        row.setKind(source.getKind());
+        row.setAssigneeKey(source.getAssigneeKey());
+        row.setAssigneeName(source.getAssigneeName());
+        row.setLastDone(source.getLastDone());
+        row.setEveryCount(source.getEveryCount());
+        row.setEveryUnit(source.getEveryUnit());
+        row.setNextDue(source.getNextDue());
+        row.setDue(source.isDue());
+        return row;
+    }
+
+    private String kindLabel(String kind) {
+        if (WorkKind.KTS.equals(kind)) {
+            return i18n().getText("asset-tree.ui.kindKts");
+        }
+        if (WorkKind.VERIFY.equals(kind)) {
+            return i18n().getText("asset-tree.ui.kindVerify");
+        }
+        return i18n().getText("asset-tree.ui.kindTo");
+    }
+
+    @Override
+    public List<FloorDto> floors(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.MAP);
+        return ao().executeInTransaction(new TransactionCallback<List<FloorDto>>() {
+            @Override
+            public List<FloorDto> doInTransaction() {
+                return floorDtos(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public FloorDto createFloor(ApplicationUser user, String projectKey, final FloorDto draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.MAP);
+        final String name = floorName(draft == null ? null : draft.getName());
+        final int level = draft == null ? 1 : draft.getLevel();
+        if (level < -20 || level > 200) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FloorDto>() {
+            @Override
+            public FloorDto doInTransaction() {
+                if (floorsOf(project.getKey()).size() >= FloorBounds.MAX_FLOORS) {
+                    throw new AssetException(400, "asset-tree.error.floor");
+                }
+                int placeId = draft == null ? 0 : draft.getPlaceId();
+                FloorEntity row = ao().create(FloorEntity.class, new DBParam("PROJECT_KEY", project.getKey()), new DBParam("NAME", name));
+                row.setPlaceId(checkedPlace(project.getKey(), placeId));
+                row.setLevel(level);
+                row.setSortOrder(row.getID());
+                row.save();
+                return floorDto(row);
+            }
+        });
+    }
+
+    @Override
+    public FloorDto saveFloor(ApplicationUser user, String projectKey, final int floorId, final FloorDto draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.MAP);
+        if (draft == null) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        final String name = floorName(draft.getName());
+        if (draft.getLevel() < -20 || draft.getLevel() > 200) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        List<RoomDto> rooms = draft.getRooms() == null ? new ArrayList<RoomDto>() : draft.getRooms();
+        List<PinDto> pins = draft.getPins() == null ? new ArrayList<PinDto>() : draft.getPins();
+        if (rooms.size() > FloorBounds.MAX_ROOMS || pins.size() > FloorBounds.MAX_PINS) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        return ao().executeInTransaction(new TransactionCallback<FloorDto>() {
+            @Override
+            public FloorDto doInTransaction() {
+                FloorEntity row = requireFloor(project.getKey(), floorId);
+                row.setName(name);
+                row.setLevel(draft.getLevel());
+                row.setPlaceId(checkedPlace(project.getKey(), draft.getPlaceId()));
+                row.save();
+                ao().deleteWithSQL(RoomEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
+                ao().deleteWithSQL(PinEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
+                Set<Integer> seen = new HashSet<Integer>();
+                if (draft.getRooms() != null) {
+                    for (RoomDto room : draft.getRooms()) {
+                        if (room == null) {
+                            continue;
+                        }
+                        int x = FloorBounds.clamp(room.getX(), FloorBounds.CANVAS - FloorBounds.MIN_ROOM);
+                        int y = FloorBounds.clamp(room.getY(), FloorBounds.CANVAS_HEIGHT - FloorBounds.MIN_ROOM);
+                        int w = Math.max(FloorBounds.MIN_ROOM, room.getW());
+                        int h = Math.max(FloorBounds.MIN_ROOM, room.getH());
+                        if (x + w > FloorBounds.CANVAS) {
+                            w = FloorBounds.CANVAS - x;
+                        }
+                        if (y + h > FloorBounds.CANVAS_HEIGHT) {
+                            h = FloorBounds.CANVAS_HEIGHT - y;
+                        }
+                        RoomEntity stored = ao().create(RoomEntity.class, new DBParam("FLOOR_ID", row.getID()));
+                        stored.setName(roomName(room.getName()));
+                        stored.setPosX(x);
+                        stored.setPosY(y);
+                        stored.setPosW(w);
+                        stored.setPosH(h);
+                        stored.save();
+                    }
+                }
+                if (draft.getPins() != null) {
+                    for (PinDto pin : draft.getPins()) {
+                        if (pin == null || !seen.add(Integer.valueOf(pin.getAssetId()))) {
+                            continue;
+                        }
+                        AssetEntity asset = ao().get(AssetEntity.class, pin.getAssetId());
+                        if (asset == null || !ProjectKeys.same(asset.getProjectKey(), project.getKey()) || isLocation(asset)) {
+                            throw new AssetException(400, "asset-tree.error.floor");
+                        }
+                        PinEntity stored = ao().create(PinEntity.class, new DBParam("FLOOR_ID", row.getID()), new DBParam("ASSET_ID", asset.getID()));
+                        stored.setPosX(FloorBounds.clamp(pin.getX(), FloorBounds.CANVAS));
+                        stored.setPosY(FloorBounds.clamp(pin.getY(), FloorBounds.CANVAS_HEIGHT));
+                        stored.save();
+                    }
+                }
+                return floorDto(row);
+            }
+        });
+    }
+
+    @Override
+    public void deleteFloor(ApplicationUser user, String projectKey, final int floorId) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.MAP);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                FloorEntity row = requireFloor(project.getKey(), floorId);
+                ao().deleteWithSQL(RoomEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
+                ao().deleteWithSQL(PinEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
+                ao().delete(row);
+                return null;
+            }
+        });
+    }
+
+    private String roomName(String raw) {
+        String name = raw == null ? "" : raw.trim();
+        if (name.isEmpty()) {
+            return i18n().getText("asset-tree.ui.mapRoom");
+        }
+        if (name.length() > 80) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        return name;
+    }
+
+    private String floorName(String raw) {
+        String name = raw == null ? "" : raw.trim();
+        if (name.isEmpty() || name.length() > 80) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        return name;
+    }
+
+    private int checkedPlace(String projectKey, int placeId) {
+        if (placeId <= 0) {
+            return 0;
+        }
+        AssetEntity place = ao().get(AssetEntity.class, placeId);
+        if (place == null || !ProjectKeys.same(place.getProjectKey(), projectKey) || !isLocation(place)) {
+            throw new AssetException(400, "asset-tree.error.floor");
+        }
+        return place.getID();
+    }
+
+    private FloorEntity requireFloor(String projectKey, int floorId) {
+        FloorEntity row = ao().get(FloorEntity.class, floorId);
+        if (row == null || !ProjectKeys.same(row.getProjectKey(), projectKey)) {
+            throw new AssetException(404, "asset-tree.error.notFound");
+        }
+        return row;
+    }
+
+    private List<FloorEntity> floorsOf(String projectKey) {
+        FloorEntity[] rows = ao().find(FloorEntity.class);
+        List<FloorEntity> found = new ArrayList<FloorEntity>();
+        if (rows != null) {
+            for (FloorEntity row : rows) {
+                if (ProjectKeys.same(row.getProjectKey(), projectKey)) {
+                    found.add(row);
+                }
+            }
+        }
+        Collections.sort(found, new Comparator<FloorEntity>() {
+            @Override
+            public int compare(FloorEntity left, FloorEntity right) {
+                int byLevel = left.getLevel() - right.getLevel();
+                return byLevel != 0 ? byLevel : left.getID() - right.getID();
+            }
+        });
+        return found;
+    }
+
+    private List<FloorDto> floorDtos(String projectKey) {
+        List<FloorDto> result = new ArrayList<FloorDto>();
+        for (FloorEntity row : floorsOf(projectKey)) {
+            result.add(floorDto(row));
+        }
+        return result;
+    }
+
+    private FloorDto floorDto(FloorEntity row) {
+        FloorDto dto = new FloorDto();
+        dto.setId(row.getID());
+        dto.setName(row.getName() == null ? "" : row.getName());
+        dto.setLevel(row.getLevel());
+        dto.setPlaceId(row.getPlaceId());
+        if (row.getPlaceId() > 0) {
+            AssetEntity place = ao().get(AssetEntity.class, row.getPlaceId());
+            dto.setPlaceName(place == null || place.getName() == null ? "" : place.getName());
+        } else {
+            dto.setPlaceName("");
+        }
+        RoomEntity[] rooms = ao().find(RoomEntity.class, Query.select().where("FLOOR_ID = ?", row.getID()));
+        List<RoomDto> roomDtos = new ArrayList<RoomDto>();
+        if (rooms != null) {
+            for (RoomEntity room : rooms) {
+                RoomDto item = new RoomDto();
+                item.setId(room.getID());
+                item.setName(room.getName() == null ? "" : room.getName());
+                item.setX(room.getPosX());
+                item.setY(room.getPosY());
+                item.setW(room.getPosW());
+                item.setH(room.getPosH());
+                roomDtos.add(item);
+            }
+        }
+        dto.setRooms(roomDtos);
+        PinEntity[] pins = ao().find(PinEntity.class, Query.select().where("FLOOR_ID = ?", row.getID()));
+        List<PinDto> pinDtos = new ArrayList<PinDto>();
+        if (pins != null) {
+            for (PinEntity pin : pins) {
+                AssetEntity asset = ao().get(AssetEntity.class, pin.getAssetId());
+                PinDto item = new PinDto();
+                item.setId(pin.getID());
+                item.setAssetId(pin.getAssetId());
+                item.setAssetName(asset == null || asset.getName() == null ? "" : asset.getName());
+                item.setObjectKey(asset == null || asset.getObjectKey() == null ? "" : asset.getObjectKey());
+                item.setX(pin.getPosX());
+                item.setY(pin.getPosY());
+                pinDtos.add(item);
+            }
+        }
+        dto.setPins(pinDtos);
+        return dto;
+    }
+
+    @Override
+    public List<SavedReportDto> reports(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.REPORTS);
+        return ao().executeInTransaction(new TransactionCallback<List<SavedReportDto>>() {
+            @Override
+            public List<SavedReportDto> doInTransaction() {
+                return reportCatalog(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public SavedReportDto createReport(ApplicationUser user, String projectKey, final SavedReportDraft draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.REPORTS);
+        if (draft == null) {
+            throw new AssetException(400, "asset-tree.error.report");
+        }
+        final String name = draft.getName() == null ? "" : draft.getName().trim();
+        final String group = ReportCatalog.group(draft.getGroupBy());
+        final String filter = reportFilter(draft.getFilterField());
+        final String value = draft.getFilterValue() == null ? "" : draft.getFilterValue().trim();
+        if (name.isEmpty() || name.length() > 80 || group.isEmpty() || (filter.isEmpty() != value.isEmpty()) || value.length() > 80) {
+            throw new AssetException(400, "asset-tree.error.report");
+        }
+        return ao().executeInTransaction(new TransactionCallback<SavedReportDto>() {
+            @Override
+            public SavedReportDto doInTransaction() {
+                SavedReportEntity row = ao().create(SavedReportEntity.class,
+                        new DBParam("PROJECT_KEY", project.getKey()),
+                        new DBParam("NAME", name),
+                        new DBParam("GROUP_BY", group));
+                row.setFilterField(filter);
+                row.setFilterValue(value);
+                row.save();
+                return savedReportDto(row);
+            }
+        });
+    }
+
+    @Override
+    public void deleteReport(ApplicationUser user, String projectKey, String reportKey) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.REPORTS);
+        final int id = ReportCatalog.savedId(reportKey);
+        if (id <= 0) {
+            throw new AssetException(400, "asset-tree.error.report");
+        }
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                SavedReportEntity row = ao().get(SavedReportEntity.class, id);
+                if (row == null || !ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.notFound");
+                }
+                ao().delete(row);
+                return null;
+            }
+        });
+    }
+
+    @Override
+    public ReportViewDto reportView(ApplicationUser user, final String projectKey, final String reportKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.REPORTS);
+        return ao().executeInTransaction(new TransactionCallback<ReportViewDto>() {
+            @Override
+            public ReportViewDto doInTransaction() {
+                String group = ReportCatalog.group(reportKey);
+                String filter = "";
+                String value = "";
+                String title;
+                boolean standard = true;
+                String key = reportKey == null ? "" : reportKey.trim().toLowerCase(Locale.ROOT);
+                if (ReportCatalog.isStandard(key)) {
+                    title = standardTitle(key);
+                    if (ReportCatalog.STATUS.equals(key) || ReportCatalog.TYPE.equals(key)
+                            || ReportCatalog.PLACE.equals(key) || ReportCatalog.HOLDER.equals(key)) {
+                        group = key;
+                    }
+                } else {
+                    SavedReportEntity saved = ao().get(SavedReportEntity.class, ReportCatalog.savedId(key));
+                    if (saved == null || !ProjectKeys.same(saved.getProjectKey(), project.getKey())) {
+                        throw new AssetException(404, "asset-tree.error.notFound");
+                    }
+                    standard = false;
+                    title = saved.getName();
+                    group = saved.getGroupBy();
+                    filter = saved.getFilterField() == null ? "" : saved.getFilterField();
+                    value = saved.getFilterValue() == null ? "" : saved.getFilterValue();
+                    key = ReportCatalog.savedKey(saved.getID());
+                }
+                return buildReport(project, key, title, standard, group, filter, value);
+            }
+        });
+    }
+
+    private List<SavedReportDto> reportCatalog(String projectKey) {
+        List<SavedReportDto> items = new ArrayList<SavedReportDto>();
+        for (String key : ReportCatalog.standard()) {
+            SavedReportDto item = new SavedReportDto();
+            item.setId(key);
+            item.setName(standardTitle(key));
+            item.setGroupBy(ReportCatalog.group(key));
+            item.setStandard(true);
+            items.add(item);
+        }
+        SavedReportEntity[] rows = ao().find(SavedReportEntity.class);
+        if (rows != null) {
+            List<SavedReportEntity> own = new ArrayList<SavedReportEntity>();
+            for (SavedReportEntity row : rows) {
+                if (ProjectKeys.same(row.getProjectKey(), projectKey)) {
+                    own.add(row);
+                }
+            }
+            Collections.sort(own, new Comparator<SavedReportEntity>() {
+                @Override
+                public int compare(SavedReportEntity left, SavedReportEntity right) {
+                    return left.getID() - right.getID();
+                }
+            });
+            for (SavedReportEntity row : own) {
+                items.add(savedReportDto(row));
+            }
+        }
+        return items;
+    }
+
+    private SavedReportDto savedReportDto(SavedReportEntity row) {
+        SavedReportDto dto = new SavedReportDto();
+        dto.setId(ReportCatalog.savedKey(row.getID()));
+        dto.setName(row.getName() == null ? "" : row.getName());
+        dto.setGroupBy(row.getGroupBy() == null ? "" : row.getGroupBy());
+        dto.setFilterField(row.getFilterField() == null ? "" : row.getFilterField());
+        dto.setFilterValue(row.getFilterValue() == null ? "" : row.getFilterValue());
+        dto.setStandard(false);
+        return dto;
+    }
+
+    private String reportFilter(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return "";
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        if (ReportCatalog.STATUS.equals(value) || ReportCatalog.TYPE.equals(value) || ReportCatalog.HOLDER.equals(value)) {
+            return value;
+        }
+        return "";
+    }
+
+    private String standardTitle(String key) {
+        if (ReportCatalog.TYPE.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportByType");
+        }
+        if (ReportCatalog.PLACE.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportByPlace");
+        }
+        if (ReportCatalog.HOLDER.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportHolders");
+        }
+        if (ReportCatalog.SERVICE.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportService");
+        }
+        if (ReportCatalog.WARRANTY.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportWarranty");
+        }
+        if (ReportCatalog.COST.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportCost");
+        }
+        return i18n().getText("asset-tree.ui.reportByStatus");
+    }
+
+    private ReportViewDto buildReport(Project project, String key, String title, boolean standard,
+            String group, String filter, String value) {
+        AssetEntity[] assets = assetsIn(project.getKey());
+        Map<String, AssetTypeDto> types = indexTypes(typeDtos(project.getKey(), assets));
+        Map<Integer, AssetEntity> index = new HashMap<Integer, AssetEntity>();
+        for (AssetEntity asset : assets) {
+            index.put(Integer.valueOf(asset.getID()), asset);
+        }
+        Map<Integer, LifecycleEntity> lives = lifeIndex();
+        Map<Integer, ServicePlanEntity> nextPlan = nextPlanIndex();
+        List<AssetEntity> chosen = new ArrayList<AssetEntity>();
+        for (AssetEntity asset : assets) {
+            AssetTypeDto type = types.get(asset.getTypeKey());
+            if (type != null && type.isLocation()) {
+                continue;
+            }
+            if (!reportFilterMatches(asset, filter, value)) {
+                continue;
+            }
+            if (ReportCatalog.SERVICE.equals(key) && !nextPlan.containsKey(Integer.valueOf(asset.getID()))) {
+                continue;
+            }
+            LifecycleEntity life = lives.get(Integer.valueOf(asset.getID()));
+            if (ReportCatalog.WARRANTY.equals(key) && (life == null || life.getWarrantyUntil() == null || life.getWarrantyUntil().isEmpty())) {
+                continue;
+            }
+            if (ReportCatalog.COST.equals(key) && (life == null || life.getPriceMinor() <= 0L)) {
+                continue;
+            }
+            chosen.add(asset);
+        }
+        Map<String, ReportBucketDto> buckets = new LinkedHashMap<String, ReportBucketDto>();
+        List<ReportLineDto> lines = new ArrayList<ReportLineDto>();
+        long sum = 0L;
+        LocalDate today = LocalDate.now();
+        for (AssetEntity asset : chosen) {
+            String bucketKey = reportBucketKey(key, group, asset, types, index, lives, nextPlan, today);
+            String label = reportBucketLabel(key, group, bucketKey, asset, types, index);
+            ReportBucketDto bucket = buckets.get(bucketKey);
+            if (bucket == null) {
+                bucket = new ReportBucketDto(bucketKey, label, reportColor(key, group, bucketKey, types), 0);
+                buckets.put(bucketKey, bucket);
+            }
+            bucket.setCount(bucket.getCount() + 1);
+            String detail = reportDetail(key, asset, lives, nextPlan, today);
+            if (ReportCatalog.COST.equals(key)) {
+                sum += bookOf(lives.get(Integer.valueOf(asset.getID())), today);
+            }
+            if (lines.size() < 300) {
+                lines.add(new ReportLineDto(asset.getID(), asset.getObjectKey(), asset.getName(), detail));
+            }
+        }
+        ReportViewDto view = new ReportViewDto();
+        view.setId(key);
+        view.setTitle(title);
+        view.setHint(i18n().getText("asset-tree.ui.reportHint"));
+        view.setStandard(standard);
+        view.setTotal(chosen.size());
+        view.setRows(new ArrayList<ReportBucketDto>(buckets.values()));
+        view.setLines(lines);
+        view.setSum(ReportCatalog.COST.equals(key) ? MoneyText.format(sum) : "");
+        return view;
+    }
+
+    private boolean reportFilterMatches(AssetEntity asset, String filter, String value) {
+        if (filter == null || filter.isEmpty()) {
+            return true;
+        }
+        if (ReportCatalog.STATUS.equals(filter)) {
+            return Statuses.canonical(asset.getStatus()).equals(value);
+        }
+        if (ReportCatalog.TYPE.equals(filter)) {
+            return value.equals(asset.getTypeKey());
+        }
+        return value.equals(asset.getCustodianKey() == null ? "" : asset.getCustodianKey());
+    }
+
+    private String reportBucketKey(String reportKey, String group, AssetEntity asset, Map<String, AssetTypeDto> types,
+            Map<Integer, AssetEntity> index, Map<Integer, LifecycleEntity> lives, Map<Integer, ServicePlanEntity> plans, LocalDate today) {
+        if (ReportCatalog.SERVICE.equals(reportKey)) {
+            ServicePlanEntity plan = plans.get(Integer.valueOf(asset.getID()));
+            return plan == null ? WorkKind.TO : WorkKind.clean(plan.getKind());
+        }
+        if (ReportCatalog.WARRANTY.equals(reportKey)) {
+            return warrantyBand(lives.get(Integer.valueOf(asset.getID())), today);
+        }
+        if (ReportCatalog.COST.equals(reportKey)) {
+            return asset.getTypeKey() == null ? "" : asset.getTypeKey();
+        }
+        if (ReportCatalog.TYPE.equals(group)) {
+            return asset.getTypeKey() == null ? "" : asset.getTypeKey();
+        }
+        if (ReportCatalog.PLACE.equals(group)) {
+            return placeKey(asset, types, index);
+        }
+        if (ReportCatalog.HOLDER.equals(group)) {
+            return asset.getCustodianKey() == null ? "" : asset.getCustodianKey();
+        }
+        return Statuses.canonical(asset.getStatus());
+    }
+
+    private String reportBucketLabel(String reportKey, String group, String bucketKey, AssetEntity asset,
+            Map<String, AssetTypeDto> types, Map<Integer, AssetEntity> index) {
+        if (ReportCatalog.SERVICE.equals(reportKey)) {
+            return kindLabel(bucketKey);
+        }
+        if (ReportCatalog.WARRANTY.equals(reportKey)) {
+            if ("expired".equals(bucketKey)) {
+                return i18n().getText("asset-tree.ui.lifeWarrantyOff");
+            }
+            if ("soon".equals(bucketKey)) {
+                return i18n().getText("asset-tree.ui.lifeWarrantySoon");
+            }
+            return i18n().getText("asset-tree.ui.lifeWarrantyOn");
+        }
+        if (ReportCatalog.TYPE.equals(group) || ReportCatalog.COST.equals(reportKey)) {
+            AssetTypeDto type = types.get(bucketKey);
+            return type == null ? bucketKey : type.getLabel();
+        }
+        if (ReportCatalog.PLACE.equals(group)) {
+            if (bucketKey.isEmpty()) {
+                return i18n().getText("asset-tree.ui.root");
+            }
+            AssetEntity place = index.get(Integer.valueOf(bucketKey));
+            return place == null || place.getName() == null ? bucketKey : place.getName();
+        }
+        if (ReportCatalog.HOLDER.equals(group)) {
+            return bucketKey.isEmpty() ? i18n().getText("asset-tree.ui.reportUnassigned") : displayName(bucketKey);
+        }
+        return statusText(bucketKey);
+    }
+
+    private String reportColor(String reportKey, String group, String bucketKey, Map<String, AssetTypeDto> types) {
+        if (ReportCatalog.SERVICE.equals(reportKey)) {
+            if (WorkKind.KTS.equals(bucketKey)) {
+                return "#FF8B00";
+            }
+            if (WorkKind.VERIFY.equals(bucketKey)) {
+                return "#6554C0";
+            }
+            return "#0052CC";
+        }
+        if ("expired".equals(bucketKey)) {
+            return "#DE350B";
+        }
+        if ("soon".equals(bucketKey)) {
+            return "#FF8B00";
+        }
+        if (ReportCatalog.TYPE.equals(group) || ReportCatalog.COST.equals(reportKey)) {
+            AssetTypeDto type = types.get(bucketKey);
+            return type == null || type.getColor() == null ? "#0052CC" : type.getColor();
+        }
+        return "#0052CC";
+    }
+
+    private String reportDetail(String reportKey, AssetEntity asset, Map<Integer, LifecycleEntity> lives,
+            Map<Integer, ServicePlanEntity> plans, LocalDate today) {
+        if (ReportCatalog.SERVICE.equals(reportKey)) {
+            ServicePlanEntity plan = plans.get(Integer.valueOf(asset.getID()));
+            if (plan == null) {
+                return "";
+            }
+            LocalDate next = ServiceDue.next(plan.getLastDone(), plan.getEveryCount(), plan.getEveryUnit());
+            return kindLabel(WorkKind.clean(plan.getKind())) + (next == null ? "" : " · " + next.toString());
+        }
+        LifecycleEntity life = lives.get(Integer.valueOf(asset.getID()));
+        if (life == null) {
+            return "";
+        }
+        if (ReportCatalog.WARRANTY.equals(reportKey)) {
+            return life.getWarrantyUntil() == null ? "" : life.getWarrantyUntil();
+        }
+        if (ReportCatalog.COST.equals(reportKey)) {
+            return MoneyText.format(bookOf(life, today));
+        }
+        return "";
+    }
+
+    private String placeKey(AssetEntity asset, Map<String, AssetTypeDto> types, Map<Integer, AssetEntity> index) {
+        Integer parent = asset.getParentId();
+        int guard = 0;
+        while (parent != null && parent.intValue() > 0 && guard < 40) {
+            AssetEntity node = index.get(parent);
+            if (node == null) {
+                break;
+            }
+            AssetTypeDto type = types.get(node.getTypeKey());
+            if (type != null && type.isLocation()) {
+                return String.valueOf(node.getID());
+            }
+            parent = node.getParentId();
+            guard++;
+        }
+        return "";
+    }
+
+    private String warrantyBand(LifecycleEntity life, LocalDate today) {
+        String raw = life == null ? "" : life.getWarrantyUntil();
+        String iso = FieldDates.canonical(raw);
+        if (iso == null || iso.isEmpty()) {
+            return "expired";
+        }
+        LocalDate until = LocalDate.parse(iso);
+        if (!Depreciation.warrantyActive(until, today)) {
+            return "expired";
+        }
+        if (!until.isAfter(today.plusDays(90))) {
+            return "soon";
+        }
+        return "active";
+    }
+
+    private long bookOf(LifecycleEntity life, LocalDate today) {
+        if (life == null) {
+            return 0L;
+        }
+        String iso = FieldDates.canonical(life.getPurchased());
+        LocalDate purchased = iso == null || iso.isEmpty() ? null : LocalDate.parse(iso);
+        return Depreciation.bookMinor(life.getPriceMinor(), life.getResidualMinor(), life.getLifeMonths(),
+                Depreciation.elapsedMonths(purchased, today));
+    }
+
+    private Map<Integer, LifecycleEntity> lifeIndex() {
+        Map<Integer, LifecycleEntity> index = new HashMap<Integer, LifecycleEntity>();
+        LifecycleEntity[] rows = ao().find(LifecycleEntity.class);
+        if (rows != null) {
+            for (LifecycleEntity row : rows) {
+                index.put(Integer.valueOf(row.getAssetId()), row);
+            }
+        }
+        return index;
+    }
+
+    private Map<Integer, ServicePlanEntity> nextPlanIndex() {
+        Map<Integer, ServicePlanEntity> index = new HashMap<Integer, ServicePlanEntity>();
+        ServicePlanEntity[] rows = ao().find(ServicePlanEntity.class);
+        LocalDate today = LocalDate.now();
+        if (rows != null) {
+            for (ServicePlanEntity row : rows) {
+                Integer id = Integer.valueOf(row.getAssetId());
+                ServicePlanEntity current = index.get(id);
+                if (current == null || sooner(row, current, today)) {
+                    index.put(id, row);
+                }
+            }
+        }
+        return index;
+    }
+
+    private boolean sooner(ServicePlanEntity candidate, ServicePlanEntity current, LocalDate today) {
+        LocalDate left = ServiceDue.next(candidate.getLastDone(), candidate.getEveryCount(), candidate.getEveryUnit());
+        LocalDate right = ServiceDue.next(current.getLastDone(), current.getEveryCount(), current.getEveryUnit());
+        if (left == null) {
+            return false;
+        }
+        if (right == null) {
+            return true;
+        }
+        return left.isBefore(right);
+    }
+
+    @Override
+    public LifecycleDto lifecycle(ApplicationUser user, final int assetId) {
+        final AssetEntity asset = equipmentForLife(user, assetId, false);
+        return ao().executeInTransaction(new TransactionCallback<LifecycleDto>() {
+            @Override
+            public LifecycleDto doInTransaction() {
+                return lifecycleDto(asset, lifeRow(asset.getID()));
+            }
+        });
+    }
+
+    @Override
+    public LifecycleDto saveLifecycle(ApplicationUser user, final int assetId, final LifecycleDraft draft) {
+        final AssetEntity asset = equipmentForLife(user, assetId, true);
+        if (draft == null) {
+            throw new AssetException(400, "asset-tree.error.life");
+        }
+        return ao().executeInTransaction(new TransactionCallback<LifecycleDto>() {
+            @Override
+            public LifecycleDto doInTransaction() {
+                LifecycleEntity row = ensureLife(asset.getID());
+                if ("approved".equals(row.getWriteoffState())) {
+                    throw new AssetException(400, "asset-tree.error.writeoff.closed");
+                }
+                String purchased = FieldDates.canonical(draft.getPurchased());
+                String warranty = FieldDates.canonical(draft.getWarrantyUntil());
+                if (purchased == null || warranty == null) {
+                    throw new AssetException(400, "asset-tree.error.life");
+                }
+                Long price = MoneyText.parse(draft.getPrice());
+                Long residual = MoneyText.parse(draft.getResidual());
+                int months = draft.getLifeMonths() == null ? 0 : draft.getLifeMonths().intValue();
+                String supplier = draft.getSupplier() == null ? "" : draft.getSupplier().trim();
+                if (price == null || residual == null || months < 0 || months > 600 || supplier.length() > 120
+                        || residual.longValue() > price.longValue()) {
+                    throw new AssetException(400, "asset-tree.error.life");
+                }
+                row.setPurchased(purchased);
+                row.setWarrantyUntil(warranty);
+                row.setSupplier(supplier);
+                row.setPriceMinor(price.longValue());
+                row.setResidualMinor(residual.longValue());
+                row.setLifeMonths(months);
+                row.save();
+                return lifecycleDto(asset, row);
+            }
+        });
+    }
+
+    @Override
+    public LifecycleDto requestWriteoff(ApplicationUser user, final int assetId, final WriteoffDraft draft) {
+        final AssetEntity asset = equipmentForLife(user, assetId, true);
+        if (draft == null) {
+            throw new AssetException(400, "asset-tree.error.life");
+        }
+        final String reason = draft.getReason() == null ? "" : draft.getReason().trim();
+        final String approver = draft.getApproverKey() == null ? "" : draft.getApproverKey().trim();
+        if (reason.isEmpty() || reason.length() > 500) {
+            throw new AssetException(400, "asset-tree.error.life");
+        }
+        if (approver.isEmpty() || userManager().getUserByKey(approver) == null) {
+            throw new AssetException(400, "asset-tree.error.writeoff.approver");
+        }
+        return ao().executeInTransaction(new TransactionCallback<LifecycleDto>() {
+            @Override
+            public LifecycleDto doInTransaction() {
+                LifecycleEntity row = ensureLife(asset.getID());
+                String state = row.getWriteoffState() == null ? "" : row.getWriteoffState();
+                if ("pending".equals(state) || "approved".equals(state)) {
+                    throw new AssetException(400, "asset-tree.error.writeoff");
+                }
+                row.setWriteoffState("pending");
+                row.setWriteoffReason(reason);
+                row.setRequesterKey(user.getKey());
+                row.setApproverKey(approver);
+                row.setDecidedAt("");
+                row.save();
+                logActivity(asset.getID(), user.getKey(), "writeoff", "", "", reason);
+                return lifecycleDto(asset, row);
+            }
+        });
+    }
+
+    @Override
+    public LifecycleDto decideWriteoff(ApplicationUser user, final int assetId, final WriteoffDraft draft) {
+        final AssetEntity asset = equipmentForLife(user, assetId, false);
+        if (draft == null || draft.getApprove() == null) {
+            throw new AssetException(400, "asset-tree.error.life");
+        }
+        final boolean approve = draft.getApprove().booleanValue();
+        return ao().executeInTransaction(new TransactionCallback<LifecycleDto>() {
+            @Override
+            public LifecycleDto doInTransaction() {
+                LifecycleEntity row = lifeRow(asset.getID());
+                if (row == null || !"pending".equals(row.getWriteoffState())) {
+                    throw new AssetException(400, "asset-tree.error.writeoff");
+                }
+                if (user.getKey() == null || !user.getKey().equals(row.getApproverKey())) {
+                    throw new AssetException(403, "asset-tree.error.writeoff.approver");
+                }
+                row.setWriteoffState(approve ? "approved" : "rejected");
+                row.setDecidedAt(LocalDate.now().toString());
+                row.save();
+                if (approve) {
+                    String previous = asset.getStatus();
+                    asset.setStatus(Statuses.WRITTEN_OFF);
+                    asset.setUpdated(new Date());
+                    asset.setUpdatedBy(user.getKey());
+                    asset.save();
+                    logActivity(asset.getID(), user.getKey(), "status", "", previous, Statuses.WRITTEN_OFF);
+                }
+                return lifecycleDto(asset, row);
+            }
+        });
+    }
+
+    private AssetEntity equipmentForLife(ApplicationUser user, int assetId, boolean edit) {
+        AssetEntity asset = edit
+                ? requireAssetCap(user, assetId, GrantCaps.OBJECT)
+                : requireAsset(assetId);
+        if (!edit) {
+            requireReadableProject(user, asset.getProjectKey());
+        }
+        if (isLocation(asset)) {
+            throw new AssetException(400, "asset-tree.error.life");
+        }
+        requireModule(asset.getProjectKey(), ProjectModules.LIFE);
+        return asset;
+    }
+
+    private LifecycleEntity lifeRow(int assetId) {
+        LifecycleEntity[] rows = ao().find(LifecycleEntity.class, Query.select().where("ASSET_ID = ?", assetId));
+        return rows == null || rows.length == 0 ? null : rows[0];
+    }
+
+    private LifecycleEntity ensureLife(int assetId) {
+        LifecycleEntity row = lifeRow(assetId);
+        if (row != null) {
+            return row;
+        }
+        return ao().create(LifecycleEntity.class, new DBParam("ASSET_ID", assetId));
+    }
+
+    private LifecycleDto lifecycleDto(AssetEntity asset, LifecycleEntity row) {
+        LifecycleDto dto = new LifecycleDto();
+        dto.setAssetId(asset.getID());
+        LocalDate today = LocalDate.now();
+        if (row == null) {
+            dto.setPurchased("");
+            dto.setSupplier("");
+            dto.setPrice("");
+            dto.setWarrantyUntil("");
+            dto.setResidual("");
+            dto.setMonthly("");
+            dto.setBook("");
+            dto.setWriteoffState("");
+            dto.setWriteoffReason("");
+            dto.setRequesterKey("");
+            dto.setRequesterName("");
+            dto.setApproverKey("");
+            dto.setApproverName("");
+            dto.setDecidedAt("");
+            return dto;
+        }
+        dto.setPurchased(row.getPurchased() == null ? "" : row.getPurchased());
+        dto.setSupplier(row.getSupplier() == null ? "" : row.getSupplier());
+        dto.setPrice(MoneyText.format(row.getPriceMinor()));
+        dto.setWarrantyUntil(row.getWarrantyUntil() == null ? "" : row.getWarrantyUntil());
+        dto.setLifeMonths(row.getLifeMonths());
+        dto.setResidual(MoneyText.format(row.getResidualMinor()));
+        dto.setMonthly(MoneyText.format(Depreciation.monthlyMinor(row.getPriceMinor(), row.getResidualMinor(), row.getLifeMonths())));
+        dto.setBook(MoneyText.format(bookOf(row, today)));
+        String warranty = FieldDates.canonical(row.getWarrantyUntil());
+        dto.setWarrantyActive(warranty != null && !warranty.isEmpty() && Depreciation.warrantyActive(LocalDate.parse(warranty), today));
+        dto.setWriteoffState(row.getWriteoffState() == null ? "" : row.getWriteoffState());
+        dto.setWriteoffReason(row.getWriteoffReason() == null ? "" : row.getWriteoffReason());
+        dto.setRequesterKey(row.getRequesterKey() == null ? "" : row.getRequesterKey());
+        dto.setRequesterName(displayName(row.getRequesterKey()));
+        dto.setApproverKey(row.getApproverKey() == null ? "" : row.getApproverKey());
+        dto.setApproverName(displayName(row.getApproverKey()));
+        dto.setDecidedAt(row.getDecidedAt() == null ? "" : row.getDecidedAt());
+        return dto;
     }
 
     private static final class ServiceNotice {

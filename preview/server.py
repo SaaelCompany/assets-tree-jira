@@ -492,6 +492,9 @@ STATE = {
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
+    "floor_seq": 1, "floors": {},
+    "report_seq": 1, "saved_reports": {},
+    "lives": {},
     "cards": {}, "card_images": {},
     "assetKeys": {}, "ready": False, "views": {},
 }
@@ -1588,11 +1591,457 @@ def plan_dto(row):
         "notify": bool(row.get("notify", True)),
         "nextDue": nxt.isoformat() if nxt else "",
         "due": plan_due(row),
+        "kind": row.get("kind") or "to",
+        "assigneeKey": row.get("assigneeKey") or "",
+        "assigneeName": (USERS.get(row.get("assigneeKey") or "") or {}).get("displayName") or "",
     }
 
 
 def plan_dtos(asset_id):
     return [plan_dto(row) for row in plan_rows(asset_id)]
+
+
+def schedule_item(plan, asset):
+    item = plan_dto(plan)
+    item.update({
+        "assetId": asset["id"],
+        "assetName": asset.get("name") or "",
+        "objectKey": asset.get("objectKey") or "",
+    })
+    return item
+
+
+def schedule_rows(project_key):
+    rows = []
+    for plan in STATE["plans"].values():
+        asset = STATE["assets"].get(plan["assetId"])
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset["id"]):
+            continue
+        rows.append(schedule_item(plan, asset))
+    return rows
+
+
+def create_schedule(project_key, body, text):
+    if not module_on(project_key, "service"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    body = body or {}
+    ids = body.get("assetIds") or []
+    if not ids or len(ids) > 40:
+        return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+    kind = (body.get("kind") or "to").strip().lower()
+    labels = {"to": "ТО", "kts": "КТС", "verify": "Поверка"}
+    if kind not in labels:
+        return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+    name = (body.get("name") or "").strip() or labels[kind]
+    staged = []
+    for raw in ids:
+        asset = STATE["assets"].get(int(raw))
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset["id"]):
+            return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+        if len(plan_rows(asset["id"])) >= 12:
+            return 400, {"message": text.get("asset-tree.error.service.limit", "Limit")}
+        row = {"assetId": asset["id"], "appliedFor": "", "notify": True}
+        payload = dict(body)
+        payload["name"] = name
+        payload["kind"] = kind
+        error = fill_plan(row, payload, True, project_key, text)
+        if error:
+            return 400, {"message": error}
+        staged.append((row, asset))
+    created = []
+    for row, asset in staged:
+        plan_id = STATE["plan_seq"]
+        STATE["plan_seq"] += 1
+        row["id"] = plan_id
+        STATE["plans"][plan_id] = row
+        created.append(schedule_item(row, asset))
+    return 201, created
+
+
+def floor_dto(row):
+    rooms = []
+    for room in row.get("rooms") or []:
+        rooms.append({"id": room["id"], "name": room.get("name") or "", "x": room["x"], "y": room["y"], "w": room["w"], "h": room["h"]})
+    pins = []
+    for pin in row.get("pins") or []:
+        asset = STATE["assets"].get(pin.get("assetId"))
+        pins.append({
+            "id": pin["id"], "assetId": pin.get("assetId") or 0,
+            "assetName": (asset or {}).get("name") or "",
+            "objectKey": (asset or {}).get("objectKey") or "",
+            "x": pin.get("x") or 0, "y": pin.get("y") or 0,
+        })
+    place = STATE["assets"].get(row.get("placeId"))
+    return {
+        "id": row["id"], "name": row.get("name") or "", "level": row.get("level") or 1,
+        "placeId": row.get("placeId") or 0, "placeName": (place or {}).get("name") or "",
+        "rooms": rooms, "pins": pins,
+    }
+
+
+def project_floors(project_key):
+    rows = [row for row in STATE.setdefault("floors", {}).values() if row.get("projectKey") == project_key]
+    rows.sort(key=lambda item: (item.get("level") or 0, item["id"]))
+    return [floor_dto(row) for row in rows]
+
+
+def create_floor(project_key, body, text):
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    name = ((body or {}).get("name") or "").strip()
+    raw_level = (body or {}).get("level")
+    level = 1 if raw_level is None or raw_level == "" else int(raw_level)
+    if not name or len(name) > 80 or level < -20 or level > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    if len(project_floors(project_key)) >= 40:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    place_id = int((body or {}).get("placeId") or 0)
+    if place_id and (place_id not in STATE["assets"] or not is_location_id(place_id)):
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    floor_id = STATE["floor_seq"]
+    STATE["floor_seq"] += 1
+    STATE["floors"][floor_id] = {
+        "id": floor_id, "projectKey": project_key, "name": name, "level": level,
+        "placeId": place_id, "rooms": [], "pins": [], "room_seq": 1, "pin_seq": 1,
+    }
+    return 201, floor_dto(STATE["floors"][floor_id])
+
+
+def save_floor(project_key, floor_id, body, text):
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    row = STATE.setdefault("floors", {}).get(floor_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    raw_level = body.get("level")
+    level = 0 if raw_level is None or raw_level == "" else int(raw_level)
+    if not name or len(name) > 80 or level < -20 or level > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    rooms = body.get("rooms") or []
+    pins = body.get("pins") or []
+    if len(rooms) > 80 or len(pins) > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    place_id = int(body.get("placeId") or 0)
+    if place_id and (place_id not in STATE["assets"] or not is_location_id(place_id)):
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    stored_rooms = []
+    seq = 1
+    for room in rooms:
+        label = (room.get("name") or "").strip() or "Комната"
+        x = max(0, min(1000 - 36, int(room.get("x") or 0)))
+        y = max(0, min(640 - 36, int(room.get("y") or 0)))
+        w = max(36, int(room.get("w") or 36))
+        h = max(36, int(room.get("h") or 36))
+        if x + w > 1000:
+            w = 1000 - x
+        if y + h > 640:
+            h = 640 - y
+        stored_rooms.append({"id": seq, "name": label[:80], "x": x, "y": y, "w": w, "h": h})
+        seq += 1
+    stored_pins = []
+    seen = set()
+    pin_seq = 1
+    for pin in pins:
+        asset_id = int(pin.get("assetId") or 0)
+        if asset_id in seen:
+            continue
+        asset = STATE["assets"].get(asset_id)
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset_id):
+            return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+        seen.add(asset_id)
+        stored_pins.append({
+            "id": pin_seq, "assetId": asset_id,
+            "x": max(0, min(1000, int(pin.get("x") or 0))),
+            "y": max(0, min(640, int(pin.get("y") or 0))),
+        })
+        pin_seq += 1
+    row.update({"name": name, "level": level, "placeId": place_id, "rooms": stored_rooms, "pins": stored_pins})
+    return 200, floor_dto(row)
+
+
+def delete_floor(project_key, floor_id, text):
+    row = STATE.setdefault("floors", {}).get(floor_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    STATE["floors"].pop(floor_id, None)
+    return 204, None
+
+
+REPORT_STANDARD = ("status", "type", "place", "holder", "service", "warranty", "cost")
+
+
+def parse_money(raw):
+    text = str(raw or "").strip().replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    if not text:
+        return 0
+    if not re.fullmatch(r"\d{1,12}(\.\d{1,2})?", text):
+        return None
+    rubles, _, fraction = text.partition(".")
+    kopecks = (fraction + "00")[:2]
+    return int(rubles) * 100 + int(kopecks or "0")
+
+
+def format_money(minor):
+    rubles, kopecks = divmod(int(minor), 100)
+    return str(rubles) if kopecks == 0 else "%s.%02d" % (rubles, kopecks)
+
+
+def life_row(asset_id):
+    return STATE.setdefault("lives", {}).get(asset_id)
+
+
+def life_dto(asset_id):
+    stored = life_row(asset_id)
+    row = stored or {}
+    price = int(row.get("priceMinor") or 0)
+    residual = int(row.get("residualMinor") or 0)
+    months = int(row.get("lifeMonths") or 0)
+    monthly = 0 if months <= 0 or price <= residual else (price - residual) // months
+    book = price
+    purchased = row.get("purchased") or ""
+    if purchased and monthly:
+        try:
+            start = datetime.date.fromisoformat(purchased)
+            today = datetime.date.today()
+            elapsed = (today.year - start.year) * 12 + today.month - start.month
+            if today.day < start.day:
+                elapsed -= 1
+            elapsed = max(0, elapsed)
+            book = max(residual, price - monthly * elapsed)
+        except ValueError:
+            book = price
+    warranty = row.get("warrantyUntil") or ""
+    active = False
+    if warranty:
+        try:
+            active = datetime.date.fromisoformat(warranty) >= datetime.date.today()
+        except ValueError:
+            active = False
+    approver = row.get("approverKey") or ""
+    requester = row.get("requesterKey") or ""
+    return {
+        "assetId": asset_id,
+        "purchased": purchased,
+        "supplier": row.get("supplier") or "",
+        "price": format_money(price) if stored else "",
+        "warrantyUntil": warranty,
+        "lifeMonths": months,
+        "residual": format_money(residual) if stored else "",
+        "monthly": format_money(monthly) if stored else "",
+        "book": format_money(book) if stored else "",
+        "warrantyActive": active,
+        "writeoffState": row.get("writeoffState") or "",
+        "writeoffReason": row.get("writeoffReason") or "",
+        "requesterKey": requester,
+        "requesterName": (USERS.get(requester) or {}).get("displayName") or "",
+        "approverKey": approver,
+        "approverName": (USERS.get(approver) or {}).get("displayName") or "",
+        "decidedAt": row.get("decidedAt") or "",
+    }
+
+
+def save_life(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    if not asset or is_location_id(asset_id):
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if not module_on(asset["projectKey"], "life"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    row = STATE["lives"].setdefault(asset_id, {"assetId": asset_id})
+    if row.get("writeoffState") == "approved":
+        return 400, {"message": text.get("asset-tree.error.writeoff.closed", "Closed")}
+    body = body or {}
+    price = parse_money(body.get("price"))
+    residual = parse_money(body.get("residual"))
+    months = int(body.get("lifeMonths") or 0)
+    supplier = (body.get("supplier") or "").strip()
+    if price is None or residual is None or months < 0 or months > 600 or len(supplier) > 120 or residual > price:
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    row.update({
+        "purchased": (body.get("purchased") or "").strip(),
+        "warrantyUntil": (body.get("warrantyUntil") or "").strip(),
+        "supplier": supplier,
+        "priceMinor": price,
+        "residualMinor": residual,
+        "lifeMonths": months,
+    })
+    return 200, life_dto(asset_id)
+
+
+def request_writeoff(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    if not asset or is_location_id(asset_id):
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if not module_on(asset["projectKey"], "life"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    reason = ((body or {}).get("reason") or "").strip()
+    approver = ((body or {}).get("approverKey") or "").strip()
+    if not reason or len(reason) > 500:
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if approver not in USERS:
+        return 400, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+    row = STATE["lives"].setdefault(asset_id, {"assetId": asset_id})
+    if row.get("writeoffState") in ("pending", "approved"):
+        return 400, {"message": text.get("asset-tree.error.writeoff", "Write-off")}
+    row.update({
+        "writeoffState": "pending", "writeoffReason": reason,
+        "requesterKey": "ivanov", "approverKey": approver, "decidedAt": "",
+    })
+    return 200, life_dto(asset_id)
+
+
+def decide_writeoff(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    row = life_row(asset_id)
+    if not asset or not row or row.get("writeoffState") != "pending":
+        return 400, {"message": text.get("asset-tree.error.writeoff", "Write-off")}
+    if row.get("approverKey") != "ivanov":
+        return 403, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+    approve = bool((body or {}).get("approve"))
+    row["writeoffState"] = "approved" if approve else "rejected"
+    row["decidedAt"] = datetime.date.today().isoformat()
+    if approve:
+        asset["status"] = "written_off"
+    return 200, life_dto(asset_id)
+
+
+def report_catalog(project_key, text):
+    titles = {
+        "status": text.get("asset-tree.ui.reportByStatus", "Status"),
+        "type": text.get("asset-tree.ui.reportByType", "Type"),
+        "place": text.get("asset-tree.ui.reportByPlace", "Place"),
+        "holder": text.get("asset-tree.ui.reportHolders", "Custodians"),
+        "service": text.get("asset-tree.ui.reportService", "Service"),
+        "warranty": text.get("asset-tree.ui.reportWarranty", "Warranty"),
+        "cost": text.get("asset-tree.ui.reportCost", "Cost"),
+    }
+    items = [{"id": key, "name": titles[key], "groupBy": key if key in ("status", "type", "place", "holder") else "", "standard": True, "filterField": "", "filterValue": ""} for key in REPORT_STANDARD]
+    own = [row for row in STATE.setdefault("saved_reports", {}).values() if row.get("projectKey") == project_key]
+    own.sort(key=lambda item: item["id"])
+    for row in own:
+        items.append({"id": "s%s" % row["id"], "name": row["name"], "groupBy": row["groupBy"], "filterField": row.get("filterField") or "", "filterValue": row.get("filterValue") or "", "standard": False})
+    return items
+
+
+def create_saved_report(project_key, body, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    group = (body.get("groupBy") or "").strip().lower()
+    filt = (body.get("filterField") or "").strip().lower()
+    value = (body.get("filterValue") or "").strip()
+    if group not in ("status", "type", "place", "holder") or not name or len(name) > 80:
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    if filt and filt not in ("status", "type", "holder"):
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    if bool(filt) != bool(value):
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    report_id = STATE["report_seq"]
+    STATE["report_seq"] += 1
+    STATE["saved_reports"][report_id] = {
+        "id": report_id, "projectKey": project_key, "name": name, "groupBy": group,
+        "filterField": filt, "filterValue": value,
+    }
+    return 201, {"id": "s%s" % report_id, "name": name, "groupBy": group, "filterField": filt, "filterValue": value, "standard": False}
+
+
+def delete_saved_report(project_key, report_key, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    if not str(report_key).startswith("s"):
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    try:
+        report_id = int(str(report_key)[1:])
+    except ValueError:
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    row = STATE.setdefault("saved_reports", {}).get(report_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    STATE["saved_reports"].pop(report_id, None)
+    return 204, None
+
+
+def report_view(project_key, report_key, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    catalog = {item["id"]: item for item in report_catalog(project_key, text)}
+    spec = catalog.get(report_key)
+    if not spec:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    group = spec.get("groupBy") or "status"
+    if report_key in ("service", "warranty", "cost"):
+        group = report_key
+    assets = [asset for asset in project_assets(project_key) if not is_location_id(asset["id"])]
+    filt = spec.get("filterField") or ""
+    value = spec.get("filterValue") or ""
+    if filt == "status":
+        assets = [asset for asset in assets if asset.get("status") == value]
+    elif filt == "type":
+        assets = [asset for asset in assets if asset.get("typeKey") == value]
+    elif filt == "holder":
+        assets = [asset for asset in assets if (asset.get("custodianKey") or "") == value]
+    buckets = {}
+    lines = []
+    total_book = 0
+    for asset in assets:
+        if report_key == "service" and not plan_rows(asset["id"]):
+            continue
+        life = life_row(asset["id"]) or {}
+        if report_key == "warranty" and not life.get("warrantyUntil"):
+            continue
+        if report_key == "cost" and not life.get("priceMinor"):
+            continue
+        if report_key == "service":
+            plan = plan_rows(asset["id"])[0]
+            bucket = plan.get("kind") or "to"
+            label = {"to": "ТО", "kts": "КТС", "verify": "Поверка"}.get(bucket, bucket)
+            detail = label
+        elif report_key == "warranty":
+            bucket = "active"
+            label = life.get("warrantyUntil") or ""
+            detail = label
+        elif report_key == "cost":
+            bucket = asset.get("typeKey") or ""
+            label = (STATE["types"].get(bucket) or {}).get("label") or bucket
+            detail = format_money(life.get("priceMinor") or 0)
+            total_book += int(life.get("priceMinor") or 0)
+        elif group == "type":
+            bucket = asset.get("typeKey") or ""
+            label = (STATE["types"].get(bucket) or {}).get("label") or bucket
+            detail = ""
+        elif group == "holder":
+            bucket = asset.get("custodianKey") or ""
+            label = (USERS.get(bucket) or {}).get("displayName") or text.get("asset-tree.ui.reportUnassigned", "None")
+            detail = ""
+        elif group == "place":
+            parent = STATE["assets"].get(asset.get("parentId"))
+            bucket = str(parent["id"]) if parent else ""
+            label = parent.get("name") if parent else text.get("asset-tree.ui.root", "Root")
+            detail = ""
+        else:
+            bucket = asset.get("status") or ""
+            label = bucket
+            for status_row in ensure_statuses(project_key, text):
+                if status_row["statusKey"] == bucket:
+                    label = status_row["label"]
+                    break
+            detail = ""
+        slot = buckets.setdefault(bucket, {"key": bucket, "label": label, "color": "#0052CC", "count": 0})
+        slot["count"] += 1
+        if len(lines) < 300:
+            lines.append({"assetId": asset["id"], "objectKey": asset.get("objectKey") or "", "name": asset.get("name") or "", "detail": detail})
+    return 200, {
+        "id": report_key, "title": spec["name"], "hint": text.get("asset-tree.ui.reportHint", ""),
+        "total": sum(item["count"] for item in buckets.values()),
+        "sum": format_money(total_book) if report_key == "cost" else "",
+        "standard": bool(spec.get("standard")),
+        "rows": list(buckets.values()),
+        "lines": lines,
+    }
 
 
 def service_due_names(asset_id):
@@ -1680,6 +2129,16 @@ def fill_plan(row, body, creating, project_key, text):
         row["statusKey"] = status_key
     if body.get("notify") is not None or creating:
         row["notify"] = True if body.get("notify") is None else bool(body.get("notify"))
+    if body.get("kind") is not None or creating:
+        kind = (body.get("kind") or "to").strip().lower()
+        if kind not in ("to", "kts", "verify"):
+            return text.get("asset-tree.error.service", "Schedule")
+        row["kind"] = kind
+    if body.get("assigneeKey") is not None or creating:
+        assignee = (body.get("assigneeKey") or "").strip()
+        if assignee and assignee not in USERS:
+            return text.get("asset-tree.error.user", "User")
+        row["assigneeKey"] = assignee
     if not row.get("name") or not row.get("lastDone") or not row.get("everyUnit"):
         return text.get("asset-tree.error.service", "Schedule")
     return None
@@ -3660,7 +4119,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.15",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.16",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3721,6 +4180,79 @@ setTimeout(function () {
                 return 400, {"message": text["asset-tree.error.project.required"]}
             body = self.read_json() or {}
             return 200, import_request(match.group(1), body, text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/schedule", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, schedule_rows(project_key)
+            if method == "POST":
+                return create_schedule(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/floors", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "map"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, project_floors(project_key)
+            if method == "POST":
+                return create_floor(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/floors/(\d+)", path)
+        if match:
+            project_key = match.group(1)
+            floor_id = int(match.group(2))
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "PUT":
+                return save_floor(project_key, floor_id, self.read_json(), text)
+            if method == "DELETE":
+                return delete_floor(project_key, floor_id, text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/reports", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "reports"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, report_catalog(project_key, text)
+            if method == "POST":
+                return create_saved_report(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/reports/([A-Za-z0-9]+)", path)
+        if match:
+            project_key = match.group(1)
+            report_key = match.group(2)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "GET":
+                return report_view(project_key, report_key, text)
+            if method == "DELETE":
+                return delete_saved_report(project_key, report_key, text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle", path)
+        if match:
+            asset_id = int(match.group(1))
+            asset = STATE["assets"].get(asset_id)
+            if not asset:
+                return 404, {"message": text["asset-tree.error.notFound"]}
+            if is_location_id(asset_id):
+                return 400, {"message": text.get("asset-tree.error.life", "Life")}
+            if not module_on(asset["projectKey"], "life"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, life_dto(asset_id)
+            if method == "PUT":
+                return save_life(asset_id, self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle/writeoff", path)
+        if match and method == "POST":
+            return request_writeoff(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle/decision", path)
+        if match and method == "POST":
+            return decide_writeoff(int(match.group(1)), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)
@@ -4481,6 +5013,9 @@ setTimeout(function () {
                 STATE["activities"].pop(activity_id, None)
             for plan_id in [row["id"] for row in plan_rows(current)]:
                 STATE["plans"].pop(plan_id, None)
+            STATE.setdefault("lives", {}).pop(current, None)
+            for floor in STATE.setdefault("floors", {}).values():
+                floor["pins"] = [pin for pin in floor.get("pins") or [] if pin.get("assetId") != current]
         return 204, None
 
     def move_asset(self, asset_id, body, text):

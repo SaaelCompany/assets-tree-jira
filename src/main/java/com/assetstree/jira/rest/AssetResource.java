@@ -26,7 +26,12 @@ import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.model.PlaceArrangeDraft;
 import com.assetstree.jira.model.PlaceTypeDraft;
+import com.assetstree.jira.dto.FloorDto;
+import com.assetstree.jira.model.LifecycleDraft;
+import com.assetstree.jira.model.SavedReportDraft;
+import com.assetstree.jira.model.ScheduleDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
+import com.assetstree.jira.model.WriteoffDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.web.PortalLookup;
 import com.assetstree.jira.model.TypeDraft;
@@ -406,6 +411,162 @@ public class AssetResource {
             @Override
             public Response call() {
                 return Response.ok(assetService.report(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/schedule")
+    public Response schedule(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.schedule(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/schedule")
+    public Response createSchedule(@PathParam("projectKey") final String projectKey, final ScheduleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.createSchedule(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/floors")
+    public Response floors(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.floors(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/floors")
+    public Response createFloor(@PathParam("projectKey") final String projectKey, final FloorDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.createFloor(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("projects/{projectKey}/floors/{floorId}")
+    public Response saveFloor(@PathParam("projectKey") final String projectKey, @PathParam("floorId") final int floorId, final FloorDto draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveFloor(user(), projectKey, floorId, draft)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/floors/{floorId}")
+    public Response deleteFloor(@PathParam("projectKey") final String projectKey, @PathParam("floorId") final int floorId) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteFloor(user(), projectKey, floorId);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/reports")
+    public Response reports(@PathParam("projectKey") final String projectKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.reports(user(), projectKey)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("projects/{projectKey}/reports")
+    public Response createReport(@PathParam("projectKey") final String projectKey, final SavedReportDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.status(Response.Status.CREATED).entity(assetService.createReport(user(), projectKey, draft)).build();
+            }
+        });
+    }
+
+    @GET
+    @Path("projects/{projectKey}/reports/{reportKey}")
+    public Response reportView(@PathParam("projectKey") final String projectKey, @PathParam("reportKey") final String reportKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.reportView(user(), projectKey, reportKey)).build();
+            }
+        });
+    }
+
+    @DELETE
+    @Path("projects/{projectKey}/reports/{reportKey}")
+    public Response deleteReport(@PathParam("projectKey") final String projectKey, @PathParam("reportKey") final String reportKey) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                assetService.deleteReport(user(), projectKey, reportKey);
+                return Response.noContent().build();
+            }
+        });
+    }
+
+    @GET
+    @Path("assets/{id}/lifecycle")
+    public Response lifecycle(@PathParam("id") final int id) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.lifecycle(user(), id)).build();
+            }
+        });
+    }
+
+    @PUT
+    @Path("assets/{id}/lifecycle")
+    public Response saveLifecycle(@PathParam("id") final int id, final LifecycleDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.saveLifecycle(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/lifecycle/writeoff")
+    public Response requestWriteoff(@PathParam("id") final int id, final WriteoffDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.requestWriteoff(user(), id, draft)).build();
+            }
+        });
+    }
+
+    @POST
+    @Path("assets/{id}/lifecycle/decision")
+    public Response decideWriteoff(@PathParam("id") final int id, final WriteoffDraft draft) {
+        return invoke(new Callable<Response>() {
+            @Override
+            public Response call() {
+                return Response.ok(assetService.decideWriteoff(user(), id, draft)).build();
             }
         });
     }
