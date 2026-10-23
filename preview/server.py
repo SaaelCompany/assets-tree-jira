@@ -1950,7 +1950,35 @@ def column_name(index):
     return name
 
 
-def workbook_bytes(headers, rows):
+def sheet_title(raw, used=None):
+    cleaned = []
+    for ch in raw or "":
+        if ch in "\\/?*[]:" or ord(ch) < 32:
+            if cleaned and cleaned[-1] != " ":
+                cleaned.append(" ")
+            continue
+        if len("".join(cleaned)) >= 31:
+            break
+        cleaned.append(ch)
+    title = "".join(cleaned).strip().strip("'").strip()
+    if len(title) > 31:
+        title = title[:31].strip()
+    if not title:
+        title = "Sheet"
+    if used is None:
+        return title
+    candidate = title
+    number = 2
+    while candidate.lower() in used:
+        suffix = " (%d)" % number
+        stem = title[:31 - len(suffix)].strip() or "Sheet"
+        candidate = stem + suffix
+        number += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def sheet_xml(headers, rows):
     sheet = ["<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
              "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"]
     table = [headers] + rows
@@ -1961,37 +1989,102 @@ def workbook_bytes(headers, rows):
                          % (column_name(index), number, xml_text(cell)))
         sheet.append("</row>")
     sheet.append("</sheetData></worksheet>")
-    parts = {
-        "[Content_Types].xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    return "".join(sheet)
+
+
+def equipment_pages(project_key, text, day_first):
+    ensure_portal_demo()
+    common = equipment_headers(text)
+    statuses = {row["statusKey"]: row["label"] for row in status_dtos(project_key, text)}
+    kinds = [row for row in STATE["types"].values() if row["projectKey"] == project_key and not row.get("location")]
+    pages = []
+    used = set()
+    for kind in kinds:
+        headers = list(common)
+        seen = {header.strip().lower() for header in headers}
+        fields = []
+        for field in kind.get("fields") or []:
+            label = label_of(field["label"], text)
+            marker = label.strip().lower()
+            if not marker or marker in seen:
+                continue
+            seen.add(marker)
+            fields.append((field, label))
+            headers.append(label)
+        assets = [asset for asset in project_assets(project_key) if asset["typeKey"] == kind["typeKey"]]
+        assets.sort(key=lambda item: item["objectKey"])
+        lines = []
+        for asset in assets:
+            person = USERS.get(asset.get("custodianKey") or "")
+            line = [
+                asset["objectKey"],
+                asset["name"],
+                kind.get("label") or asset["typeKey"],
+                statuses.get(canonical(asset.get("status")), asset.get("status") or ""),
+                location_of(asset),
+                person["displayName"] if person else "",
+                asset.get("description") or "",
+            ]
+            values = asset.get("values") or {}
+            for field, _label in fields:
+                value = values.get(field["fieldKey"]) or ""
+                if field.get("kind") == "date" and value:
+                    value = display_date(value, day_first)
+                line.append(value)
+            lines.append(line)
+        pages.append((sheet_title(kind.get("label") or kind["typeKey"], used), headers, lines))
+    if not pages:
+        pages.append(("Equipment", common, []))
+    return pages
+
+
+def workbook_bytes(pages):
+    if not pages:
+        pages = [("Equipment", [], [])]
+    overrides = []
+    sheet_tags = []
+    relationships = []
+    parts = {}
+    for index, page in enumerate(pages, start=1):
+        name, headers, rows = page
+        overrides.append(
+            "<Override PartName=\"/xl/worksheets/sheet%d.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>" % index
+        )
+        sheet_tags.append("<sheet name=\"%s\" sheetId=\"%d\" r:id=\"rId%d\"/>" % (xml_text(name).replace("\"", "&quot;"), index, index))
+        relationships.append(
+            "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet%d.xml\"/>" % (index, index)
+        )
+        parts["xl/worksheets/sheet%d.xml" % index] = sheet_xml(headers, rows)
+    relationships.append(
+        "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>" % (len(pages) + 1)
+    )
+    parts["[Content_Types].xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+%s
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-</Types>""",
-        "_rels/.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+</Types>""" % "\n".join(overrides)
+    parts["_rels/.rels"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>""",
-        "xl/workbook.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+</Relationships>"""
+    parts["xl/workbook.xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="Equipment" sheetId="1" r:id="rId1"/></sheets></workbook>""",
-        "xl/_rels/workbook.xml.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sheets>%s</sheets></workbook>""" % "".join(sheet_tags)
+    parts["xl/_rels/workbook.xml.rels"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>""",
-        "xl/styles.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+%s
+</Relationships>""" % "\n".join(relationships)
+    parts["xl/styles.xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border/></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
 <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
-</styleSheet>""",
-        "xl/worksheets/sheet1.xml": "".join(sheet),
-    }
+</styleSheet>"""
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as book:
         for name, xml in parts.items():
@@ -2000,8 +2093,7 @@ def workbook_bytes(headers, rows):
 
 
 def equipment_xlsx(project_key, text, day_first):
-    headers, rows = equipment_table(project_key, text, day_first)
-    return workbook_bytes(headers, rows)
+    return workbook_bytes(equipment_pages(project_key, text, day_first))
 
 
 def xml_local(tag):
@@ -2038,31 +2130,34 @@ def excel_date(raw):
         return raw
 
 
-def parse_workbook(data):
-    with zipfile.ZipFile(BytesIO(data)) as book:
-        names = {}
-        for name in book.namelist():
-            names[name.replace("\\", "/").lstrip("/")] = name
-        shared = []
-        if "xl/sharedStrings.xml" in names:
-            root = ET.fromstring(book.read(names["xl/sharedStrings.xml"]))
-            for node in root:
-                if xml_local(node.tag) != "si":
-                    continue
-                parts = []
-                for child in node.iter():
-                    if xml_local(child.tag) == "t" and child.text:
-                        parts.append(child.text)
-                shared.append("".join(parts))
-        sheet_name = names.get("xl/worksheets/sheet1.xml")
-        if not sheet_name:
-            for key, original in names.items():
-                if key.startswith("xl/worksheets/") and key.endswith(".xml"):
-                    sheet_name = original
-                    break
-        if not sheet_name:
-            raise ValueError("sheet")
-        root = ET.fromstring(book.read(sheet_name))
+def workbook_targets(book, names):
+    if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+        return []
+    workbook = ET.fromstring(book.read(names["xl/workbook.xml"]))
+    rels = ET.fromstring(book.read(names["xl/_rels/workbook.xml.rels"]))
+    targets = {}
+    for node in rels.iter():
+        if xml_local(node.tag) != "Relationship":
+            continue
+        target = (node.attrib.get("Target") or "").replace("\\", "/").lstrip("/")
+        if target and not target.startswith("xl/"):
+            target = "xl/" + target
+        targets[node.attrib.get("Id")] = target
+    found = []
+    for node in workbook.iter():
+        if xml_local(node.tag) != "sheet":
+            continue
+        relation = ""
+        for key, value in node.attrib.items():
+            if xml_local(key) == "id":
+                relation = value
+        path = targets.get(relation)
+        if path and path in names:
+            found.append((node.attrib.get("name") or "", names[path]))
+    return found
+
+
+def parse_sheet_xml(root, shared):
     headers = []
     records = []
     for row in root.iter():
@@ -2092,6 +2187,42 @@ def parse_workbook(data):
                 number = 0
             records.append((number or len(records) + 2, line))
     return headers, records
+
+
+def parse_workbook(data):
+    with zipfile.ZipFile(BytesIO(data)) as book:
+        names = {}
+        for name in book.namelist():
+            names[name.replace("\\", "/").lstrip("/")] = name
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(book.read(names["xl/sharedStrings.xml"]))
+            for node in root:
+                if xml_local(node.tag) != "si":
+                    continue
+                parts = []
+                for child in node.iter():
+                    if xml_local(child.tag) == "t" and child.text:
+                        parts.append(child.text)
+                shared.append("".join(parts))
+        targets = workbook_targets(book, names)
+        if not targets:
+            sheet_name = names.get("xl/worksheets/sheet1.xml")
+            if not sheet_name:
+                for key, original in names.items():
+                    if key.startswith("xl/worksheets/") and key.endswith(".xml"):
+                        sheet_name = original
+                        break
+            if not sheet_name:
+                raise ValueError("sheet")
+            targets = [("", sheet_name)]
+        pages = []
+        for title, original in targets:
+            headers, records = parse_sheet_xml(ET.fromstring(book.read(original)), shared)
+            pages.append((title, headers, records))
+    if not pages:
+        raise ValueError("sheet")
+    return pages
 
 
 def workbook_cell(cell, shared):
@@ -2200,11 +2331,11 @@ def import_request(project_key, body, text):
             return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
         if data[:2] == b"PK":
             try:
-                headers, records = parse_workbook(data)
+                pages = parse_workbook(data)
             except Exception:
                 message = text.get("asset-tree.error.import.workbook", "Workbook")
                 return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
-            return import_rows(project_key, headers, records, text)
+            return import_book(project_key, pages, text)
         source = data.decode("utf-8", "replace")
     else:
         source = body.get("csv") or ""
@@ -2217,23 +2348,115 @@ def import_equipment(project_key, source, text):
     return import_rows(project_key, headers, records, text)
 
 
-def import_rows(project_key, headers, records, text):
+def import_book(project_key, pages, text):
+    types = [row for row in STATE["types"].values() if row["projectKey"] == project_key and not row.get("location")]
+    total = 0
+    for _name, _headers, records in pages:
+        total += len(records)
+    if total > 2000:
+        message = text.get("asset-tree.error.import.limit", "Limit").replace("{0}", "2000")
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
+    created = 0
+    updated = 0
+    errors = []
+    seen = set()
+    any_rows = False
+    for name, headers, records in pages:
+        if not headers and not records:
+            continue
+        bound = bound_sheet_type(name, types)
+        headers, records, rejected = bind_sheet_type(name, headers, records, bound, text)
+        errors.extend(rejected)
+        if not records:
+            continue
+        any_rows = True
+        result = import_rows(project_key, headers, records, text, seen, name)
+        created += result["created"]
+        updated += result["updated"]
+        errors.extend(result["errors"])
+    if not any_rows and not errors:
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]}
+    return {"created": created, "updated": updated, "errors": errors}
+
+
+def bound_sheet_type(name, types):
+    marker = " ".join((name or "").strip().lower().replace("ё", "е").split())
+    if not marker:
+        return None
+    hits = []
+    for kind in types:
+        label = kind.get("label") or ""
+        names = {
+            " ".join(label.strip().lower().replace("ё", "е").split()),
+            " ".join((kind.get("typeKey") or "").strip().lower().replace("ё", "е").split()),
+            " ".join(sheet_title(label).strip().lower().replace("ё", "е").split()),
+        }
+        if marker in names:
+            hits.append(kind)
+    return hits[0] if len(hits) == 1 else None
+
+
+def bind_sheet_type(name, headers, records, bound, text):
+    if not bound:
+        return headers, records, []
+    type_index = None
+    for index, header in enumerate(headers):
+        if sheet_role(header) == "type":
+            type_index = index
+            break
+    label = bound.get("label") or bound.get("typeKey") or ""
+    keys = {label.strip().lower(), (bound.get("typeKey") or "").strip().lower()}
+    prepared = []
+    errors = []
+    message = text.get("asset-tree.error.import.sheet.type", "Type \"{0}\" does not belong on this sheet.")
+    for row_number, cells in records:
+        current = ""
+        if type_index is not None and type_index < len(cells):
+            current = cells[type_index].strip()
+        if current and current.lower() not in keys:
+            note = message.replace("{0}", current)
+            if name:
+                note = "%s: %s" % (name, note)
+            errors.append({"row": row_number, "message": note})
+            continue
+        copied = list(cells)
+        if not current:
+            if type_index is None:
+                copied.append(label)
+            else:
+                while len(copied) <= type_index:
+                    copied.append("")
+                copied[type_index] = label
+        prepared.append((row_number, copied))
+    if type_index is None:
+        headers = list(headers) + ["Type"]
+    return headers, prepared, errors
+
+
+def import_rows(project_key, headers, records, text, seen=None, sheet=""):
+    def finish(result):
+        if sheet:
+            for error in result["errors"]:
+                error["message"] = "%s: %s" % (sheet, error["message"])
+        return result
+
     roles = {}
     for index, header in enumerate(headers):
         role = sheet_role(header)
         if role:
             roles[role] = index
     if "name" not in roles:
-        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.header", "Header")}]}
+        return finish({"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.header", "Header")}]})
     if not records:
-        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]}
+        return finish({"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]})
     types = [row for row in STATE["types"].values() if row["projectKey"] == project_key]
     statuses = status_dtos(project_key, text)
     by_key = {asset["objectKey"].lower(): asset for asset in project_assets(project_key)}
     created = 0
     updated = 0
     errors = []
-    seen = set()
+    if seen is None:
+        seen = set()
 
     def cell(cells, role):
         index = roles.get(role)
@@ -2330,7 +2553,7 @@ def import_rows(project_key, headers, records, text):
             log_activity(asset_id, "created", "", "", name)
             log_place(place_container(parent), "place_add", STATE["assets"][asset_id])
             created += 1
-    return {"created": created, "updated": updated, "errors": errors}
+    return finish({"created": created, "updated": updated, "errors": errors})
 
 
 def bulk_parents(project_key):

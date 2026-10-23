@@ -1653,11 +1653,11 @@ public class AssetServiceImpl implements AssetService {
         if (storedAssetPrefix(project.getKey()).isEmpty()) {
             throw new AssetException(400, "asset-tree.error.assetKey.required");
         }
-        final EquipmentSheet.Sheet sheet = equipmentSheet(draft);
+        final List<EquipmentSheet.Sheet> sheets = equipmentSheets(draft);
         return ao().executeInTransaction(new TransactionCallback<ImportResultDto>() {
             @Override
             public ImportResultDto doInTransaction() {
-                return applyEquipmentSheet(user, project.getKey(), sheet);
+                return applyEquipmentSheets(user, project.getKey(), sheets);
             }
         });
     }
@@ -3048,7 +3048,7 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private EquipmentSheet.Sheet equipmentSheet(ImportDraft draft) {
+    private List<EquipmentSheet.Sheet> equipmentSheets(ImportDraft draft) {
         String content = draft == null ? null : draft.getContent();
         if (content != null && !content.trim().isEmpty()) {
             if (content.length() > 4_000_000) {
@@ -3063,20 +3063,19 @@ public class AssetServiceImpl implements AssetService {
             if (bytes.length > 2_000_000) {
                 throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
             }
-            return WorkbookSheet.read(bytes);
+            return WorkbookSheet.readAll(bytes);
         }
         String csv = draft == null || draft.getCsv() == null ? "" : draft.getCsv();
         if (csv.length() > 1_500_000) {
             throw new AssetException(400, "asset-tree.error.import.limit", Integer.valueOf(EquipmentExchange.MAX_ROWS));
         }
-        return EquipmentSheet.read(csv);
+        return Collections.singletonList(EquipmentSheet.read(csv));
     }
 
     private byte[] buildEquipmentBook(String projectKey) {
         ensureStatuses(projectKey);
         AssetEntity[] rows = assetsIn(projectKey);
         List<AssetTypeDto> types = typeDtos(projectKey, rows);
-        Map<String, AssetTypeDto> typeIndex = indexTypes(types);
         Map<Integer, AssetEntity> index = indexAssets(rows);
         List<StatusDto> statuses = statusDtos(projectKey, rows);
         Map<String, String> statusLabels = new HashMap<String, String>();
@@ -3085,79 +3084,96 @@ public class AssetServiceImpl implements AssetService {
         }
         I18nHelper labels = i18n();
         boolean dayFirst = labels.getLocale() != null && "ru".equalsIgnoreCase(labels.getLocale().getLanguage());
-        List<String> headers = new ArrayList<String>();
-        headers.add(labels.getText("asset-tree.ui.keyLabel"));
-        headers.add(labels.getText("asset-tree.ui.name"));
-        headers.add(labels.getText("asset-tree.ui.type"));
-        headers.add(labels.getText("asset-tree.ui.status"));
-        headers.add(labels.getText("asset-tree.ui.exchangePlace"));
-        headers.add(labels.getText("asset-tree.ui.custodian"));
-        headers.add(labels.getText("asset-tree.ui.description"));
-        List<FieldDto> columns = new ArrayList<FieldDto>();
-        Set<String> taken = new HashSet<String>();
-        for (String header : headers) {
-            taken.add(EquipmentExchange.norm(header));
-        }
+        List<String> common = new ArrayList<String>();
+        common.add(labels.getText("asset-tree.ui.keyLabel"));
+        common.add(labels.getText("asset-tree.ui.name"));
+        common.add(labels.getText("asset-tree.ui.type"));
+        common.add(labels.getText("asset-tree.ui.status"));
+        common.add(labels.getText("asset-tree.ui.exchangePlace"));
+        common.add(labels.getText("asset-tree.ui.custodian"));
+        common.add(labels.getText("asset-tree.ui.description"));
+        Map<String, List<AssetEntity>> byType = new LinkedHashMap<String, List<AssetEntity>>();
         for (AssetTypeDto type : types) {
-            if (type.isLocation() || type.getFields() == null) {
-                continue;
-            }
-            for (FieldDto field : type.getFields()) {
-                String marker = EquipmentExchange.norm(field.getLabel());
-                if (marker.isEmpty() || !taken.add(marker)) {
-                    continue;
-                }
-                columns.add(field);
-                headers.add(field.getLabel());
+            if (!type.isLocation()) {
+                byType.put(type.getTypeKey(), new ArrayList<AssetEntity>());
             }
         }
-        List<AssetEntity> equipment = new ArrayList<AssetEntity>();
         for (AssetEntity row : rows) {
-            AssetTypeDto type = typeIndex.get(row.getTypeKey());
-            if (type != null && !type.isLocation()) {
-                equipment.add(row);
+            List<AssetEntity> bucket = byType.get(row.getTypeKey());
+            if (bucket != null) {
+                bucket.add(row);
             }
         }
-        Collections.sort(equipment, new Comparator<AssetEntity>() {
+        Comparator<AssetEntity> byKey = new Comparator<AssetEntity>() {
             @Override
             public int compare(AssetEntity left, AssetEntity right) {
                 String leftKey = left.getObjectKey() == null ? "" : left.getObjectKey();
                 String rightKey = right.getObjectKey() == null ? "" : right.getObjectKey();
                 return leftKey.compareToIgnoreCase(rightKey);
             }
-        });
-        List<List<String>> lines = new ArrayList<List<String>>();
-        for (AssetEntity row : equipment) {
-            AssetTypeDto type = typeIndex.get(row.getTypeKey());
-            Map<String, String> values = attributeValues(row.getID());
-            List<String> line = new ArrayList<String>();
-            line.add(row.getObjectKey());
-            line.add(row.getName());
-            line.add(type == null ? row.getTypeKey() : type.getLabel());
-            String status = Statuses.canonical(row.getStatus());
-            line.add(statusLabels.containsKey(status) ? statusLabels.get(status) : status);
-            line.add(location(row, index));
-            line.add(displayName(row.getCustodianKey()));
-            line.add(row.getDescription() == null ? "" : row.getDescription());
-            for (FieldDto field : columns) {
-                String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
-                if (FieldKinds.USER.equals(field.getKind()) && value != null && !value.isEmpty()) {
-                    value = displayName(value);
-                }
-                if (FieldKinds.DATE.equals(field.getKind())) {
-                    value = FieldDates.display(value, dayFirst);
-                }
-                if (FieldChoices.handles(field.getKind())) {
-                    value = FieldChoices.display(value);
-                }
-                line.add(value == null ? "" : value);
+        };
+        List<WorkbookSheet.Page> pages = new ArrayList<WorkbookSheet.Page>();
+        for (AssetTypeDto type : types) {
+            if (type.isLocation()) {
+                continue;
             }
-            lines.add(line);
+            List<String> headers = new ArrayList<String>(common);
+            List<FieldDto> columns = new ArrayList<FieldDto>();
+            Set<String> taken = new HashSet<String>();
+            for (String header : headers) {
+                taken.add(EquipmentExchange.norm(header));
+            }
+            if (type.getFields() != null) {
+                for (FieldDto field : type.getFields()) {
+                    String marker = EquipmentExchange.norm(field.getLabel());
+                    if (marker.isEmpty() || !taken.add(marker)) {
+                        continue;
+                    }
+                    columns.add(field);
+                    headers.add(field.getLabel());
+                }
+            }
+            List<AssetEntity> equipment = byType.get(type.getTypeKey());
+            if (equipment == null) {
+                equipment = new ArrayList<AssetEntity>();
+            }
+            Collections.sort(equipment, byKey);
+            List<List<String>> lines = new ArrayList<List<String>>();
+            for (AssetEntity row : equipment) {
+                Map<String, String> values = attributeValues(row.getID());
+                List<String> line = new ArrayList<String>();
+                line.add(row.getObjectKey());
+                line.add(row.getName());
+                line.add(type.getLabel());
+                String status = Statuses.canonical(row.getStatus());
+                line.add(statusLabels.containsKey(status) ? statusLabels.get(status) : status);
+                line.add(location(row, index));
+                line.add(displayName(row.getCustodianKey()));
+                line.add(row.getDescription() == null ? "" : row.getDescription());
+                for (FieldDto field : columns) {
+                    String value = values.containsKey(field.getFieldKey()) ? values.get(field.getFieldKey()) : "";
+                    if (FieldKinds.USER.equals(field.getKind()) && value != null && !value.isEmpty()) {
+                        value = displayName(value);
+                    }
+                    if (FieldKinds.DATE.equals(field.getKind())) {
+                        value = FieldDates.display(value, dayFirst);
+                    }
+                    if (FieldChoices.handles(field.getKind())) {
+                        value = FieldChoices.display(value);
+                    }
+                    line.add(value == null ? "" : value);
+                }
+                lines.add(line);
+            }
+            pages.add(new WorkbookSheet.Page(type.getLabel(), headers, lines));
         }
-        return WorkbookSheet.write(headers, lines);
+        if (pages.isEmpty()) {
+            pages.add(new WorkbookSheet.Page("Equipment", common, new ArrayList<List<String>>()));
+        }
+        return WorkbookSheet.write(pages);
     }
 
-    private ImportResultDto applyEquipmentSheet(ApplicationUser user, String projectKey, EquipmentSheet.Sheet sheet) {
+    private ImportResultDto applyEquipmentSheets(ApplicationUser user, String projectKey, List<EquipmentSheet.Sheet> sheets) {
         ensureStatuses(projectKey);
         AssetEntity[] rows = assetsIn(projectKey);
         List<AssetTypeDto> typeDtos = typeDtos(projectKey, rows);
@@ -3197,7 +3213,7 @@ public class AssetServiceImpl implements AssetService {
         headerLabels.put("place", labels.getText("asset-tree.ui.exchangePlace"));
         headerLabels.put("custodian", labels.getText("asset-tree.ui.custodian"));
         headerLabels.put("description", labels.getText("asset-tree.ui.description"));
-        EquipmentExchange.Plan plan = EquipmentExchange.plan(sheet, types, statuses, nodes,
+        EquipmentExchange.Plan plan = EquipmentExchange.planBook(sheets, types, statuses, nodes,
                 Statuses.IN_USE, headerLabels, new EquipmentExchange.Directory() {
                     @Override
                     public EquipmentExchange.Person find(String raw) {
@@ -3550,6 +3566,9 @@ public class AssetServiceImpl implements AssetService {
                 : labels.getText(issue.getMessageKey(), issue.getArgument());
         if (text == null || text.equals(issue.getMessageKey())) {
             text = issue.getMessageKey();
+        }
+        if (issue.getSheet() != null && !issue.getSheet().isEmpty()) {
+            text = issue.getSheet() + ": " + text;
         }
         return new ImportIssueDto(issue.getRow(), text);
     }

@@ -280,11 +280,17 @@ public final class EquipmentExchange {
         private final int row;
         private final String messageKey;
         private final String argument;
+        private final String sheet;
 
         Issue(int row, String messageKey, String argument) {
+            this(row, messageKey, argument, "");
+        }
+
+        Issue(int row, String messageKey, String argument, String sheet) {
             this.row = row;
             this.messageKey = messageKey;
             this.argument = argument == null ? "" : argument;
+            this.sheet = sheet == null ? "" : sheet;
         }
 
         public int getRow() {
@@ -297,6 +303,10 @@ public final class EquipmentExchange {
 
         public String getArgument() {
             return argument;
+        }
+
+        public String getSheet() {
+            return sheet;
         }
     }
 
@@ -320,6 +330,59 @@ public final class EquipmentExchange {
 
     public static Plan plan(EquipmentSheet.Sheet sheet, List<TypeRef> types, List<Named> statuses, List<Node> nodes,
                             String defaultStatus, Map<String, String> labels, Directory people) {
+        return plan(sheet, types, statuses, nodes, defaultStatus, labels, people, null);
+    }
+
+    /**
+     * Reads every worksheet. A sheet whose name is one equipment type uses that
+     * type when the type cell is empty, and only that type's columns. A sheet
+     * name that is not a type, including the older single sheet "Equipment",
+     * keeps the type written in each row. A sheet with only a header is a
+     * blank template and is skipped. An empty book is still an error.
+     */
+    public static Plan planBook(List<EquipmentSheet.Sheet> sheets, List<TypeRef> types, List<Named> statuses,
+                                List<Node> nodes, String defaultStatus, Map<String, String> labels, Directory people) {
+        List<Change> changes = new ArrayList<Change>();
+        List<Issue> issues = new ArrayList<Issue>();
+        if (sheets == null || sheets.isEmpty()) {
+            issues.add(new Issue(1, "asset-tree.error.import.empty", ""));
+            return new Plan(changes, issues);
+        }
+        int rows = 0;
+        for (EquipmentSheet.Sheet sheet : sheets) {
+            if (sheet != null) {
+                rows += sheet.getRecords().size();
+            }
+        }
+        if (rows > MAX_ROWS) {
+            issues.add(new Issue(1, "asset-tree.error.import.limit", String.valueOf(MAX_ROWS)));
+            return new Plan(changes, issues);
+        }
+        Map<String, Integer> seenKeys = new LinkedHashMap<String, Integer>();
+        boolean anyData = false;
+        for (EquipmentSheet.Sheet sheet : sheets) {
+            if (sheet == null || (sheet.getHeaders().isEmpty() && sheet.getRecords().isEmpty())) {
+                continue;
+            }
+            TypeRef bound = uniqueSheetType(sheet.getName(), types);
+            EquipmentSheet.Sheet prepared = bound == null ? sheet : withSheetType(sheet, bound, labels, issues);
+            if (prepared.getRecords().isEmpty()) {
+                continue;
+            }
+            anyData = true;
+            Plan part = plan(prepared, types, statuses, nodes, defaultStatus, labels, people, seenKeys);
+            issues.addAll(stamp(sheet.getName(), part.getIssues()));
+            changes.addAll(part.getChanges());
+        }
+        if (!anyData && issues.isEmpty()) {
+            issues.add(new Issue(1, "asset-tree.error.import.empty", ""));
+        }
+        return new Plan(changes, issues);
+    }
+
+    public static Plan plan(EquipmentSheet.Sheet sheet, List<TypeRef> types, List<Named> statuses, List<Node> nodes,
+                            String defaultStatus, Map<String, String> labels, Directory people,
+                            Map<String, Integer> seenKeys) {
         List<Change> changes = new ArrayList<Change>();
         List<Issue> issues = new ArrayList<Issue>();
         if (sheet == null || sheet.getHeaders().isEmpty()) {
@@ -370,10 +433,10 @@ public final class EquipmentExchange {
                 byKey.put(norm(node.getObjectKey()), node);
             }
         }
-        Map<String, Integer> seenKeys = new LinkedHashMap<String, Integer>();
+        Map<String, Integer> keys = seenKeys == null ? new LinkedHashMap<String, Integer>() : seenKeys;
         for (EquipmentSheet.Record record : sheet.getRecords()) {
             Change change = readRow(record, roleColumn, fieldColumns, headers, types, statuses, nodes, byKey,
-                    seenKeys, defaultStatus, people, issues);
+                    keys, defaultStatus, people, issues);
             if (change != null) {
                 changes.add(change);
             }
@@ -580,6 +643,90 @@ public final class EquipmentExchange {
             return null;
         }
         return parent;
+    }
+
+    private static TypeRef uniqueSheetType(String name, List<TypeRef> types) {
+        if (name == null || name.trim().isEmpty() || types == null) {
+            return null;
+        }
+        List<TypeRef> hits = new ArrayList<TypeRef>();
+        for (TypeRef type : types) {
+            if (type.isLocation()) {
+                continue;
+            }
+            if (same(type.getLabel(), name) || same(type.getKey(), name) || same(WorkbookSheet.sheetTitle(type.getLabel()), name)) {
+                hits.add(type);
+            }
+        }
+        return hits.size() == 1 ? hits.get(0) : null;
+    }
+
+    private static EquipmentSheet.Sheet withSheetType(EquipmentSheet.Sheet sheet, TypeRef bound, Map<String, String> labels,
+                                                      List<Issue> issues) {
+        int typeColumn = columnFor(sheet.getHeaders(), labels, "type");
+        List<EquipmentSheet.Record> records = new ArrayList<EquipmentSheet.Record>();
+        for (EquipmentSheet.Record record : sheet.getRecords()) {
+            String current = typeColumn < 0 ? "" : text(record, typeColumn);
+            if (!current.isEmpty() && !same(current, bound.getLabel()) && !same(current, bound.getKey())) {
+                issues.add(new Issue(record.getRow(), "asset-tree.error.import.sheet.type", current, sheet.getName()));
+                continue;
+            }
+            if (current.isEmpty()) {
+                records.add(typed(record, typeColumn, bound.getLabel()));
+            } else {
+                records.add(record);
+            }
+        }
+        if (typeColumn >= 0) {
+            return new EquipmentSheet.Sheet(sheet.getName(), sheet.getHeaders(), records);
+        }
+        List<String> headers = new ArrayList<String>(sheet.getHeaders());
+        String typeHeader = labels == null ? null : labels.get("type");
+        headers.add(typeHeader == null || typeHeader.trim().isEmpty() ? "Type" : typeHeader);
+        return new EquipmentSheet.Sheet(sheet.getName(), headers, records);
+    }
+
+    private static EquipmentSheet.Record typed(EquipmentSheet.Record record, int column, String type) {
+        boolean append = column < 0;
+        int width = record.width();
+        int size = append ? width + 1 : Math.max(width, column + 1);
+        List<String> cells = new ArrayList<String>();
+        for (int i = 0; i < size; i++) {
+            if (append && i == width) {
+                cells.add(type);
+            } else if (!append && i == column) {
+                cells.add(type);
+            } else {
+                cells.add(record.cell(i));
+            }
+        }
+        return new EquipmentSheet.Record(record.getRow(), cells);
+    }
+
+    private static int columnFor(List<String> headers, Map<String, String> labels, String role) {
+        Map<String, String> roles = roles(labels);
+        if (headers == null) {
+            return -1;
+        }
+        for (int column = 0; column < headers.size(); column++) {
+            if (role.equals(roles.get(norm(headers.get(column))))) {
+                return column;
+            }
+        }
+        return -1;
+    }
+
+    private static List<Issue> stamp(String sheet, List<Issue> issues) {
+        List<Issue> stamped = new ArrayList<Issue>();
+        String name = sheet == null ? "" : sheet;
+        for (Issue issue : issues) {
+            if (issue.getSheet() != null && !issue.getSheet().isEmpty()) {
+                stamped.add(issue);
+            } else {
+                stamped.add(new Issue(issue.getRow(), issue.getMessageKey(), issue.getArgument(), name));
+            }
+        }
+        return stamped;
     }
 
     private static TypeRef matchType(String typeName, List<TypeRef> types) {

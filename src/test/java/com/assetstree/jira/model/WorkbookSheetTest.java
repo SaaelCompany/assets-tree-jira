@@ -13,6 +13,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class WorkbookSheetTest {
@@ -117,6 +118,115 @@ public class WorkbookSheetTest {
         assertEquals(1, plan.getChanges().size());
         assertEquals("Новый", plan.getChanges().get(0).getName());
         assertEquals("2024-03-15", plan.getChanges().get(0).getAttributes().get(0).getValue());
+    }
+
+    @Test
+    public void eachTypeKeepsItsOwnSheetAndFields() {
+        List<List<String>> printers = new ArrayList<List<String>>();
+        printers.add(Arrays.asList("", "Canon", "Принтер", "Филиал", "SN-P"));
+        List<List<String>> laptops = new ArrayList<List<String>>();
+        laptops.add(Arrays.asList("", "ThinkPad", "", "Филиал", "SN-L"));
+        List<WorkbookSheet.Page> pages = new ArrayList<WorkbookSheet.Page>();
+        pages.add(new WorkbookSheet.Page("Принтер", Arrays.asList("Ключ", "Название", "Тип", "Площадка", "Серийный"), printers));
+        pages.add(new WorkbookSheet.Page("Ноутбук", Arrays.asList("Ключ", "Название", "Тип", "Площадка", "Серийный"), laptops));
+        pages.add(new WorkbookSheet.Page("Монитор", Arrays.asList("Ключ", "Название", "Тип", "Площадка", "Диагональ"), new ArrayList<List<String>>()));
+        List<EquipmentSheet.Sheet> sheets = WorkbookSheet.readAll(WorkbookSheet.write(pages));
+        assertEquals(3, sheets.size());
+        assertEquals("Принтер", sheets.get(0).getName());
+        assertEquals("Ноутбук", sheets.get(1).getName());
+        assertEquals("Монитор", sheets.get(2).getName());
+        assertEquals("SN-P", sheets.get(0).getRecords().get(0).cell(4));
+        assertEquals(0, sheets.get(2).getRecords().size());
+        EquipmentExchange.Plan plan = EquipmentExchange.planBook(sheets, twoTypes(),
+                Collections.singletonList(new EquipmentExchange.Named("in_use", "В эксплуатации")),
+                Collections.singletonList(new EquipmentExchange.Node(1, null, "Филиал", "AST-1", true)),
+                "in_use", Collections.<String, String>emptyMap(), blankPeople());
+        assertEquals(0, plan.getIssues().size());
+        assertEquals(2, plan.getChanges().size());
+        assertEquals("printer", plan.getChanges().get(0).getTypeKey());
+        assertEquals("serial-printer", plan.getChanges().get(0).getAttributes().get(0).getFieldKey());
+        assertEquals("SN-P", plan.getChanges().get(0).getAttributes().get(0).getValue());
+        assertEquals("laptop", plan.getChanges().get(1).getTypeKey());
+        assertEquals("serial-laptop", plan.getChanges().get(1).getAttributes().get(0).getFieldKey());
+        assertEquals("SN-L", plan.getChanges().get(1).getAttributes().get(0).getValue());
+    }
+
+    @Test
+    public void sheetNameDropsCharactersExcelRejects() {
+        assertEquals("Принтер МФУ", WorkbookSheet.sheetTitle("Принтер/МФУ"));
+        List<WorkbookSheet.Page> pages = new ArrayList<WorkbookSheet.Page>();
+        pages.add(new WorkbookSheet.Page("Принтер/МФУ", Arrays.asList("Название"), Collections.singletonList(Arrays.asList("Один"))));
+        pages.add(new WorkbookSheet.Page("Принтер/МФУ", Arrays.asList("Название"), Collections.singletonList(Arrays.asList("Два"))));
+        List<EquipmentSheet.Sheet> sheets = WorkbookSheet.readAll(WorkbookSheet.write(pages));
+        assertEquals("Принтер МФУ", sheets.get(0).getName());
+        assertEquals("Принтер МФУ (2)", sheets.get(1).getName());
+    }
+
+    @Test
+    public void oldSingleSheetStillUsesTheTypeColumn() {
+        List<String> headers = Arrays.asList("Название", "Тип", "Площадка", "Серийный");
+        List<List<String>> rows = new ArrayList<List<String>>();
+        rows.add(Arrays.asList("Новый", "Принтер", "Филиал", "SN-P"));
+        EquipmentExchange.Plan plan = EquipmentExchange.planBook(WorkbookSheet.readAll(WorkbookSheet.write(headers, rows)),
+                twoTypes(), Collections.singletonList(new EquipmentExchange.Named("in_use", "В эксплуатации")),
+                Collections.singletonList(new EquipmentExchange.Node(1, null, "Филиал", "AST-1", true)),
+                "in_use", Collections.<String, String>emptyMap(), blankPeople());
+        assertEquals(1, plan.getChanges().size());
+        assertEquals("printer", plan.getChanges().get(0).getTypeKey());
+        assertEquals("serial-printer", plan.getChanges().get(0).getAttributes().get(0).getFieldKey());
+    }
+
+    @Test
+    public void rowTypeMustMatchItsSheet() {
+        List<WorkbookSheet.Page> pages = new ArrayList<WorkbookSheet.Page>();
+        pages.add(new WorkbookSheet.Page("Принтер", Arrays.asList("Название", "Тип", "Площадка"),
+                Collections.singletonList(Arrays.asList("Чужой", "Ноутбук", "Филиал"))));
+        pages.add(new WorkbookSheet.Page("Ноутбук", Arrays.asList("Ключ", "Название", "Тип", "Площадка"),
+                Arrays.asList(Arrays.asList("AST-9", "Первый", "Ноутбук", "Филиал"),
+                        Arrays.asList("AST-9", "Второй", "Ноутбук", "Филиал"))));
+        EquipmentExchange.Plan plan = EquipmentExchange.planBook(WorkbookSheet.readAll(WorkbookSheet.write(pages)),
+                twoTypes(), Collections.singletonList(new EquipmentExchange.Named("in_use", "В эксплуатации")),
+                Collections.singletonList(new EquipmentExchange.Node(1, null, "Филиал", "AST-1", true)),
+                "in_use", Collections.<String, String>emptyMap(), blankPeople());
+        assertEquals(0, plan.getChanges().size());
+        assertEquals(3, plan.getIssues().size());
+        assertEquals("asset-tree.error.import.sheet.type", plan.getIssues().get(0).getMessageKey());
+        assertEquals("Принтер", plan.getIssues().get(0).getSheet());
+        assertEquals("asset-tree.error.import.key", plan.getIssues().get(1).getMessageKey());
+        assertEquals("asset-tree.error.import.key.duplicate", plan.getIssues().get(2).getMessageKey());
+    }
+
+    @Test
+    public void headerOnlySheetsDoNotRejectABookWithRows() {
+        List<WorkbookSheet.Page> pages = new ArrayList<WorkbookSheet.Page>();
+        pages.add(new WorkbookSheet.Page("Монитор", Arrays.asList("Название", "Тип", "Площадка"), new ArrayList<List<String>>()));
+        pages.add(new WorkbookSheet.Page("Принтер", Arrays.asList("Название", "Тип", "Площадка"),
+                Collections.singletonList(Arrays.asList("Новый", "", "Филиал"))));
+        EquipmentExchange.Plan plan = EquipmentExchange.planBook(WorkbookSheet.readAll(WorkbookSheet.write(pages)),
+                twoTypes(), Collections.singletonList(new EquipmentExchange.Named("in_use", "В эксплуатации")),
+                Collections.singletonList(new EquipmentExchange.Node(1, null, "Филиал", "AST-1", true)),
+                "in_use", Collections.<String, String>emptyMap(), blankPeople());
+        assertEquals(1, plan.getChanges().size());
+        assertEquals("printer", plan.getChanges().get(0).getTypeKey());
+        assertTrue(plan.getIssues().isEmpty());
+    }
+
+    private static List<EquipmentExchange.TypeRef> twoTypes() {
+        List<EquipmentExchange.TypeRef> types = new ArrayList<EquipmentExchange.TypeRef>();
+        types.add(new EquipmentExchange.TypeRef("printer", "Принтер", false,
+                Collections.singletonList(new EquipmentExchange.FieldRef("serial-printer", "Серийный", "text", false))));
+        types.add(new EquipmentExchange.TypeRef("laptop", "Ноутбук", false,
+                Collections.singletonList(new EquipmentExchange.FieldRef("serial-laptop", "Серийный", "text", false))));
+        return types;
+    }
+
+    private static EquipmentExchange.Directory blankPeople() {
+        return new EquipmentExchange.Directory() {
+            @Override
+            public EquipmentExchange.Person find(String raw) {
+                return EquipmentExchange.Person.blank();
+            }
+        };
     }
 
     private static List<EquipmentExchange.TypeRef> catalog() {

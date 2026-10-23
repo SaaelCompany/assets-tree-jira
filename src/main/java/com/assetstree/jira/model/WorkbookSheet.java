@@ -6,45 +6,110 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Equipment book in the Excel .xlsx package. Cells are written as text so a
- * place path or a key is not rewritten as a number. A date that Excel stored
- * as a serial is read back as yyyy-MM-dd. The sheet XML is read without the
- * JDK XML factory: inside Jira that factory has no provider.
+ * Equipment book in the Excel .xlsx package. Each equipment type is its own
+ * worksheet, so a field that exists on one type is not a column on another.
+ * Cells are written as text so a place path or a key is not rewritten as a
+ * number. A date that Excel stored as a serial is read back as yyyy-MM-dd.
+ * The sheet XML is read without the JDK XML factory: inside Jira that factory
+ * has no provider.
  */
 public final class WorkbookSheet {
     private static final int MAX_BYTES = 8_000_000;
     private static final int MAX_COLUMNS = 512;
+    private static final int MAX_NAME = 31;
     private static final long EXCEL_EPOCH = 25569L;
 
     private WorkbookSheet() {
     }
 
+    /** One worksheet: a name Excel can show, a header row, and data rows. */
+    public static final class Page {
+        private final String name;
+        private final List<String> headers;
+        private final List<List<String>> rows;
+
+        public Page(String name, List<String> headers, List<List<String>> rows) {
+            this.name = name;
+            this.headers = headers;
+            this.rows = rows;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public List<String> getHeaders() {
+            return headers;
+        }
+
+        public List<List<String>> getRows() {
+            return rows;
+        }
+    }
+
     public static byte[] write(List<String> headers, List<List<String>> rows) {
+        List<Page> pages = new ArrayList<Page>();
+        pages.add(new Page("Equipment", headers, rows));
+        return write(pages);
+    }
+
+    public static byte[] write(List<Page> pages) {
+        List<Page> book = pages == null || pages.isEmpty() ? new ArrayList<Page>() : pages;
+        if (book.isEmpty()) {
+            book.add(new Page("Equipment", new ArrayList<String>(), new ArrayList<List<String>>()));
+        }
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             ZipOutputStream zip = new ZipOutputStream(bytes);
-            put(zip, "[Content_Types].xml", contentTypes());
+            Set<String> used = new HashSet<String>();
+            List<String> names = new ArrayList<String>();
+            for (Page page : book) {
+                names.add(uniqueTitle(page == null ? "" : page.getName(), used));
+            }
+            put(zip, "[Content_Types].xml", contentTypes(book.size()));
             put(zip, "_rels/.rels", rootRels());
-            put(zip, "xl/workbook.xml", workbook());
-            put(zip, "xl/_rels/workbook.xml.rels", workbookRels());
+            put(zip, "xl/workbook.xml", workbook(names));
+            put(zip, "xl/_rels/workbook.xml.rels", workbookRels(book.size()));
             put(zip, "xl/styles.xml", styles());
-            put(zip, "xl/worksheets/sheet1.xml", sheet(headers, rows));
+            for (int i = 0; i < book.size(); i++) {
+                Page page = book.get(i);
+                List<String> headers = page == null ? null : page.getHeaders();
+                List<List<String>> rows = page == null ? null : page.getRows();
+                put(zip, "xl/worksheets/sheet" + (i + 1) + ".xml", sheet(headers, rows));
+            }
             zip.close();
             return bytes.toByteArray();
+        } catch (AssetException ex) {
+            throw ex;
         } catch (Exception ex) {
             throw new AssetException(500, "asset-tree.error.unexpected");
         }
     }
 
+    /**
+     * A title Excel accepts as a sheet name: at most 31 characters, without
+     * the characters a worksheet name cannot contain.
+     */
+    public static String sheetTitle(String raw) {
+        String cleaned = sanitize(raw);
+        return cleaned.isEmpty() ? "Sheet" : cleaned;
+    }
+
     public static EquipmentSheet.Sheet read(byte[] bytes) {
+        return readAll(bytes).get(0);
+    }
+
+    public static List<EquipmentSheet.Sheet> readAll(byte[] bytes) {
         if (bytes == null || bytes.length < 4) {
             throw new AssetException(400, "asset-tree.error.import.workbook");
         }
@@ -58,11 +123,65 @@ public final class WorkbookSheet {
         byte[] shared = entries.get("xl/sharedStrings.xml");
         List<String> strings = shared == null ? new ArrayList<String>() : sharedStrings(shared);
         boolean[] dates = dateStyles(entries.get("xl/styles.xml"));
-        byte[] sheet = sheetBytes(entries);
-        if (sheet == null) {
+        List<SheetRef> refs = sheetRefs(entries);
+        List<EquipmentSheet.Sheet> sheets = new ArrayList<EquipmentSheet.Sheet>();
+        for (SheetRef ref : refs) {
+            byte[] xml = entries.get(ref.path);
+            if (xml == null) {
+                continue;
+            }
+            EquipmentSheet.Sheet parsed = rows(xml, strings, dates);
+            sheets.add(new EquipmentSheet.Sheet(ref.name, parsed.getHeaders(), parsed.getRecords()));
+        }
+        if (sheets.isEmpty()) {
             throw new AssetException(400, "asset-tree.error.import.workbook");
         }
-        return rows(sheet, strings, dates);
+        return sheets;
+    }
+
+    private static String uniqueTitle(String raw, Set<String> used) {
+        String base = sheetTitle(raw);
+        String candidate = base;
+        int number = 2;
+        while (!used.add(candidate.toLowerCase(Locale.ROOT))) {
+            String suffix = " (" + number + ")";
+            int room = MAX_NAME - suffix.length();
+            String stem = base.length() > room ? base.substring(0, Math.max(0, room)).trim() : base;
+            if (stem.isEmpty()) {
+                stem = "Sheet";
+            }
+            candidate = stem + suffix;
+            number++;
+        }
+        return candidate;
+    }
+
+    private static String sanitize(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < raw.length() && out.length() < MAX_NAME; i++) {
+            char ch = raw.charAt(i);
+            if (ch == '\\' || ch == '/' || ch == '?' || ch == '*' || ch == '[' || ch == ']' || ch == ':' || ch < 0x20) {
+                if (out.length() > 0 && out.charAt(out.length() - 1) != ' ') {
+                    out.append(' ');
+                }
+                continue;
+            }
+            out.append(ch);
+        }
+        String text = out.toString().trim();
+        while (text.startsWith("'")) {
+            text = text.substring(1).trim();
+        }
+        while (text.endsWith("'")) {
+            text = text.substring(0, text.length() - 1).trim();
+        }
+        if (text.length() > MAX_NAME) {
+            text = text.substring(0, MAX_NAME).trim();
+        }
+        return text;
     }
 
     private static void put(ZipOutputStream zip, String name, String xml) throws Exception {
@@ -71,15 +190,20 @@ public final class WorkbookSheet {
         zip.closeEntry();
     }
 
-    private static String contentTypes() {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                + "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
-                + "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
-                + "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
-                + "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
-                + "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
-                + "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>"
-                + "</Types>";
+    private static String contentTypes(int count) {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+        xml.append("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">");
+        xml.append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>");
+        xml.append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>");
+        xml.append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>");
+        for (int i = 1; i <= count; i++) {
+            xml.append("<Override PartName=\"/xl/worksheets/sheet").append(i);
+            xml.append(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
+        }
+        xml.append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>");
+        xml.append("</Types>");
+        return xml.toString();
     }
 
     private static String rootRels() {
@@ -89,18 +213,36 @@ public final class WorkbookSheet {
                 + "</Relationships>";
     }
 
-    private static String workbook() {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                + "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-                + "<sheets><sheet name=\"Equipment\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>";
+    private static String workbook(List<String> names) {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+        xml.append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">");
+        xml.append("<sheets>");
+        for (int i = 0; i < names.size(); i++) {
+            xml.append("<sheet name=\"").append(escapeAttr(names.get(i)));
+            xml.append("\" sheetId=\"").append(i + 1).append("\" r:id=\"rId").append(i + 1).append("\"/>");
+        }
+        xml.append("</sheets></workbook>");
+        return xml.toString();
     }
 
-    private static String workbookRels() {
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-                + "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
-                + "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
-                + "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
-                + "</Relationships>";
+    private static String workbookRels(int count) {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+        xml.append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">");
+        for (int i = 1; i <= count; i++) {
+            xml.append("<Relationship Id=\"rId").append(i);
+            xml.append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet");
+            xml.append(i).append(".xml\"/>");
+        }
+        xml.append("<Relationship Id=\"rId").append(count + 1);
+        xml.append("\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>");
+        xml.append("</Relationships>");
+        return xml.toString();
+    }
+
+    private static String escapeAttr(String value) {
+        return escape(value).replace("\"", "&quot;");
     }
 
     private static String styles() {
@@ -207,59 +349,80 @@ public final class WorkbookSheet {
         }
     }
 
-    private static byte[] sheetBytes(Map<String, byte[]> entries) {
-        String target = firstSheet(entries.get("xl/workbook.xml"), entries.get("xl/_rels/workbook.xml.rels"));
-        if (target != null && entries.containsKey(target)) {
-            return entries.get(target);
+    private static final class SheetRef {
+        private final String name;
+        private final String path;
+
+        private SheetRef(String name, String path) {
+            this.name = name == null ? "" : name;
+            this.path = path;
         }
-        byte[] direct = entries.get("xl/worksheets/sheet1.xml");
-        if (direct != null) {
-            return direct;
-        }
-        for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
-            if (entry.getKey().startsWith("xl/worksheets/") && entry.getKey().endsWith(".xml")) {
-                return entry.getValue();
-            }
-        }
-        return null;
     }
 
-    private static String firstSheet(byte[] workbook, byte[] rels) {
-        if (workbook == null || rels == null) {
-            return null;
+    private static List<SheetRef> sheetRefs(Map<String, byte[]> entries) {
+        List<SheetRef> listed = listedSheets(entries.get("xl/workbook.xml"), entries.get("xl/_rels/workbook.xml.rels"));
+        List<SheetRef> present = new ArrayList<SheetRef>();
+        for (SheetRef ref : listed) {
+            if (entries.containsKey(ref.path)) {
+                present.add(ref);
+            }
         }
-        String relation = null;
+        if (!present.isEmpty()) {
+            return present;
+        }
+        if (entries.containsKey("xl/worksheets/sheet1.xml")) {
+            present.add(new SheetRef("", "xl/worksheets/sheet1.xml"));
+            return present;
+        }
+        for (String key : entries.keySet()) {
+            if (key.startsWith("xl/worksheets/") && key.endsWith(".xml")) {
+                present.add(new SheetRef("", key));
+                return present;
+            }
+        }
+        return present;
+    }
+
+    private static List<SheetRef> listedSheets(byte[] workbook, byte[] rels) {
+        List<SheetRef> refs = new ArrayList<SheetRef>();
+        if (workbook == null || rels == null) {
+            return refs;
+        }
+        List<String> names = new ArrayList<String>();
+        List<String> relations = new ArrayList<String>();
         XmlCursor reader = cursor(workbook);
         try {
             while (reader.hasNext()) {
                 if (reader.next() == XmlCursor.START && "sheet".equals(reader.localName())) {
-                    relation = reader.attr("id");
-                    break;
+                    names.add(reader.attr("name"));
+                    relations.add(reader.attr("id"));
                 }
             }
         } catch (AssetException ex) {
             throw ex;
         } catch (Exception ex) {
-            return null;
+            return refs;
         }
-        if (relation == null) {
-            return null;
-        }
+        Map<String, String> targets = new HashMap<String, String>();
         reader = cursor(rels);
         try {
             while (reader.hasNext()) {
                 if (reader.next() == XmlCursor.START && "Relationship".equals(reader.localName())) {
-                    if (relation.equals(reader.attr("Id"))) {
-                        return resolve(reader.attr("Target"));
-                    }
+                    targets.put(reader.attr("Id"), resolve(reader.attr("Target")));
                 }
             }
         } catch (AssetException ex) {
             throw ex;
         } catch (Exception ex) {
-            return null;
+            return new ArrayList<SheetRef>();
         }
-        return null;
+        for (int i = 0; i < relations.size(); i++) {
+            String path = targets.get(relations.get(i));
+            if (path != null) {
+                refs.add(new SheetRef(names.get(i), path));
+            }
+        }
+        return refs;
     }
 
     private static String resolve(String target) {
