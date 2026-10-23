@@ -28,6 +28,7 @@ public class ProjectDto {
     private String assetKey;
     private boolean treeObjects;
     private List<String> columns = new ArrayList<String>();
+    private List<String> modules = new ArrayList<String>();
     private CardLayout card;
 
     public String getKey() {
@@ -180,6 +181,14 @@ public class ProjectDto {
 
     public void setColumns(List<String> columns) {
         this.columns = columns;
+    }
+
+    public List<String> getModules() {
+        return modules;
+    }
+
+    public void setModules(List<String> modules) {
+        this.modules = modules;
     }
 
     public CardLayout getCard() {

@@ -5841,3 +5841,140 @@ a.asset-tree-url {
     font-weight: 600;
     text-transform: none;
 }
+
+/* Project settings: key, tree and optional modules */
+#asset-tree-app .asset-tree-project-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 980px;
+    margin-top: 16px;
+}
+
+#asset-tree-app .asset-tree-project-card {
+    padding: 16px 16px 18px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+}
+
+#asset-tree-app .asset-tree-project-card > .asset-tree-settings-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+}
+
+#asset-tree-app .asset-tree-beta {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 6px;
+    border-radius: 3px;
+    background: #eae6ff;
+    color: #403294;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 16px;
+    text-transform: uppercase;
+}
+
+#asset-tree-app .asset-tree-project-card > .asset-tree-hint {
+    margin: 0 0 12px;
+}
+
+#asset-tree-app .asset-tree-project-card .asset-tree-check-row {
+    margin: 4px 0 0;
+}
+
+#asset-tree-app .asset-tree-project-card .asset-tree-check-row .asset-tree-hint {
+    margin: 0;
+    font-weight: 400;
+}
+
+#asset-tree-app .asset-tree-module-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+#asset-tree-app .asset-tree-module-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fff;
+    cursor: pointer;
+}
+
+#asset-tree-app .asset-tree-module-option input {
+    flex: 0 0 auto;
+    margin-top: 3px;
+}
+
+#asset-tree-app .asset-tree-module-option > span {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+#asset-tree-app .asset-tree-module-option strong {
+    color: #172b4d;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#asset-tree-app .asset-tree-module-option .asset-tree-hint {
+    margin: 0;
+    font-weight: 400;
+}
+
+#asset-tree-app .asset-tree-module-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 720px;
+}
+
+#asset-tree-app button.asset-tree-module-link {
+    display: flex !important;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 10px 12px !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 3px;
+    background: #fff !important;
+    color: #172b4d !important;
+    text-align: left;
+}
+
+#asset-tree-app button.asset-tree-module-link strong {
+    font-weight: 600;
+}
+
+#asset-tree-app button.asset-tree-module-link span {
+    color: #6b778c;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+#asset-tree-app .asset-tree-module-list .asset-tree-project-card button.asset-tree-linkish {
+    display: block;
+    margin: 4px 0;
+    text-align: left;
+}
+
+@media (max-width: 860px) {
+    #asset-tree-app .asset-tree-module-grid {
+        grid-template-columns: 1fr;
+    }
+}

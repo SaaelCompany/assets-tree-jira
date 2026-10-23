@@ -59,6 +59,7 @@ import com.assetstree.jira.dto.AssetDto;
 import com.assetstree.jira.dto.AssetKeyDto;
 import com.assetstree.jira.dto.FieldOrderDto;
 import com.assetstree.jira.dto.ProjectViewDto;
+import com.assetstree.jira.model.ProjectModules;
 import com.assetstree.jira.model.ViewColumns;
 import com.assetstree.jira.dto.AssetListDto;
 import com.assetstree.jira.dto.AssetTypeDto;
@@ -2218,6 +2219,7 @@ public class AssetServiceImpl implements AssetService {
         final Project project = requireArrangeProject(user, projectKey);
         final Boolean tree = draft == null ? null : draft.getTreeObjects();
         final List<String> columns = draft == null || draft.getColumns() == null ? null : ViewColumns.clean(draft.getColumns());
+        final List<String> modules = draft == null ? null : draft.getModules();
         return ao().executeInTransaction(new TransactionCallback<ProjectViewDto>() {
             @Override
             public ProjectViewDto doInTransaction() {
@@ -2233,13 +2235,26 @@ public class AssetServiceImpl implements AssetService {
                 if (columns != null) {
                     row.setColumnList(ViewColumns.join(columns));
                 }
+                if (modules != null) {
+                    row.setModuleList(ProjectModules.join(modules));
+                }
                 row.save();
-                ProjectViewDto saved = new ProjectViewDto();
-                saved.setTreeObjects(Boolean.valueOf(row.getTreeMode() == 1));
-                saved.setColumns(ViewColumns.split(row.getColumnList()));
-                return saved;
+                return viewDto(row);
             }
         });
+    }
+
+    private ProjectViewDto viewDto(ProjectViewEntity row) {
+        ProjectViewDto saved = new ProjectViewDto();
+        saved.setTreeObjects(Boolean.valueOf(row != null && row.getTreeMode() == 1));
+        saved.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
+        saved.setModules(row == null ? new ArrayList<String>() : ProjectModules.split(row.getModuleList()));
+        return saved;
+    }
+
+    private boolean moduleOn(String projectKey, String module) {
+        ProjectViewEntity row = viewRow(projectKey);
+        return row != null && ProjectModules.has(row.getModuleList(), module);
     }
 
     private ProjectViewEntity viewRow(String projectKey) {
@@ -2277,6 +2292,7 @@ public class AssetServiceImpl implements AssetService {
             ProjectViewEntity row = stored.get(project.getKey());
             project.setTreeObjects(row != null && row.getTreeMode() == 1);
             project.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
+            project.setModules(row == null ? new ArrayList<String>() : ProjectModules.split(row.getModuleList()));
         }
     }
 
@@ -5196,6 +5212,9 @@ public class AssetServiceImpl implements AssetService {
                 if (type == null || !type.isService()) {
                     throw new AssetException(400, "asset-tree.error.service.type");
                 }
+                if (!moduleOn(asset.getProjectKey(), ProjectModules.SERVICE)) {
+                    throw new AssetException(400, "asset-tree.error.module.off");
+                }
                 if (plansOf(assetId).size() >= MAX_PLANS) {
                     throw new AssetException(400, "asset-tree.error.service.limit");
                 }
@@ -5483,12 +5502,13 @@ public class AssetServiceImpl implements AssetService {
                 }
             }
         }
+        Map<String, Boolean> serviceOn = new HashMap<String, Boolean>();
         for (ServicePlanEntity plan : ordered) {
             if (allowed != null && !allowed.contains(Integer.valueOf(plan.getAssetId()))) {
                 continue;
             }
             try {
-                applyOne(plan, known, projectKey, today, notices);
+                applyOne(plan, known, projectKey, today, notices, serviceOn);
             } catch (RuntimeException ex) {
                 log.warn("Service plan {} was skipped", Integer.valueOf(plan.getID()), ex);
             }
@@ -5496,12 +5516,20 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private void applyOne(ServicePlanEntity plan, Map<Integer, AssetEntity> known, String projectKey, LocalDate today,
-                           List<ServiceNotice> notices) {
+                           List<ServiceNotice> notices, Map<String, Boolean> serviceOn) {
         AssetEntity asset = known == null ? null : known.get(Integer.valueOf(plan.getAssetId()));
         if (asset == null) {
             asset = ao().get(AssetEntity.class, plan.getAssetId());
         }
         if (asset == null || isLocation(asset)) {
+            return;
+        }
+        Boolean enabled = serviceOn.get(asset.getProjectKey());
+        if (enabled == null) {
+            enabled = Boolean.valueOf(moduleOn(asset.getProjectKey(), ProjectModules.SERVICE));
+            serviceOn.put(asset.getProjectKey(), enabled);
+        }
+        if (!enabled.booleanValue()) {
             return;
         }
         if (projectKey != null && !projectKey.equals(asset.getProjectKey())) {

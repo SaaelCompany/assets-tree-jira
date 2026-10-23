@@ -1023,11 +1023,26 @@ def next_object_key(project):
 
 
 VIEW_BASE = ("key", "type", "status", "custodian", "location", "description", "created", "updated")
+KNOWN_MODULES = ("service", "map", "reports", "life")
+
+
+def stored_modules(project_key):
+    view = (STATE.get("views") or {}).get(project_key) or {}
+    present = {str(item or "").strip().lower() for item in (view.get("modules") or [])}
+    return [key for key in KNOWN_MODULES if key in present]
+
+
+def module_on(project_key, key):
+    return key in stored_modules(project_key)
 
 
 def project_view(project_key):
     view = (STATE.get("views") or {}).get(project_key) or {}
-    return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or [])}
+    return {
+        "treeObjects": bool(view.get("treeObjects")),
+        "columns": list(view.get("columns") or []),
+        "modules": stored_modules(project_key),
+    }
 
 
 def save_project_view(project_key, body, text):
@@ -1045,6 +1060,13 @@ def save_project_view(project_key, body, text):
                 return 400, {"message": text.get("asset-tree.error.view.columns", "Columns")}
             picked.append(key)
         view["columns"] = picked
+    if body.get("modules") is not None:
+        present = set()
+        for raw in body.get("modules") or []:
+            key = str(raw or "").strip().lower()
+            if key in KNOWN_MODULES:
+                present.add(key)
+        view["modules"] = [key for key in KNOWN_MODULES if key in present]
     return 200, project_view(project_key)
 
 
@@ -1585,6 +1607,8 @@ def apply_due(project_key=None):
         if not asset or is_location_id(asset["id"]):
             continue
         if project_key and asset["projectKey"] != project_key:
+            continue
+        if not module_on(asset["projectKey"], "service"):
             continue
         nxt = plan_next(row)
         if not nxt or nxt > today:
@@ -3219,7 +3243,7 @@ class Handler(BaseHTTPRequestHandler):
         view = (query.get("view") or ["all"])[0]
         if view == "dashboard":
             view = "all"
-        if view not in ("all", "mine", "search", "settings"):
+        if view not in ("all", "mine", "search", "settings", "schedules", "reports", "map"):
             view = "all"
         html = (template
                 .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
@@ -3636,7 +3660,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.11",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.15",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -4289,6 +4313,8 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.notFound"]}
         if is_location_id(asset_id):
             return 400, {"message": text.get("asset-tree.error.service.place", "Equipment")}
+        if not module_on(asset["projectKey"], "service"):
+            return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
         if not (STATE["types"].get(asset["typeKey"]) or {}).get("service"):
             return 400, {"message": text.get("asset-tree.error.service.type", "Type")}
         if len(plan_rows(asset_id)) >= 12:
