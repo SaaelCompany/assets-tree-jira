@@ -16,6 +16,12 @@ public class ModuleFeatureTest {
         assertEquals(LocalDate.of(2026, 3, 1), days.get(0));
         assertEquals(LocalDate.of(2026, 3, 31), days.get(days.size() - 1));
         assertEquals(4, days.size());
+        List<LocalDate> once = ScheduleOccurrences.inMonth("2026-10-23", 1, "once", 2026, 10);
+        assertEquals(1, once.size());
+        assertEquals(LocalDate.of(2026, 10, 23), once.get(0));
+        assertTrue(ScheduleOccurrences.inMonth("2026-10-23", 1, "once", 2026, 11).isEmpty());
+        assertEquals("2026-09-23", ScheduleAnchor.before("2026-10-23", 1, "month"));
+        assertEquals("2026-10-23", ScheduleAnchor.before("2026-10-23", 1, "once"));
     }
 
     @Test

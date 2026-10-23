@@ -18,6 +18,11 @@ public class ScheduleRowDto {
     private String everyUnit;
     private String nextDue;
     private boolean due;
+    private String note;
+    private String startTime;
+    private String endTime;
+    private String completedOn;
+    private boolean completed;
 
     public int getId() { return id; }
     public void setId(int id) { this.id = id; }
@@ -45,4 +50,14 @@ public class ScheduleRowDto {
     public void setNextDue(String nextDue) { this.nextDue = nextDue; }
     public boolean isDue() { return due; }
     public void setDue(boolean due) { this.due = due; }
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+    public String getStartTime() { return startTime; }
+    public void setStartTime(String startTime) { this.startTime = startTime; }
+    public String getEndTime() { return endTime; }
+    public void setEndTime(String endTime) { this.endTime = endTime; }
+    public String getCompletedOn() { return completedOn; }
+    public void setCompletedOn(String completedOn) { this.completedOn = completedOn; }
+    public boolean isCompleted() { return completed; }
+    public void setCompleted(boolean completed) { this.completed = completed; }
 }

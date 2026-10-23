@@ -14,6 +14,8 @@ public class ReportViewDto {
     private int total;
     private String sum;
     private boolean standard;
+    private String groupBy;
+    private String chart;
     private List<ReportBucketDto> rows = new ArrayList<ReportBucketDto>();
     private List<ReportLineDto> lines = new ArrayList<ReportLineDto>();
 
@@ -29,6 +31,10 @@ public class ReportViewDto {
     public void setSum(String sum) { this.sum = sum; }
     public boolean isStandard() { return standard; }
     public void setStandard(boolean standard) { this.standard = standard; }
+    public String getGroupBy() { return groupBy; }
+    public void setGroupBy(String groupBy) { this.groupBy = groupBy; }
+    public String getChart() { return chart; }
+    public void setChart(String chart) { this.chart = chart; }
     public List<ReportBucketDto> getRows() { return rows; }
     public void setRows(List<ReportBucketDto> rows) { this.rows = rows; }
     public List<ReportLineDto> getLines() { return lines; }

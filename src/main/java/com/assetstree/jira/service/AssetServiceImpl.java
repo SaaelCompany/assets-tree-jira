@@ -148,6 +148,7 @@ import com.assetstree.jira.model.LifecycleDraft;
 import com.assetstree.jira.model.MoneyText;
 import com.assetstree.jira.model.ReportCatalog;
 import com.assetstree.jira.model.SavedReportDraft;
+import com.assetstree.jira.model.ScheduleAnchor;
 import com.assetstree.jira.model.ScheduleDraft;
 import com.assetstree.jira.model.ServiceDue;
 import com.assetstree.jira.model.WorkKind;
@@ -5559,6 +5560,9 @@ public class AssetServiceImpl implements AssetService {
         if (projectKey != null && !projectKey.equals(asset.getProjectKey())) {
             return;
         }
+        if ("done".equals(plan.getAppliedFor())) {
+            return;
+        }
         LocalDate next = ServiceDue.next(plan.getLastDone(), plan.getEveryCount(), plan.getEveryUnit());
         if (!ServiceDue.reached(next, today)) {
             return;
@@ -5673,8 +5677,13 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(400, "asset-tree.error.service");
         }
         if (Boolean.TRUE.equals(draft.getDone())) {
-            row.setLastDone(LocalDate.now().toString());
-            row.setAppliedFor("");
+            row.setCompletedOn(LocalDate.now().toString());
+            if (ServiceDue.ONCE.equals(row.getEveryUnit())) {
+                row.setAppliedFor("done");
+            } else {
+                row.setLastDone(LocalDate.now().toString());
+                row.setAppliedFor("");
+            }
         } else if (draft.getLastDone() != null || creating) {
             String last = FieldDates.canonical(draft.getLastDone());
             if (last == null || last.isEmpty()) {
@@ -5738,9 +5747,33 @@ public class AssetServiceImpl implements AssetService {
             }
             row.setAssigneeKey(assignee);
         }
+        if (draft.getNote() != null || creating) {
+            String note = draft.getNote() == null ? "" : draft.getNote().trim();
+            if (note.length() > 2000) {
+                throw new AssetException(400, "asset-tree.error.service");
+            }
+            row.setNote(note);
+        }
+        if (draft.getStartTime() != null || creating) {
+            row.setStartTime(clock(draft.getStartTime()));
+        }
+        if (draft.getEndTime() != null || creating) {
+            row.setEndTime(clock(draft.getEndTime()));
+        }
         if (row.getName() == null || row.getLastDone() == null || row.getEveryUnit() == null) {
             throw new AssetException(400, "asset-tree.error.service");
         }
+    }
+
+    private String clock(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.isEmpty()) {
+            return "";
+        }
+        if (value.length() != 5 || value.charAt(2) != ':') {
+            throw new AssetException(400, "asset-tree.error.service");
+        }
+        return value;
     }
 
     private ServicePlanEntity findPlan(int assetId, int planId) {
@@ -5789,10 +5822,24 @@ public class AssetServiceImpl implements AssetService {
         dto.setKind(WorkKind.clean(row.getKind()));
         dto.setAssigneeKey(row.getAssigneeKey() == null ? "" : row.getAssigneeKey());
         dto.setAssigneeName(displayName(row.getAssigneeKey()));
+        dto.setNote(row.getNote() == null ? "" : row.getNote());
+        dto.setStartTime(row.getStartTime() == null ? "" : row.getStartTime());
+        dto.setEndTime(row.getEndTime() == null ? "" : row.getEndTime());
+        dto.setCompletedOn(row.getCompletedOn() == null ? "" : row.getCompletedOn());
         LocalDate next = ServiceDue.next(row.getLastDone(), row.getEveryCount(), row.getEveryUnit());
+        boolean completed = planCompleted(row, next);
+        dto.setCompleted(completed);
         dto.setNextDue(next == null ? "" : next.toString());
-        dto.setDue(ServiceDue.reached(next, today));
+        dto.setDue(ServiceDue.reached(next, today) && !completed);
         return dto;
+    }
+
+    private boolean planCompleted(ServicePlanEntity row, LocalDate next) {
+        String applied = row.getAppliedFor() == null ? "" : row.getAppliedFor();
+        if ("done".equals(applied)) {
+            return true;
+        }
+        return ServiceDue.ONCE.equals(row.getEveryUnit()) && next != null && next.toString().equals(applied);
     }
 
     private String dueNames(List<ServicePlanEntity> rows, LocalDate today) {
@@ -5872,11 +5919,15 @@ public class AssetServiceImpl implements AssetService {
                     plan.setName(name);
                     plan.setKind(kind);
                     plan.setAssigneeKey(assignee);
-                    plan.setLastDone(draft.getLastDone());
+                    plan.setLastDone(ScheduleAnchor.before(draft.getLastDone(),
+                            draft.getEveryCount() == null ? 0 : draft.getEveryCount().intValue(), draft.getEveryUnit()));
                     plan.setEveryCount(draft.getEveryCount());
                     plan.setEveryUnit(draft.getEveryUnit());
                     plan.setStatusKey(draft.getStatusKey() == null ? "" : draft.getStatusKey());
-                    plan.setNotify(draft.getNotify() == null ? Boolean.TRUE : draft.getNotify());
+                    plan.setNotify(draft.getNotify() == null ? Boolean.FALSE : draft.getNotify());
+                    plan.setNote(draft.getNote());
+                    plan.setStartTime(draft.getStartTime());
+                    plan.setEndTime(draft.getEndTime());
                     ServicePlanEntity row = ao().create(ServicePlanEntity.class, new DBParam("ASSET_ID", asset.getID()));
                     fillPlan(row, asset, plan, true);
                     row.save();
@@ -5926,6 +5977,11 @@ public class AssetServiceImpl implements AssetService {
         row.setEveryUnit(source.getEveryUnit());
         row.setNextDue(source.getNextDue());
         row.setDue(source.isDue());
+        row.setNote(source.getNote());
+        row.setStartTime(source.getStartTime());
+        row.setEndTime(source.getEndTime());
+        row.setCompletedOn(source.getCompletedOn());
+        row.setCompleted(source.isCompleted());
         return row;
     }
 
@@ -6009,10 +6065,12 @@ public class AssetServiceImpl implements AssetService {
                         if (room == null) {
                             continue;
                         }
-                        int x = FloorBounds.clamp(room.getX(), FloorBounds.CANVAS - FloorBounds.MIN_ROOM);
-                        int y = FloorBounds.clamp(room.getY(), FloorBounds.CANVAS_HEIGHT - FloorBounds.MIN_ROOM);
-                        int w = Math.max(FloorBounds.MIN_ROOM, room.getW());
-                        int h = Math.max(FloorBounds.MIN_ROOM, room.getH());
+                        String kind = FloorBounds.kind(room.getKind());
+                        int min = FloorBounds.minSize(kind);
+                        int x = FloorBounds.clamp(room.getX(), FloorBounds.CANVAS - min);
+                        int y = FloorBounds.clamp(room.getY(), FloorBounds.CANVAS_HEIGHT - min);
+                        int w = Math.max(min, room.getW());
+                        int h = Math.max(min, room.getH());
                         if (x + w > FloorBounds.CANVAS) {
                             w = FloorBounds.CANVAS - x;
                         }
@@ -6020,7 +6078,8 @@ public class AssetServiceImpl implements AssetService {
                             h = FloorBounds.CANVAS_HEIGHT - y;
                         }
                         RoomEntity stored = ao().create(RoomEntity.class, new DBParam("FLOOR_ID", row.getID()));
-                        stored.setName(roomName(room.getName()));
+                        stored.setName(roomName(room.getName(), kind));
+                        stored.setKind(kind);
                         stored.setPosX(x);
                         stored.setPosY(y);
                         stored.setPosW(w);
@@ -6064,10 +6123,10 @@ public class AssetServiceImpl implements AssetService {
         });
     }
 
-    private String roomName(String raw) {
+    private String roomName(String raw, String kind) {
         String name = raw == null ? "" : raw.trim();
         if (name.isEmpty()) {
-            return i18n().getText("asset-tree.ui.mapRoom");
+            return FloorBounds.ROOM.equals(kind) ? i18n().getText("asset-tree.ui.mapRoom") : "";
         }
         if (name.length() > 80) {
             throw new AssetException(400, "asset-tree.error.floor");
@@ -6153,6 +6212,7 @@ public class AssetServiceImpl implements AssetService {
                 item.setY(room.getPosY());
                 item.setW(room.getPosW());
                 item.setH(room.getPosH());
+                item.setKind(FloorBounds.kind(room.getKind()));
                 roomDtos.add(item);
             }
         }
@@ -6199,7 +6259,12 @@ public class AssetServiceImpl implements AssetService {
         final String group = ReportCatalog.group(draft.getGroupBy());
         final String filter = reportFilter(draft.getFilterField());
         final String value = draft.getFilterValue() == null ? "" : draft.getFilterValue().trim();
-        if (name.isEmpty() || name.length() > 80 || group.isEmpty() || (filter.isEmpty() != value.isEmpty()) || value.length() > 80) {
+        final String chart = ReportCatalog.chart(draft.getChart());
+        final String metric = reportMetric(draft.getMetric());
+        if (name.isEmpty() || name.length() > 80 || group.isEmpty() || (filter.isEmpty() != value.isEmpty()) || value.length() > 255) {
+            throw new AssetException(400, "asset-tree.error.report");
+        }
+        if ("mix".equals(filter) && !mixLooksValid(value)) {
             throw new AssetException(400, "asset-tree.error.report");
         }
         return ao().executeInTransaction(new TransactionCallback<SavedReportDto>() {
@@ -6211,6 +6276,8 @@ public class AssetServiceImpl implements AssetService {
                         new DBParam("GROUP_BY", group));
                 row.setFilterField(filter);
                 row.setFilterValue(value);
+                row.setChart(chart.isEmpty() ? "bar" : chart);
+                row.setMetric(metric);
                 row.save();
                 return savedReportDto(row);
             }
@@ -6248,15 +6315,14 @@ public class AssetServiceImpl implements AssetService {
                 String group = ReportCatalog.group(reportKey);
                 String filter = "";
                 String value = "";
+                String chart = "";
                 String title;
                 boolean standard = true;
                 String key = reportKey == null ? "" : reportKey.trim().toLowerCase(Locale.ROOT);
                 if (ReportCatalog.isStandard(key)) {
                     title = standardTitle(key);
-                    if (ReportCatalog.STATUS.equals(key) || ReportCatalog.TYPE.equals(key)
-                            || ReportCatalog.PLACE.equals(key) || ReportCatalog.HOLDER.equals(key)) {
-                        group = key;
-                    }
+                    group = standardGroup(key);
+                    chart = ReportCatalog.STATUS.equals(key) ? "donut" : "bar";
                 } else {
                     SavedReportEntity saved = ao().get(SavedReportEntity.class, ReportCatalog.savedId(key));
                     if (saved == null || !ProjectKeys.same(saved.getProjectKey(), project.getKey())) {
@@ -6267,9 +6333,16 @@ public class AssetServiceImpl implements AssetService {
                     group = saved.getGroupBy();
                     filter = saved.getFilterField() == null ? "" : saved.getFilterField();
                     value = saved.getFilterValue() == null ? "" : saved.getFilterValue();
+                    chart = ReportCatalog.chart(saved.getChart());
+                    if (chart.isEmpty()) {
+                        chart = "bar";
+                    }
                     key = ReportCatalog.savedKey(saved.getID());
                 }
-                return buildReport(project, key, title, standard, group, filter, value);
+                ReportViewDto view = buildReport(project, key, title, standard, group, filter, value);
+                view.setGroupBy(group);
+                view.setChart(chart);
+                return view;
             }
         });
     }
@@ -6280,7 +6353,9 @@ public class AssetServiceImpl implements AssetService {
             SavedReportDto item = new SavedReportDto();
             item.setId(key);
             item.setName(standardTitle(key));
-            item.setGroupBy(ReportCatalog.group(key));
+            item.setGroupBy(standardGroup(key));
+            item.setChart(ReportCatalog.STATUS.equals(key) ? "donut" : "bar");
+            item.setMetric("count");
             item.setStandard(true);
             items.add(item);
         }
@@ -6312,8 +6387,47 @@ public class AssetServiceImpl implements AssetService {
         dto.setGroupBy(row.getGroupBy() == null ? "" : row.getGroupBy());
         dto.setFilterField(row.getFilterField() == null ? "" : row.getFilterField());
         dto.setFilterValue(row.getFilterValue() == null ? "" : row.getFilterValue());
+        dto.setChart(ReportCatalog.chart(row.getChart()).isEmpty() ? "bar" : ReportCatalog.chart(row.getChart()));
+        dto.setMetric(reportMetric(row.getMetric()));
         dto.setStandard(false);
         return dto;
+    }
+
+    private String reportMetric(String raw) {
+        if (raw != null && "cost".equals(raw.trim().toLowerCase(Locale.ROOT))) {
+            return "cost";
+        }
+        return "count";
+    }
+
+    private boolean mixLooksValid(String value) {
+        return value.startsWith("t=") || value.startsWith("s=") || value.contains(";t=") || value.contains(";s=");
+    }
+
+    private String standardGroup(String key) {
+        if (ReportCatalog.STATUS.equals(key) || ReportCatalog.TYPE.equals(key)
+                || ReportCatalog.PLACE.equals(key) || ReportCatalog.HOLDER.equals(key)) {
+            return key;
+        }
+        if (ReportCatalog.COST.equals(key)) {
+            return ReportCatalog.TYPE;
+        }
+        if (ReportCatalog.RECEIPTS.equals(key)) {
+            return "month";
+        }
+        if (ReportCatalog.AGE.equals(key)) {
+            return "age";
+        }
+        if (ReportCatalog.WARRANTY.equals(key)) {
+            return "warranty";
+        }
+        if (ReportCatalog.WRITEOFF.equals(key)) {
+            return "writeoff";
+        }
+        if (ReportCatalog.WORK.equals(key) || ReportCatalog.SERVICE.equals(key)) {
+            return "kind";
+        }
+        return "";
     }
 
     private String reportFilter(String raw) {
@@ -6321,7 +6435,7 @@ public class AssetServiceImpl implements AssetService {
             return "";
         }
         String value = raw.trim().toLowerCase(Locale.ROOT);
-        if (ReportCatalog.STATUS.equals(value) || ReportCatalog.TYPE.equals(value) || ReportCatalog.HOLDER.equals(value)) {
+        if (ReportCatalog.STATUS.equals(value) || ReportCatalog.TYPE.equals(value) || ReportCatalog.HOLDER.equals(value) || "mix".equals(value)) {
             return value;
         }
         return "";
@@ -6329,24 +6443,36 @@ public class AssetServiceImpl implements AssetService {
 
     private String standardTitle(String key) {
         if (ReportCatalog.TYPE.equals(key)) {
-            return i18n().getText("asset-tree.ui.reportByType");
+            return i18n().getText("asset-tree.ui.reportTypeTitle");
         }
         if (ReportCatalog.PLACE.equals(key)) {
-            return i18n().getText("asset-tree.ui.reportByPlace");
+            return i18n().getText("asset-tree.ui.reportPlaceTitle");
         }
         if (ReportCatalog.HOLDER.equals(key)) {
-            return i18n().getText("asset-tree.ui.reportHolders");
+            return i18n().getText("asset-tree.ui.reportHolderTitle");
         }
         if (ReportCatalog.SERVICE.equals(key)) {
             return i18n().getText("asset-tree.ui.reportService");
         }
         if (ReportCatalog.WARRANTY.equals(key)) {
-            return i18n().getText("asset-tree.ui.reportWarranty");
+            return i18n().getText("asset-tree.ui.reportWarrantyTitle");
         }
         if (ReportCatalog.COST.equals(key)) {
-            return i18n().getText("asset-tree.ui.reportCost");
+            return i18n().getText("asset-tree.ui.reportCostTitle");
         }
-        return i18n().getText("asset-tree.ui.reportByStatus");
+        if (ReportCatalog.RECEIPTS.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportReceipts");
+        }
+        if (ReportCatalog.AGE.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportAge");
+        }
+        if (ReportCatalog.WRITEOFF.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportWriteoffs");
+        }
+        if (ReportCatalog.WORK.equals(key)) {
+            return i18n().getText("asset-tree.ui.reportWork");
+        }
+        return i18n().getText("asset-tree.ui.reportStatusTitle");
     }
 
     private ReportViewDto buildReport(Project project, String key, String title, boolean standard,
@@ -6368,7 +6494,7 @@ public class AssetServiceImpl implements AssetService {
             if (!reportFilterMatches(asset, filter, value)) {
                 continue;
             }
-            if (ReportCatalog.SERVICE.equals(key) && !nextPlan.containsKey(Integer.valueOf(asset.getID()))) {
+            if ((ReportCatalog.SERVICE.equals(key) || ReportCatalog.WORK.equals(key)) && !nextPlan.containsKey(Integer.valueOf(asset.getID()))) {
                 continue;
             }
             LifecycleEntity life = lives.get(Integer.valueOf(asset.getID()));
@@ -6376,6 +6502,12 @@ public class AssetServiceImpl implements AssetService {
                 continue;
             }
             if (ReportCatalog.COST.equals(key) && (life == null || life.getPriceMinor() <= 0L)) {
+                continue;
+            }
+            if ((ReportCatalog.RECEIPTS.equals(key) || ReportCatalog.AGE.equals(key)) && (life == null || FieldDates.canonical(life.getPurchased()) == null || FieldDates.canonical(life.getPurchased()).isEmpty())) {
+                continue;
+            }
+            if (ReportCatalog.WRITEOFF.equals(key) && !writtenOff(asset, life)) {
                 continue;
             }
             chosen.add(asset);
@@ -6404,7 +6536,7 @@ public class AssetServiceImpl implements AssetService {
         ReportViewDto view = new ReportViewDto();
         view.setId(key);
         view.setTitle(title);
-        view.setHint(i18n().getText("asset-tree.ui.reportHint"));
+        view.setHint(i18n().getText("asset-tree.ui.reportCounted"));
         view.setStandard(standard);
         view.setTotal(chosen.size());
         view.setRows(new ArrayList<ReportBucketDto>(buckets.values()));
@@ -6417,23 +6549,87 @@ public class AssetServiceImpl implements AssetService {
         if (filter == null || filter.isEmpty()) {
             return true;
         }
+        if ("mix".equals(filter)) {
+            String types = mixPart(value, "t");
+            String statuses = mixPart(value, "s");
+            if (!types.isEmpty() && !tokenHit(types, asset.getTypeKey())) {
+                return false;
+            }
+            return statuses.isEmpty() || tokenHit(statuses, Statuses.canonical(asset.getStatus()));
+        }
         if (ReportCatalog.STATUS.equals(filter)) {
-            return Statuses.canonical(asset.getStatus()).equals(value);
+            return tokenHit(value, Statuses.canonical(asset.getStatus()));
         }
         if (ReportCatalog.TYPE.equals(filter)) {
-            return value.equals(asset.getTypeKey());
+            return tokenHit(value, asset.getTypeKey());
         }
-        return value.equals(asset.getCustodianKey() == null ? "" : asset.getCustodianKey());
+        return tokenHit(value, asset.getCustodianKey() == null ? "" : asset.getCustodianKey());
+    }
+
+    private String mixPart(String value, String name) {
+        if (value == null) {
+            return "";
+        }
+        String[] parts = value.split(";");
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.startsWith(name + "=")) {
+                return part.substring(name.length() + 1);
+            }
+        }
+        return "";
+    }
+
+    private boolean tokenHit(String list, String token) {
+        if (token == null) {
+            token = "";
+        }
+        if (list == null || list.isEmpty()) {
+            return false;
+        }
+        if (list.indexOf(',') < 0) {
+            return list.equals(token);
+        }
+        String[] parts = list.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            if (token.equals(parts[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean writtenOff(AssetEntity asset, LifecycleEntity life) {
+        if (Statuses.WRITTEN_OFF.equals(Statuses.canonical(asset.getStatus()))) {
+            return true;
+        }
+        return life != null && "approved".equals(life.getWriteoffState());
     }
 
     private String reportBucketKey(String reportKey, String group, AssetEntity asset, Map<String, AssetTypeDto> types,
             Map<Integer, AssetEntity> index, Map<Integer, LifecycleEntity> lives, Map<Integer, ServicePlanEntity> plans, LocalDate today) {
-        if (ReportCatalog.SERVICE.equals(reportKey)) {
+        if (ReportCatalog.SERVICE.equals(reportKey) || ReportCatalog.WORK.equals(reportKey)) {
             ServicePlanEntity plan = plans.get(Integer.valueOf(asset.getID()));
             return plan == null ? WorkKind.TO : WorkKind.clean(plan.getKind());
         }
         if (ReportCatalog.WARRANTY.equals(reportKey)) {
             return warrantyBand(lives.get(Integer.valueOf(asset.getID())), today);
+        }
+        if (ReportCatalog.RECEIPTS.equals(reportKey)) {
+            LifecycleEntity bought = lives.get(Integer.valueOf(asset.getID()));
+            String iso = bought == null ? "" : FieldDates.canonical(bought.getPurchased());
+            return iso == null || iso.length() < 7 ? "" : iso.substring(0, 7);
+        }
+        if (ReportCatalog.AGE.equals(reportKey)) {
+            return ageBand(lives.get(Integer.valueOf(asset.getID())), today);
+        }
+        if (ReportCatalog.WRITEOFF.equals(reportKey)) {
+            LifecycleEntity life = lives.get(Integer.valueOf(asset.getID()));
+            String decided = life == null ? "" : FieldDates.canonical(life.getDecidedAt());
+            if (decided == null || decided.length() < 7) {
+                return "none";
+            }
+            return decided.substring(0, 7);
         }
         if (ReportCatalog.COST.equals(reportKey)) {
             return asset.getTypeKey() == null ? "" : asset.getTypeKey();
@@ -6452,8 +6648,20 @@ public class AssetServiceImpl implements AssetService {
 
     private String reportBucketLabel(String reportKey, String group, String bucketKey, AssetEntity asset,
             Map<String, AssetTypeDto> types, Map<Integer, AssetEntity> index) {
-        if (ReportCatalog.SERVICE.equals(reportKey)) {
+        if (ReportCatalog.SERVICE.equals(reportKey) || ReportCatalog.WORK.equals(reportKey)) {
             return kindLabel(bucketKey);
+        }
+        if (ReportCatalog.AGE.equals(reportKey)) {
+            if ("y0".equals(bucketKey)) {
+                return i18n().getText("asset-tree.ui.reportAge0");
+            }
+            if ("y1".equals(bucketKey)) {
+                return i18n().getText("asset-tree.ui.reportAge1");
+            }
+            if ("y3".equals(bucketKey)) {
+                return i18n().getText("asset-tree.ui.reportAge3");
+            }
+            return i18n().getText("asset-tree.ui.reportAge5");
         }
         if (ReportCatalog.WARRANTY.equals(reportKey)) {
             if ("expired".equals(bucketKey)) {
@@ -6482,7 +6690,7 @@ public class AssetServiceImpl implements AssetService {
     }
 
     private String reportColor(String reportKey, String group, String bucketKey, Map<String, AssetTypeDto> types) {
-        if (ReportCatalog.SERVICE.equals(reportKey)) {
+        if (ReportCatalog.SERVICE.equals(reportKey) || ReportCatalog.WORK.equals(reportKey) || "kind".equals(group)) {
             if (WorkKind.KTS.equals(bucketKey)) {
                 return "#FF8B00";
             }
@@ -6490,6 +6698,9 @@ public class AssetServiceImpl implements AssetService {
                 return "#6554C0";
             }
             return "#0052CC";
+        }
+        if (ReportCatalog.STATUS.equals(group) || ReportCatalog.STATUS.equals(reportKey)) {
+            return statusColor(bucketKey);
         }
         if ("expired".equals(bucketKey)) {
             return "#DE350B";
@@ -6504,9 +6715,46 @@ public class AssetServiceImpl implements AssetService {
         return "#0052CC";
     }
 
+    private String statusColor(String key) {
+        if ("in_use".equals(key) || "active".equals(key)) {
+            return "#00875A";
+        }
+        if ("repair".equals(key) || "maintenance".equals(key)) {
+            return "#FF8B00";
+        }
+        if (Statuses.WRITTEN_OFF.equals(key) || "retired".equals(key)) {
+            return "#DE350B";
+        }
+        if ("reserve".equals(key) || "inactive".equals(key)) {
+            return "#6554C0";
+        }
+        if ("in_stock".equals(key)) {
+            return "#6B778C";
+        }
+        return "#0052CC";
+    }
+
+    private String ageBand(LifecycleEntity life, LocalDate today) {
+        String iso = life == null ? "" : FieldDates.canonical(life.getPurchased());
+        if (iso == null || iso.isEmpty()) {
+            return "y0";
+        }
+        long months = Depreciation.elapsedMonths(LocalDate.parse(iso), today);
+        if (months < 12) {
+            return "y0";
+        }
+        if (months < 36) {
+            return "y1";
+        }
+        if (months < 60) {
+            return "y3";
+        }
+        return "y5";
+    }
+
     private String reportDetail(String reportKey, AssetEntity asset, Map<Integer, LifecycleEntity> lives,
             Map<Integer, ServicePlanEntity> plans, LocalDate today) {
-        if (ReportCatalog.SERVICE.equals(reportKey)) {
+        if (ReportCatalog.SERVICE.equals(reportKey) || ReportCatalog.WORK.equals(reportKey)) {
             ServicePlanEntity plan = plans.get(Integer.valueOf(asset.getID()));
             if (plan == null) {
                 return "";
@@ -6636,20 +6884,32 @@ public class AssetServiceImpl implements AssetService {
                 }
                 String purchased = FieldDates.canonical(draft.getPurchased());
                 String warranty = FieldDates.canonical(draft.getWarrantyUntil());
-                if (purchased == null || warranty == null) {
+                String commissioned = FieldDates.canonical(draft.getCommissioned());
+                if (purchased == null || warranty == null || commissioned == null) {
                     throw new AssetException(400, "asset-tree.error.life");
                 }
                 Long price = MoneyText.parse(draft.getPrice());
                 Long residual = MoneyText.parse(draft.getResidual());
                 int months = draft.getLifeMonths() == null ? 0 : draft.getLifeMonths().intValue();
                 String supplier = draft.getSupplier() == null ? "" : draft.getSupplier().trim();
+                String document = draft.getDocument() == null ? "" : draft.getDocument().trim();
+                String service = draft.getWarrantyService() == null ? "" : draft.getWarrantyService().trim();
+                String currency = draft.getCurrency() == null ? "" : draft.getCurrency().trim().toUpperCase(Locale.ROOT);
+                if (currency.isEmpty()) {
+                    currency = "RUB";
+                }
                 if (price == null || residual == null || months < 0 || months > 600 || supplier.length() > 120
+                        || document.length() > 160 || service.length() > 160 || currency.length() != 3
                         || residual.longValue() > price.longValue()) {
                     throw new AssetException(400, "asset-tree.error.life");
                 }
                 row.setPurchased(purchased);
                 row.setWarrantyUntil(warranty);
+                row.setCommissioned(commissioned);
                 row.setSupplier(supplier);
+                row.setDocument(document);
+                row.setCurrency(currency);
+                row.setWarrantyService(service);
                 row.setPriceMinor(price.longValue());
                 row.setResidualMinor(residual.longValue());
                 row.setLifeMonths(months);
@@ -6772,6 +7032,10 @@ public class AssetServiceImpl implements AssetService {
             dto.setApproverKey("");
             dto.setApproverName("");
             dto.setDecidedAt("");
+            dto.setDocument("");
+            dto.setCurrency("RUB");
+            dto.setCommissioned("");
+            dto.setWarrantyService("");
             return dto;
         }
         dto.setPurchased(row.getPurchased() == null ? "" : row.getPurchased());
@@ -6791,6 +7055,10 @@ public class AssetServiceImpl implements AssetService {
         dto.setApproverKey(row.getApproverKey() == null ? "" : row.getApproverKey());
         dto.setApproverName(displayName(row.getApproverKey()));
         dto.setDecidedAt(row.getDecidedAt() == null ? "" : row.getDecidedAt());
+        dto.setDocument(row.getDocument() == null ? "" : row.getDocument());
+        dto.setCurrency(row.getCurrency() == null || row.getCurrency().isEmpty() ? "RUB" : row.getCurrency());
+        dto.setCommissioned(row.getCommissioned() == null ? "" : row.getCommissioned());
+        dto.setWarrantyService(row.getWarrantyService() == null ? "" : row.getWarrantyService());
         return dto;
     }
 

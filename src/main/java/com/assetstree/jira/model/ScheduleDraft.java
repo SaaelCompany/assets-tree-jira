@@ -17,6 +17,9 @@ public class ScheduleDraft {
     private String everyUnit;
     private String statusKey;
     private Boolean notify;
+    private String note;
+    private String startTime;
+    private String endTime;
 
     public List<Integer> getAssetIds() { return assetIds; }
     public void setAssetIds(List<Integer> assetIds) { this.assetIds = assetIds; }
@@ -36,4 +39,10 @@ public class ScheduleDraft {
     public void setStatusKey(String statusKey) { this.statusKey = statusKey; }
     public Boolean getNotify() { return notify; }
     public void setNotify(Boolean notify) { this.notify = notify; }
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+    public String getStartTime() { return startTime; }
+    public void setStartTime(String startTime) { this.startTime = startTime; }
+    public String getEndTime() { return endTime; }
+    public void setEndTime(String endTime) { this.endTime = endTime; }
 }

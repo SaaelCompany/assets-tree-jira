@@ -11,6 +11,7 @@ public class RoomDto {
     private int y;
     private int w;
     private int h;
+    private String kind;
 
     public int getId() { return id; }
     public void setId(int id) { this.id = id; }
@@ -24,4 +25,6 @@ public class RoomDto {
     public void setW(int w) { this.w = w; }
     public int getH() { return h; }
     public void setH(int h) { this.h = h; }
+    public String getKind() { return kind; }
+    public void setKind(String kind) { this.kind = kind; }
 }

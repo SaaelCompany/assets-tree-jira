@@ -28,8 +28,18 @@ public interface SavedReportEntity extends Entity {
 
     void setFilterField(String filterField);
 
-    @StringLength(80)
+    @StringLength(255)
     String getFilterValue();
 
     void setFilterValue(String filterValue);
+
+    @StringLength(16)
+    String getChart();
+
+    void setChart(String chart);
+
+    @StringLength(16)
+    String getMetric();
+
+    void setMetric(String metric);
 }

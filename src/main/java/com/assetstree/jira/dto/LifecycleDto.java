@@ -22,6 +22,10 @@ public class LifecycleDto {
     private String approverKey;
     private String approverName;
     private String decidedAt;
+    private String document;
+    private String currency;
+    private String commissioned;
+    private String warrantyService;
 
     public int getAssetId() { return assetId; }
     public void setAssetId(int assetId) { this.assetId = assetId; }
@@ -57,4 +61,12 @@ public class LifecycleDto {
     public void setApproverName(String approverName) { this.approverName = approverName; }
     public String getDecidedAt() { return decidedAt; }
     public void setDecidedAt(String decidedAt) { this.decidedAt = decidedAt; }
+    public String getDocument() { return document; }
+    public void setDocument(String document) { this.document = document; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+    public String getCommissioned() { return commissioned; }
+    public void setCommissioned(String commissioned) { this.commissioned = commissioned; }
+    public String getWarrantyService() { return warrantyService; }
+    public void setWarrantyService(String warrantyService) { this.warrantyService = warrantyService; }
 }

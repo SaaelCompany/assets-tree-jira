@@ -16,6 +16,9 @@ public class ServicePlanDraft {
     private Boolean done;
     private String kind;
     private String assigneeKey;
+    private String note;
+    private String startTime;
+    private String endTime;
 
     public String getName() {
         return name;
@@ -88,4 +91,11 @@ public class ServicePlanDraft {
     public void setAssigneeKey(String assigneeKey) {
         this.assigneeKey = assigneeKey;
     }
+
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+    public String getStartTime() { return startTime; }
+    public void setStartTime(String startTime) { this.startTime = startTime; }
+    public String getEndTime() { return endTime; }
+    public void setEndTime(String endTime) { this.endTime = endTime; }
 }

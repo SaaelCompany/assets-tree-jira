@@ -37,11 +37,15 @@ public class ServiceDueTest {
     public void aBrokenScheduleHasNoNextDay() {
         assertNull(ServiceDue.next("", 1, ServiceDue.MONTH));
         assertNull(ServiceDue.next("2026-01-15", 0, ServiceDue.MONTH));
-        assertNull(ServiceDue.next("2026-01-15", 1, "week"));
+        assertEquals(LocalDate.of(2026, 1, 22), ServiceDue.next("2026-01-15", 1, "week"));
+        assertEquals(LocalDate.of(2026, 1, 15), ServiceDue.next("2026-01-15", 1, ServiceDue.ONCE));
+        assertEquals(LocalDate.of(2027, 1, 15), ServiceDue.next("2026-01-15", 1, ServiceDue.YEAR));
+        assertNull(ServiceDue.next("2026-01-15", 1, "hour"));
         assertNull(ServiceDue.next("2026-01-15", 121, ServiceDue.MONTH));
         assertNull(ServiceDue.next("2026-01-15", 3651, ServiceDue.DAY));
         assertEquals(LocalDate.of(2036, 1, 15), ServiceDue.next("2026-01-15", 120, ServiceDue.MONTH));
         assertEquals("", ServiceDue.unit(" weeks "));
+        assertEquals(ServiceDue.WEEK, ServiceDue.unit(" Week "));
         assertEquals(ServiceDue.MONTH, ServiceDue.unit(" Month "));
     }
 }

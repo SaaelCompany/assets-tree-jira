@@ -63,4 +63,24 @@ public interface LifecycleEntity extends Entity {
     String getDecidedAt();
 
     void setDecidedAt(String decidedAt);
+
+    @StringLength(160)
+    String getDocument();
+
+    void setDocument(String document);
+
+    @StringLength(8)
+    String getCurrency();
+
+    void setCurrency(String currency);
+
+    @StringLength(16)
+    String getCommissioned();
+
+    void setCommissioned(String commissioned);
+
+    @StringLength(160)
+    String getWarrantyService();
+
+    void setWarrantyService(String warrantyService);
 }

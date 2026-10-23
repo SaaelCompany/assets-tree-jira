@@ -14,9 +14,13 @@ public final class ReportCatalog {
     public static final String SERVICE = "service";
     public static final String WARRANTY = "warranty";
     public static final String COST = "cost";
+    public static final String RECEIPTS = "receipts";
+    public static final String AGE = "age";
+    public static final String WRITEOFF = "writeoff";
+    public static final String WORK = "work";
 
     private static final List<String> STANDARD = Collections.unmodifiableList(Arrays.asList(
-            STATUS, TYPE, PLACE, HOLDER, SERVICE, WARRANTY, COST));
+            STATUS, TYPE, PLACE, HOLDER, RECEIPTS, COST, WARRANTY, AGE, WRITEOFF, WORK));
     private static final List<String> GROUPS = Collections.unmodifiableList(Arrays.asList(
             STATUS, TYPE, PLACE, HOLDER));
 
@@ -52,5 +56,17 @@ public final class ReportCatalog {
         } catch (NumberFormatException ex) {
             return 0;
         }
+    }
+
+    /** Donut for a status split, columns for everything else, unless a saved report chose otherwise. */
+    public static String chart(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        if ("donut".equals(value) || "bar".equals(value)) {
+            return value;
+        }
+        return "";
     }
 }
