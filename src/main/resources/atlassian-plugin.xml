@@ -87,8 +87,18 @@
     <web-item key="asset-tree-project" name="Asset Tree Project Link" section="jira.project.sidebar.plugins.navigation" weight="300">
         <label key="asset-tree.nav.label"/>
         <link linkId="asset-tree-project-link">/plugins/servlet/asset-tree?project=$project.key&amp;view=all</link>
+        <param name="iconClass" value="aui-icon-large asset-tree-sidebar-icon"/>
         <condition class="com.assetstree.jira.web.AgentAssetsCondition"/>
     </web-item>
+
+    <web-resource key="asset-tree-sidebar" name="Asset Tree Sidebar Icon">
+        <context>atl.general</context>
+        <context>jira.general</context>
+        <context>jira.project.sidebar</context>
+        <context>servicedesk.general</context>
+        <resource type="download" name="sidebar-icon.css" location="css/sidebar-icon.css"/>
+        <resource type="download" name="sidebar-assets.svg" location="images/sidebar-assets.svg"/>
+    </web-resource>
 
     <global-permission key="MANAGE_ASSETS" i18n-name-key="asset-tree.permission.manage.name" i18n-description-key="asset-tree.permission.manage.description" anonymous-allowed="false"/>
 
