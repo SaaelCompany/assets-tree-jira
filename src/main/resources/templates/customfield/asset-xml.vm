@@ -1,3 +1,0 @@
-#if ($value)
-<customfieldvalue>$textutils.htmlEncode($value)</customfieldvalue>
-#end
