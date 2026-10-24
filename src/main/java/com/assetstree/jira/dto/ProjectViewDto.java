@@ -9,6 +9,7 @@ public class ProjectViewDto {
     private Boolean treeObjects;
     private List<String> columns;
     private List<String> modules;
+    private ModuleSetupDto setup;
 
     public Boolean getTreeObjects() {
         return treeObjects;
@@ -32,5 +33,13 @@ public class ProjectViewDto {
 
     public void setModules(List<String> modules) {
         this.modules = modules;
+    }
+
+    public ModuleSetupDto getSetup() {
+        return setup;
+    }
+
+    public void setSetup(ModuleSetupDto setup) {
+        this.setup = setup;
     }
 }

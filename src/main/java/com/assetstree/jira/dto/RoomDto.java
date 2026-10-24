@@ -12,6 +12,7 @@ public class RoomDto {
     private int w;
     private int h;
     private String kind;
+    private String color;
 
     public int getId() { return id; }
     public void setId(int id) { this.id = id; }
@@ -27,4 +28,6 @@ public class RoomDto {
     public void setH(int h) { this.h = h; }
     public String getKind() { return kind; }
     public void setKind(String kind) { this.kind = kind; }
+    public String getColor() { return color; }
+    public void setColor(String color) { this.color = color; }
 }

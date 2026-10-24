@@ -6450,10 +6450,15 @@ a.asset-tree-url {
     cursor: grab;
 }
 
-#asset-tree-app .asset-tree-plan-size,
-#asset-tree-app .asset-tree-dirty {
+#asset-tree-app .asset-tree-plan-size {
     color: #6b778c;
     font-size: 13px;
+}
+
+#asset-tree-app .asset-tree-dirty {
+    color: #ff8b00;
+    font-size: 13px;
+    font-weight: 600;
 }
 
 #asset-tree-app .asset-tree-life-block {
@@ -6545,4 +6550,166 @@ a.asset-tree-url {
     #asset-tree-app .asset-tree-report-picks {
         grid-template-columns: 1fr;
     }
+}
+
+#asset-tree-app .asset-tree-map-stage {
+    overflow: auto;
+}
+
+#asset-tree-app .asset-tree-map-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: auto;
+    border: 0;
+    overflow: visible;
+    background: transparent;
+}
+
+#asset-tree-app button.asset-tree-btn.asset-tree-tool {
+    display: inline-flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: auto !important;
+    min-width: 68px;
+    height: auto !important;
+    min-height: 52px;
+    padding: 6px 8px !important;
+    border: 1px solid #dfe1e6 !important;
+    background: #fff !important;
+    color: #42526e !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+}
+
+#asset-tree-app .asset-tree-editor-bar .asset-tree-btn {
+    display: inline-flex !important;
+    margin: 0 !important;
+}
+
+#asset-tree-app .asset-tree-editor-bar .asset-tree-zoom {
+    width: 32px !important;
+    min-width: 32px;
+    justify-content: center;
+    padding: 0 !important;
+}
+
+#asset-tree-app .asset-tree-plan-label {
+    margin-left: 8px;
+    color: #6b778c;
+    font-size: 12px;
+}
+
+#asset-tree-app button.asset-tree-btn.asset-tree-tool.is-on {
+    background: #deebff !important;
+    border-color: #4c9aff !important;
+    color: #0052cc !important;
+}
+
+#asset-tree-app .asset-tree-tool-icon {
+    width: 18px;
+    height: 18px;
+}
+
+#asset-tree-app input.asset-tree-plan-size {
+    width: 76px;
+}
+
+#asset-tree-app .asset-tree-opening {
+    fill: none;
+    stroke: #172b4d;
+    stroke-width: 1.5;
+    pointer-events: none;
+}
+
+#asset-tree-app .asset-tree-pin-plate {
+    fill: #0052cc;
+    stroke: #fff;
+    stroke-width: 2;
+}
+
+#asset-tree-app .asset-tree-pin.is-selected .asset-tree-pin-plate {
+    stroke: #ffab00;
+    stroke-width: 3;
+}
+
+#asset-tree-app .asset-tree-pin-glyph {
+    fill: none;
+    stroke: #fff;
+    stroke-width: 1.6;
+    pointer-events: none;
+}
+
+#asset-tree-app .asset-tree-inspector,
+#asset-tree-app .asset-tree-module-setup {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+    background: #fafbfc;
+}
+
+#asset-tree-app .asset-tree-approval {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+#asset-tree-app .asset-tree-approval h4 {
+    margin: 0;
+    color: #172b4d;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#asset-tree-app .asset-tree-approval .asset-tree-user-results,
+#asset-tree-app .asset-tree-approval > p {
+    flex-basis: 100%;
+}
+
+#asset-tree-app .asset-tree-approval input[type="search"] {
+    width: 220px;
+}
+
+#asset-tree-app .asset-tree-inspector h3,
+#asset-tree-app .asset-tree-module-setup h4 {
+    margin: 0;
+    color: #172b4d;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+#asset-tree-app .asset-tree-swatches {
+    display: flex;
+    gap: 6px;
+}
+
+#asset-tree-app button.asset-tree-swatch {
+    width: 18px;
+    height: 18px;
+    min-height: 0;
+    padding: 0 !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#asset-tree-app button.asset-tree-swatch.is-on {
+    outline: 2px solid #0052cc;
+}
+
+#asset-tree-app .asset-tree-module-setup {
+    grid-column: 1 / -1;
 }

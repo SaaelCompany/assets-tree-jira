@@ -29,4 +29,12 @@ public interface FloorEntity extends Entity {
     int getSortOrder();
 
     void setSortOrder(int sortOrder);
+
+    int getPlanW();
+
+    void setPlanW(int planW);
+
+    int getPlanH();
+
+    void setPlanH(int planH);
 }

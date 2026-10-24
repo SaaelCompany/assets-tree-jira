@@ -1088,7 +1088,29 @@ public final class UiCatalog {
             "groupWordAge",
             "groupWordWarranty",
             "groupWordWriteoff",
-            "groupWordKind"
+            "groupWordKind",
+            "setupTitle",
+            "setupKinds",
+            "setupRepeat",
+            "setupNotify",
+            "setupPlanW",
+            "setupPlanH",
+            "setupGrid",
+            "setupSnap",
+            "setupShow",
+            "setupApproval",
+            "setupApprover",
+            "setupCurrency",
+            "setupMonths",
+            "setupSave",
+            "lifeApproval",
+            "lifeApproverEmpty",
+            "lifeWriteoffNow",
+            "mapZoomIn",
+            "mapZoomOut",
+            "mapColor",
+            "mapDeleteShape",
+            "mapPlanSize"
     };
 
     private UiCatalog() {

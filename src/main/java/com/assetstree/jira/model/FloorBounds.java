@@ -40,4 +40,32 @@ public final class FloorBounds {
     public static int minSize(String kind) {
         return ROOM.equals(kind(kind)) ? MIN_ROOM : MIN_PART;
     }
+
+    public static int width(int raw) {
+        if (raw <= 0) {
+            return CANVAS;
+        }
+        if (raw < 640) {
+            return 640;
+        }
+        return raw > 2400 ? 2400 : raw;
+    }
+
+    public static int height(int raw) {
+        if (raw <= 0) {
+            return CANVAS_HEIGHT;
+        }
+        if (raw < 480) {
+            return 480;
+        }
+        return raw > 1600 ? 1600 : raw;
+    }
+
+    public static String color(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        return value.matches("#[0-9a-f]{6}") ? value : "";
+    }
 }

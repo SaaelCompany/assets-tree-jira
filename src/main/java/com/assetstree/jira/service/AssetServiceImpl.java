@@ -144,6 +144,7 @@ import com.assetstree.jira.model.ProjectKeys;
 import com.assetstree.jira.model.StatusCategories;
 import com.assetstree.jira.model.Depreciation;
 import com.assetstree.jira.model.FloorBounds;
+import com.assetstree.jira.model.ModuleSetup;
 import com.assetstree.jira.model.LifecycleDraft;
 import com.assetstree.jira.model.MoneyText;
 import com.assetstree.jira.model.ReportCatalog;
@@ -2263,6 +2264,9 @@ public class AssetServiceImpl implements AssetService {
                 if (modules != null) {
                     row.setModuleList(ProjectModules.join(modules));
                 }
+                if (draft != null && draft.getSetup() != null) {
+                    row.setOptionList(ModuleSetup.write(draft.getSetup()));
+                }
                 row.save();
                 return viewDto(row);
             }
@@ -2274,6 +2278,7 @@ public class AssetServiceImpl implements AssetService {
         saved.setTreeObjects(Boolean.valueOf(row != null && row.getTreeMode() == 1));
         saved.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
         saved.setModules(row == null ? new ArrayList<String>() : ProjectModules.split(row.getModuleList()));
+        saved.setSetup(ModuleSetup.read(row == null ? "" : row.getOptionList()));
         return saved;
     }
 
@@ -2318,6 +2323,7 @@ public class AssetServiceImpl implements AssetService {
             project.setTreeObjects(row != null && row.getTreeMode() == 1);
             project.setColumns(row == null ? new ArrayList<String>() : ViewColumns.split(row.getColumnList()));
             project.setModules(row == null ? new ArrayList<String>() : ProjectModules.split(row.getModuleList()));
+            project.setSetup(ModuleSetup.read(row == null ? "" : row.getOptionList()));
         }
     }
 
@@ -6027,6 +6033,8 @@ public class AssetServiceImpl implements AssetService {
                 row.setPlaceId(checkedPlace(project.getKey(), placeId));
                 row.setLevel(level);
                 row.setSortOrder(row.getID());
+                row.setPlanW(FloorBounds.width(draft == null ? 0 : draft.getPlanW()));
+                row.setPlanH(FloorBounds.height(draft == null ? 0 : draft.getPlanH()));
                 row.save();
                 return floorDto(row);
             }
@@ -6041,6 +6049,8 @@ public class AssetServiceImpl implements AssetService {
             throw new AssetException(400, "asset-tree.error.floor");
         }
         final String name = floorName(draft.getName());
+        final int planW = FloorBounds.width(draft.getPlanW());
+        final int planH = FloorBounds.height(draft.getPlanH());
         if (draft.getLevel() < -20 || draft.getLevel() > 200) {
             throw new AssetException(400, "asset-tree.error.floor");
         }
@@ -6056,6 +6066,8 @@ public class AssetServiceImpl implements AssetService {
                 row.setName(name);
                 row.setLevel(draft.getLevel());
                 row.setPlaceId(checkedPlace(project.getKey(), draft.getPlaceId()));
+                row.setPlanW(planW);
+                row.setPlanH(planH);
                 row.save();
                 ao().deleteWithSQL(RoomEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
                 ao().deleteWithSQL(PinEntity.class, "FLOOR_ID = ?", Integer.valueOf(row.getID()));
@@ -6067,19 +6079,20 @@ public class AssetServiceImpl implements AssetService {
                         }
                         String kind = FloorBounds.kind(room.getKind());
                         int min = FloorBounds.minSize(kind);
-                        int x = FloorBounds.clamp(room.getX(), FloorBounds.CANVAS - min);
-                        int y = FloorBounds.clamp(room.getY(), FloorBounds.CANVAS_HEIGHT - min);
+                        int x = FloorBounds.clamp(room.getX(), planW - min);
+                        int y = FloorBounds.clamp(room.getY(), planH - min);
                         int w = Math.max(min, room.getW());
                         int h = Math.max(min, room.getH());
-                        if (x + w > FloorBounds.CANVAS) {
-                            w = FloorBounds.CANVAS - x;
+                        if (x + w > planW) {
+                            w = planW - x;
                         }
-                        if (y + h > FloorBounds.CANVAS_HEIGHT) {
-                            h = FloorBounds.CANVAS_HEIGHT - y;
+                        if (y + h > planH) {
+                            h = planH - y;
                         }
                         RoomEntity stored = ao().create(RoomEntity.class, new DBParam("FLOOR_ID", row.getID()));
                         stored.setName(roomName(room.getName(), kind));
                         stored.setKind(kind);
+                        stored.setColor(FloorBounds.color(room.getColor()));
                         stored.setPosX(x);
                         stored.setPosY(y);
                         stored.setPosW(w);
@@ -6097,8 +6110,8 @@ public class AssetServiceImpl implements AssetService {
                             throw new AssetException(400, "asset-tree.error.floor");
                         }
                         PinEntity stored = ao().create(PinEntity.class, new DBParam("FLOOR_ID", row.getID()), new DBParam("ASSET_ID", asset.getID()));
-                        stored.setPosX(FloorBounds.clamp(pin.getX(), FloorBounds.CANVAS));
-                        stored.setPosY(FloorBounds.clamp(pin.getY(), FloorBounds.CANVAS_HEIGHT));
+                        stored.setPosX(FloorBounds.clamp(pin.getX(), planW));
+                        stored.setPosY(FloorBounds.clamp(pin.getY(), planH));
                         stored.save();
                     }
                 }
@@ -6201,6 +6214,8 @@ public class AssetServiceImpl implements AssetService {
         } else {
             dto.setPlaceName("");
         }
+        dto.setPlanW(FloorBounds.width(row.getPlanW()));
+        dto.setPlanH(FloorBounds.height(row.getPlanH()));
         RoomEntity[] rooms = ao().find(RoomEntity.class, Query.select().where("FLOOR_ID = ?", row.getID()));
         List<RoomDto> roomDtos = new ArrayList<RoomDto>();
         if (rooms != null) {
@@ -6213,6 +6228,7 @@ public class AssetServiceImpl implements AssetService {
                 item.setW(room.getPosW());
                 item.setH(room.getPosH());
                 item.setKind(FloorBounds.kind(room.getKind()));
+                item.setColor(FloorBounds.color(room.getColor()));
                 roomDtos.add(item);
             }
         }
@@ -6913,6 +6929,13 @@ public class AssetServiceImpl implements AssetService {
                 row.setPriceMinor(price.longValue());
                 row.setResidualMinor(residual.longValue());
                 row.setLifeMonths(months);
+                if (draft.getApproverKey() != null && !"pending".equals(row.getWriteoffState())) {
+                    String approver = draft.getApproverKey().trim();
+                    if (!approver.isEmpty() && userManager().getUserByKey(approver) == null) {
+                        throw new AssetException(400, "asset-tree.error.writeoff.approver");
+                    }
+                    row.setApproverKey(approver);
+                }
                 row.save();
                 return lifecycleDto(asset, row);
             }

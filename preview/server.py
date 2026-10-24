@@ -1039,12 +1039,60 @@ def module_on(project_key, key):
     return key in stored_modules(project_key)
 
 
+def module_setup(stored):
+    stored = stored or {}
+    kinds = [key for key in ("to", "kts", "verify") if key in str(stored.get("scheduleKinds") or "to,kts,verify").split(",")]
+    unit = stored.get("scheduleUnit") or "month"
+    if unit not in ("once", "day", "week", "month", "year"):
+        unit = "month"
+    hidden = [key for key in str(stored.get("reportHidden") or "").split(",") if key in REPORT_STANDARD]
+    grid = int(stored.get("mapGrid") or 24)
+    if grid not in (8, 12, 16, 24, 32):
+        grid = 24
+    currency = str(stored.get("lifeCurrency") or "RUB").strip().upper()
+    if len(currency) != 3 or not currency.isalpha():
+        currency = "RUB"
+    approver = str(stored.get("lifeApprover") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._@-]{0,80}", approver):
+        approver = ""
+    return {
+        "scheduleKinds": ",".join(kinds or ["to", "kts", "verify"]),
+        "scheduleUnit": unit,
+        "scheduleNotify": bool(stored.get("scheduleNotify")),
+        "mapWidth": plan_limit(stored.get("mapWidth"), 1200, 640, 2400),
+        "mapHeight": plan_limit(stored.get("mapHeight"), 760, 480, 1600),
+        "mapGrid": grid,
+        "mapSnap": stored.get("mapSnap") is not False,
+        "reportHidden": ",".join(hidden),
+        "lifeApproval": stored.get("lifeApproval") is not False,
+        "lifeApprover": approver,
+        "lifeCurrency": currency,
+        "lifeMonths": max(0, min(600, int(stored.get("lifeMonths") or 0))),
+    }
+
+
+def plan_limit(raw, default, low, high):
+    try:
+        value = int(raw or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        value = default
+    return max(low, min(high, value))
+
+
+def room_color(raw):
+    text = str(raw or "").strip().lower()
+    return text if re.fullmatch(r"#[0-9a-f]{6}", text) else ""
+
+
 def project_view(project_key):
     view = (STATE.get("views") or {}).get(project_key) or {}
     return {
         "treeObjects": bool(view.get("treeObjects")),
         "columns": list(view.get("columns") or []),
         "modules": stored_modules(project_key),
+        "setup": module_setup(view.get("setup")),
     }
 
 
@@ -1070,6 +1118,8 @@ def save_project_view(project_key, body, text):
             if key in KNOWN_MODULES:
                 present.add(key)
         view["modules"] = [key for key in KNOWN_MODULES if key in present]
+    if isinstance(body.get("setup"), dict):
+        view["setup"] = module_setup(body.get("setup"))
     return 200, project_view(project_key)
 
 
@@ -1696,7 +1746,10 @@ def create_schedule(project_key, body, text):
 def floor_dto(row):
     rooms = []
     for room in row.get("rooms") or []:
-        rooms.append({"id": room["id"], "name": room.get("name") or "", "kind": room.get("kind") or "room", "x": room["x"], "y": room["y"], "w": room["w"], "h": room["h"]})
+        rooms.append({
+            "id": room["id"], "name": room.get("name") or "", "kind": room.get("kind") or "room",
+            "color": room_color(room.get("color")), "x": room["x"], "y": room["y"], "w": room["w"], "h": room["h"],
+        })
     pins = []
     for pin in row.get("pins") or []:
         asset = STATE["assets"].get(pin.get("assetId"))
@@ -1710,6 +1763,8 @@ def floor_dto(row):
     return {
         "id": row["id"], "name": row.get("name") or "", "level": row.get("level") or 1,
         "placeId": row.get("placeId") or 0, "placeName": (place or {}).get("name") or "",
+        "planW": plan_limit(row.get("planW"), 1200, 640, 2400),
+        "planH": plan_limit(row.get("planH"), 760, 480, 1600),
         "rooms": rooms, "pins": pins,
     }
 
@@ -1738,6 +1793,8 @@ def create_floor(project_key, body, text):
     STATE["floors"][floor_id] = {
         "id": floor_id, "projectKey": project_key, "name": name, "level": level,
         "placeId": place_id, "rooms": [], "pins": [], "room_seq": 1, "pin_seq": 1,
+        "planW": plan_limit((body or {}).get("planW"), 1200, 640, 2400),
+        "planH": plan_limit((body or {}).get("planH"), 760, 480, 1600),
     }
     return 201, floor_dto(STATE["floors"][floor_id])
 
@@ -1754,6 +1811,8 @@ def save_floor(project_key, floor_id, body, text):
     level = 0 if raw_level is None or raw_level == "" else int(raw_level)
     if not name or len(name) > 80 or level < -20 or level > 200:
         return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    plan_w = plan_limit(body.get("planW"), 1200, 640, 2400)
+    plan_h = plan_limit(body.get("planH"), 760, 480, 1600)
     rooms = body.get("rooms") or []
     pins = body.get("pins") or []
     if len(rooms) > 80 or len(pins) > 200:
@@ -1771,15 +1830,18 @@ def save_floor(project_key, floor_id, body, text):
         if not label and kind == "room":
             label = "Комната"
         minimum = 36 if kind == "room" else 6
-        x = max(0, min(1200 - minimum, int(room.get("x") or 0)))
-        y = max(0, min(760 - minimum, int(room.get("y") or 0)))
+        x = max(0, min(plan_w - minimum, int(room.get("x") or 0)))
+        y = max(0, min(plan_h - minimum, int(room.get("y") or 0)))
         w = max(minimum, int(room.get("w") or minimum))
         h = max(minimum, int(room.get("h") or minimum))
-        if x + w > 1200:
-            w = 1200 - x
-        if y + h > 760:
-            h = 760 - y
-        stored_rooms.append({"id": seq, "name": label[:80], "kind": kind, "x": x, "y": y, "w": w, "h": h})
+        if x + w > plan_w:
+            w = plan_w - x
+        if y + h > plan_h:
+            h = plan_h - y
+        stored_rooms.append({
+            "id": seq, "name": label[:80], "kind": kind, "color": room_color(room.get("color")),
+            "x": x, "y": y, "w": w, "h": h,
+        })
         seq += 1
     stored_pins = []
     seen = set()
@@ -1794,11 +1856,14 @@ def save_floor(project_key, floor_id, body, text):
         seen.add(asset_id)
         stored_pins.append({
             "id": pin_seq, "assetId": asset_id,
-            "x": max(0, min(1200, int(pin.get("x") or 0))),
-            "y": max(0, min(760, int(pin.get("y") or 0))),
+            "x": max(0, min(plan_w, int(pin.get("x") or 0))),
+            "y": max(0, min(plan_h, int(pin.get("y") or 0))),
         })
         pin_seq += 1
-    row.update({"name": name, "level": level, "placeId": place_id, "rooms": stored_rooms, "pins": stored_pins})
+    row.update({
+        "name": name, "level": level, "placeId": place_id, "planW": plan_w, "planH": plan_h,
+        "rooms": stored_rooms, "pins": stored_pins,
+    })
     return 200, floor_dto(row)
 
 
@@ -1922,6 +1987,11 @@ def save_life(asset_id, body, text):
         "residualMinor": residual,
         "lifeMonths": months,
     })
+    if "approverKey" in body and row.get("writeoffState") != "pending":
+        approver = str(body.get("approverKey") or "").strip()
+        if approver and approver not in USERS:
+            return 400, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+        row["approverKey"] = approver
     return 200, life_dto(asset_id)
 
 
@@ -4253,7 +4323,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.17",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.18",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],

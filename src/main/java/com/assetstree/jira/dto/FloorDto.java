@@ -13,6 +13,8 @@ public class FloorDto {
     private int level;
     private int placeId;
     private String placeName;
+    private int planW;
+    private int planH;
     private List<RoomDto> rooms = new ArrayList<RoomDto>();
     private List<PinDto> pins = new ArrayList<PinDto>();
 
@@ -26,6 +28,10 @@ public class FloorDto {
     public void setPlaceId(int placeId) { this.placeId = placeId; }
     public String getPlaceName() { return placeName; }
     public void setPlaceName(String placeName) { this.placeName = placeName; }
+    public int getPlanW() { return planW; }
+    public void setPlanW(int planW) { this.planW = planW; }
+    public int getPlanH() { return planH; }
+    public void setPlanH(int planH) { this.planH = planH; }
     public List<RoomDto> getRooms() { return rooms; }
     public void setRooms(List<RoomDto> rooms) { this.rooms = rooms; }
     public List<PinDto> getPins() { return pins; }

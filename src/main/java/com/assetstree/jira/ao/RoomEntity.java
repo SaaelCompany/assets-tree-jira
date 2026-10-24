@@ -38,4 +38,10 @@ public interface RoomEntity extends Entity {
     String getKind();
 
     void setKind(String kind);
+
+    /** #rrggbb fill for a room. Empty keeps the default tint. */
+    @StringLength(16)
+    String getColor();
+
+    void setColor(String color);
 }

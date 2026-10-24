@@ -40,4 +40,12 @@ public interface ProjectViewEntity extends Entity {
     String getModuleList();
 
     void setModuleList(String moduleList);
+
+    /**
+     * Options for the optional modules. Empty keeps the built-in defaults.
+     */
+    @StringLength(StringLength.UNLIMITED)
+    String getOptionList();
+
+    void setOptionList(String optionList);
 }

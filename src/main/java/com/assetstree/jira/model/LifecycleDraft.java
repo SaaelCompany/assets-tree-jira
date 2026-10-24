@@ -15,6 +15,7 @@ public class LifecycleDraft {
     private String currency;
     private String commissioned;
     private String warrantyService;
+    private String approverKey;
 
     public String getPurchased() { return purchased; }
     public void setPurchased(String purchased) { this.purchased = purchased; }
@@ -36,4 +37,6 @@ public class LifecycleDraft {
     public void setCommissioned(String commissioned) { this.commissioned = commissioned; }
     public String getWarrantyService() { return warrantyService; }
     public void setWarrantyService(String warrantyService) { this.warrantyService = warrantyService; }
+    public String getApproverKey() { return approverKey; }
+    public void setApproverKey(String approverKey) { this.approverKey = approverKey; }
 }
