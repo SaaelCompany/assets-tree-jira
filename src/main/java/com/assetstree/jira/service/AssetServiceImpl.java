@@ -58,6 +58,7 @@ import com.assetstree.jira.ao.PinEntity;
 import com.assetstree.jira.ao.RoomEntity;
 import com.assetstree.jira.ao.SavedReportEntity;
 import com.assetstree.jira.ao.ServicePlanEntity;
+import com.assetstree.jira.ao.StaffDutyEntity;
 import com.assetstree.jira.ao.AssetTypeEntity;
 import com.assetstree.jira.dto.ActivityDto;
 import com.assetstree.jira.dto.AssetDto;
@@ -103,6 +104,7 @@ import com.assetstree.jira.dto.ReportViewDto;
 import com.assetstree.jira.dto.RoomDto;
 import com.assetstree.jira.dto.SavedReportDto;
 import com.assetstree.jira.dto.ScheduleRowDto;
+import com.assetstree.jira.dto.StaffDutyDto;
 import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.dto.StatusDto;
 import com.assetstree.jira.dto.UserProfileDto;
@@ -151,6 +153,7 @@ import com.assetstree.jira.model.ReportCatalog;
 import com.assetstree.jira.model.SavedReportDraft;
 import com.assetstree.jira.model.ScheduleAnchor;
 import com.assetstree.jira.model.ScheduleDraft;
+import com.assetstree.jira.model.StaffDutyDraft;
 import com.assetstree.jira.model.ServiceDue;
 import com.assetstree.jira.model.WorkKind;
 import com.assetstree.jira.model.WriteoffDraft;
@@ -169,6 +172,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -5990,6 +5994,204 @@ public class AssetServiceImpl implements AssetService {
         });
         dispatchNotices(notices);
         return created;
+    }
+
+    @Override
+    public List<StaffDutyDto> staff(ApplicationUser user, String projectKey) {
+        final Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        return ao().executeInTransaction(new TransactionCallback<List<StaffDutyDto>>() {
+            @Override
+            public List<StaffDutyDto> doInTransaction() {
+                return staffDtos(project.getKey());
+            }
+        });
+    }
+
+    @Override
+    public StaffDutyDto saveStaff(ApplicationUser user, String projectKey, final StaffDutyDraft draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        final String person = staffUser(draft);
+        final int weekdays = draft == null || draft.getWeekdays() == null ? 0 : draft.getWeekdays().intValue();
+        final int hours = draft == null || draft.getHours() == null ? 0 : draft.getHours().intValue();
+        if (weekdays < 1 || weekdays > 127 || hours < 1 || hours > 24) {
+            throw new AssetException(400, "asset-tree.error.staff");
+        }
+        return ao().executeInTransaction(new TransactionCallback<StaffDutyDto>() {
+            @Override
+            public StaffDutyDto doInTransaction() {
+                List<StaffDutyEntity> rows = dutyRows(project.getKey());
+                StaffDutyEntity hoursRow = null;
+                for (StaffDutyEntity row : rows) {
+                    if ("hours".equals(row.getKind()) && person.equals(row.getUserKey())) {
+                        hoursRow = row;
+                        break;
+                    }
+                }
+                if (hoursRow == null && rows.size() >= 60) {
+                    throw new AssetException(400, "asset-tree.error.staff");
+                }
+                if (hoursRow == null) {
+                    hoursRow = ao().create(StaffDutyEntity.class,
+                            new DBParam("PROJECT_KEY", project.getKey()),
+                            new DBParam("USER_KEY", person),
+                            new DBParam("KIND", "hours"));
+                }
+                hoursRow.setWeekdays(weekdays);
+                hoursRow.setHours(hours);
+                hoursRow.setStartOn("");
+                hoursRow.setEndOn("");
+                hoursRow.save();
+                return staffDto(hoursRow);
+            }
+        });
+    }
+
+    @Override
+    public StaffDutyDto addStaffLeave(ApplicationUser user, String projectKey, final StaffDutyDraft draft) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        final String person = staffUser(draft);
+        final LocalDate start = staffDay(draft == null ? null : draft.getStartOn());
+        final LocalDate end = staffDay(draft == null ? null : draft.getEndOn());
+        if (start == null || end == null || end.isBefore(start) || ChronoUnit.DAYS.between(start, end) > 366) {
+            throw new AssetException(400, "asset-tree.error.staff");
+        }
+        final String startText = start.toString();
+        final String endText = end.toString();
+        return ao().executeInTransaction(new TransactionCallback<StaffDutyDto>() {
+            @Override
+            public StaffDutyDto doInTransaction() {
+                List<StaffDutyEntity> rows = dutyRows(project.getKey());
+                boolean known = false;
+                int leaves = 0;
+                for (StaffDutyEntity row : rows) {
+                    if (!person.equals(row.getUserKey())) {
+                        continue;
+                    }
+                    if ("hours".equals(row.getKind())) {
+                        known = true;
+                    } else if ("leave".equals(row.getKind())) {
+                        leaves++;
+                    }
+                }
+                if (!known || leaves >= 24 || rows.size() >= 60) {
+                    throw new AssetException(400, "asset-tree.error.staff");
+                }
+                StaffDutyEntity created = ao().create(StaffDutyEntity.class,
+                        new DBParam("PROJECT_KEY", project.getKey()),
+                        new DBParam("USER_KEY", person),
+                        new DBParam("KIND", "leave"));
+                created.setWeekdays(0);
+                created.setHours(0);
+                created.setStartOn(startText);
+                created.setEndOn(endText);
+                created.save();
+                return staffDto(created);
+            }
+        });
+    }
+
+    @Override
+    public void deleteStaff(ApplicationUser user, String projectKey, final int dutyId) {
+        final Project project = requireProjectCap(user, projectKey, GrantCaps.OBJECT);
+        requireModule(project.getKey(), ProjectModules.SERVICE);
+        ao().executeInTransaction(new TransactionCallback<Void>() {
+            @Override
+            public Void doInTransaction() {
+                StaffDutyEntity row = ao().get(StaffDutyEntity.class, dutyId);
+                if (row == null || !ProjectKeys.same(row.getProjectKey(), project.getKey())) {
+                    throw new AssetException(404, "asset-tree.error.notFound");
+                }
+                if ("hours".equals(row.getKind())) {
+                    List<StaffDutyEntity> own = new ArrayList<StaffDutyEntity>();
+                    String person = row.getUserKey();
+                    for (StaffDutyEntity item : dutyRows(project.getKey())) {
+                        if (person != null && person.equals(item.getUserKey())) {
+                            own.add(item);
+                        }
+                    }
+                    if (!own.isEmpty()) {
+                        ao().delete(own.toArray(new StaffDutyEntity[own.size()]));
+                    }
+                } else {
+                    ao().delete(row);
+                }
+                return null;
+            }
+        });
+    }
+
+    private String staffUser(StaffDutyDraft draft) {
+        String userKey = draft == null || draft.getUserKey() == null ? "" : draft.getUserKey().trim();
+        if (userKey.isEmpty() || userKey.length() > 255 || userManager().getUserByKey(userKey) == null) {
+            throw new AssetException(400, "asset-tree.error.user");
+        }
+        return userKey;
+    }
+
+    private LocalDate staffDay(String raw) {
+        if (raw == null || !raw.trim().matches("\\d{4}-\\d{2}-\\d{2}")) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(raw.trim());
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private List<StaffDutyEntity> dutyRows(String projectKey) {
+        StaffDutyEntity[] found = ao().find(StaffDutyEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+        List<StaffDutyEntity> rows = new ArrayList<StaffDutyEntity>();
+        if (found != null) {
+            Collections.addAll(rows, found);
+        }
+        return rows;
+    }
+
+    private List<StaffDutyDto> staffDtos(String projectKey) {
+        List<StaffDutyDto> rows = new ArrayList<StaffDutyDto>();
+        for (StaffDutyEntity row : dutyRows(projectKey)) {
+            rows.add(staffDto(row));
+        }
+        Collections.sort(rows, new Comparator<StaffDutyDto>() {
+            @Override
+            public int compare(StaffDutyDto left, StaffDutyDto right) {
+                int byName = safe(left.getUserName()).compareToIgnoreCase(safe(right.getUserName()));
+                if (byName != 0) {
+                    return byName;
+                }
+                int byKind = staffKindOrder(left.getKind()) - staffKindOrder(right.getKind());
+                if (byKind != 0) {
+                    return byKind;
+                }
+                return safe(left.getStartOn()).compareTo(safe(right.getStartOn()));
+            }
+        });
+        return rows;
+    }
+
+    private int staffKindOrder(String kind) {
+        return "hours".equals(kind) ? 0 : 1;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private StaffDutyDto staffDto(StaffDutyEntity row) {
+        StaffDutyDto dto = new StaffDutyDto();
+        dto.setId(row.getID());
+        dto.setUserKey(row.getUserKey() == null ? "" : row.getUserKey());
+        dto.setUserName(userLabel(row.getUserKey()));
+        dto.setKind(row.getKind() == null ? "" : row.getKind());
+        dto.setWeekdays(row.getWeekdays());
+        dto.setHours(row.getHours());
+        dto.setStartOn(row.getStartOn() == null ? "" : row.getStartOn());
+        dto.setEndOn(row.getEndOn() == null ? "" : row.getEndOn());
+        return dto;
     }
 
     private List<ScheduleRowDto> scheduleRows(String projectKey) {

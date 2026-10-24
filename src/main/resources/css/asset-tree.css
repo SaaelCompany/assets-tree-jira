@@ -6917,3 +6917,98 @@ a.asset-tree-url {
     border-radius: 3px;
     background: #fff;
 }
+
+#asset-tree-app .asset-tree-service > .asset-tree-plan-actions {
+    margin-top: 8px;
+}
+
+#asset-tree-app .asset-tree-staff-find {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+#asset-tree-app .asset-tree-staff-find input {
+    width: 280px !important;
+    max-width: 100% !important;
+}
+
+#asset-tree-app .asset-tree-staff-hits {
+    flex: 1 0 100%;
+}
+
+#asset-tree-app .asset-tree-staff-card {
+    margin-bottom: 12px;
+    padding: 12px;
+    background: #fff;
+    border: 1px solid #dfe1e6;
+    border-radius: 3px;
+}
+
+#asset-tree-app .asset-tree-staff-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+}
+
+#asset-tree-app .asset-tree-staff-head strong {
+    color: #172b4d;
+    font-size: 14px;
+}
+
+#asset-tree-app .asset-tree-staff-tally {
+    color: #42526e;
+    font-size: 13px;
+}
+
+#asset-tree-app .asset-tree-staff-head .asset-tree-btn {
+    margin-left: auto;
+}
+
+#asset-tree-app .asset-tree-staff-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0;
+}
+
+#asset-tree-app button.asset-tree-day-toggle {
+    min-width: 44px;
+    height: 32px;
+    margin: 0;
+    padding: 0 8px !important;
+    border: 1px solid #dfe1e6 !important;
+    border-radius: 3px !important;
+    background: #fff !important;
+    color: #42526e !important;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+#asset-tree-app button.asset-tree-day-toggle.is-on {
+    background: #deebff !important;
+    border-color: #b3d4ff !important;
+    color: #0052cc !important;
+}
+
+#asset-tree-app button.asset-tree-day-toggle:disabled {
+    cursor: default;
+}
+
+#asset-tree-app .asset-tree-staff-hours,
+#asset-tree-app .asset-tree-staff-leave {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+#asset-tree-app .asset-tree-staff-hours input,
+#asset-tree-app .asset-tree-staff-leave input {
+    width: 148px !important;
+    max-width: 100% !important;
+}

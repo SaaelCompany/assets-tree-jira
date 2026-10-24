@@ -438,6 +438,10 @@
         scheduleKindFilter: '',
         schedulePersonFilter: '',
         scheduleFocusAsset: 0,
+        staffRows: null,
+        staffLoading: false,
+        staffToken: 0,
+        staffError: '',
         floors: null,
         floorId: 0,
         mapTool: 'select',
@@ -2005,7 +2009,9 @@
         top.appendChild(viewTabs());
         var row = el('div', 'asset-tree-top-row');
         var titles = el('div', 'asset-tree-heading');
-        titles.appendChild(el('h1', null, viewTitle(state.view)));
+        if (state.view !== 'schedules') {
+            titles.appendChild(el('h1', null, viewTitle(state.view)));
+        }
         if (state.view === 'all') {
             titles.appendChild(el('p', 'asset-tree-hint', t('allHint')));
         }
@@ -4298,28 +4304,39 @@
                 return plan.name;
             }).join(', ')));
         }
-        asset.plans.forEach(function (plan) {
-            body.appendChild(mayEdit(asset) ? serviceEditor(asset, plan) : serviceRead(plan));
+        var editing = offered && mayEdit(asset);
+        var creating = editing && state.serviceOpen === asset.id;
+        var lastPlan = asset.plans.length - 1;
+        asset.plans.forEach(function (plan, index) {
+            if (!mayEdit(asset)) {
+                body.appendChild(serviceRead(plan));
+                return;
+            }
+            var extras = null;
+            if (!creating && index === lastPlan) extras = { open: true, add: editing };
+            body.appendChild(serviceEditor(asset, plan, extras));
         });
-        if (!asset.plans.length && state.serviceOpen !== asset.id) {
+        if (!asset.plans.length && !creating) {
             body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
         }
-        if (offered && mayEdit(asset) && state.serviceOpen === asset.id) {
-            body.appendChild(serviceEditor(asset, null));
+        if (creating) {
+            body.appendChild(serviceEditor(asset, null, asset.plans.length ? { open: true } : null));
         }
-        var tools = el('div', 'asset-tree-inline-actions');
-        if (asset.plans.length) {
+        if (!mayEdit(asset) && asset.plans.length) {
+            var tools = el('div', 'asset-tree-inline-actions');
             tools.appendChild(button(t('serviceOpenSchedule'), 'asset-tree-btn', function () {
                 openPlansOnSchedule(asset);
             }));
+            body.appendChild(tools);
         }
-        if (offered && mayEdit(asset) && state.serviceOpen !== asset.id) {
-            tools.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
+        if (!asset.plans.length && editing && !creating) {
+            var lone = el('div', 'asset-tree-plan-actions');
+            lone.appendChild(button(t('serviceAdd'), 'asset-tree-btn primary', function () {
                 state.serviceOpen = asset.id;
                 showDetail(state.detail || asset, false);
             }));
+            body.appendChild(lone);
         }
-        if (tools.childNodes.length) body.appendChild(tools);
         return moduleBlock(t('serviceTitle'), body, false);
     }
 
@@ -4356,7 +4373,7 @@
         return field;
     }
 
-    function serviceEditor(asset, plan) {
+    function serviceEditor(asset, plan, extras) {
         var creating = !plan;
         var row = el('form', 'asset-tree-plan' + (plan && plan.due ? ' is-due' : ''));
         row.addEventListener('submit', function (event) { event.preventDefault(); });
@@ -4460,6 +4477,17 @@
         row.appendChild(planField(t('status'), status));
         row.appendChild(notifyRow);
         var actions = el('div', 'asset-tree-plan-actions');
+        if (extras && extras.open) {
+            actions.appendChild(button(t('serviceOpenSchedule'), 'asset-tree-btn', function () {
+                openPlansOnSchedule(asset);
+            }));
+        }
+        if (extras && extras.add) {
+            actions.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
+                state.serviceOpen = asset.id;
+                showDetail(state.detail || asset, false);
+            }));
+        }
         actions.appendChild(button(creating ? t('serviceAdd') : t('save'), 'asset-tree-btn' + (creating ? ' primary' : ''), function () {
             send(false);
         }));
@@ -8458,6 +8486,10 @@
         state.scheduleLoading = false;
         state.scheduleToken++;
         state.scheduleError = '';
+        state.staffRows = null;
+        state.staffLoading = false;
+        state.staffToken++;
+        state.staffError = '';
         state.floors = null;
         state.floorId = 0;
         state.mapDraft = null;
@@ -11317,24 +11349,34 @@
             head.appendChild(button(t('schedulesNew'), 'asset-tree-btn primary', openScheduleDialog));
         }
         panel.appendChild(head);
-        panel.appendChild(el('p', 'asset-tree-hint', t('schedulesHint')));
+        panel.appendChild(el('p', 'asset-tree-hint', t(state.scheduleMode === 'staff' ? 'staffHint' : 'schedulesHint')));
         if (state.scheduleRows == null) {
             panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
             loadSchedules();
             return panel;
         }
         if (state.scheduleError) panel.appendChild(el('p', 'asset-tree-hint', state.scheduleError));
-        var stats = scheduleStats();
         var kpis = el('div', 'asset-tree-kpis');
-        kpis.appendChild(kpiCard(String(stats.overdue), t('schedulesOverdue'), stats.overdue ? 'is-alert' : ''));
-        var week = kpiCard(String(stats.weekCount), t('schedulesWeek'), '');
-        week.appendChild(el('span', 'asset-tree-kpi-sub', stats.monthCount + ' ' + t('schedulesPlanned') + ' · ' + monthTitle(state.scheduleYear, state.scheduleMonth)));
-        kpis.appendChild(week);
-        kpis.appendChild(kpiCard(String(stats.done), t('schedulesDoneMonth'), ''));
+        if (state.scheduleMode === 'staff') {
+            var sum = staffMonthSum();
+            var daysCard = kpiCard(String(sum.days), t('staffDaysLabel'), '');
+            daysCard.appendChild(el('span', 'asset-tree-kpi-sub', monthTitle(state.scheduleYear, state.scheduleMonth)));
+            kpis.appendChild(daysCard);
+            kpis.appendChild(kpiCard(String(sum.hours), t('staffHoursLabel'), ''));
+            kpis.appendChild(kpiCard(String(sum.leave), t('staffLeaveLabel'), ''));
+        } else {
+            var stats = scheduleStats();
+            kpis.appendChild(kpiCard(String(stats.overdue), t('schedulesOverdue'), stats.overdue ? 'is-alert' : ''));
+            var week = kpiCard(String(stats.weekCount), t('schedulesWeek'), '');
+            week.appendChild(el('span', 'asset-tree-kpi-sub', stats.monthCount + ' ' + t('schedulesPlanned') + ' · ' + monthTitle(state.scheduleYear, state.scheduleMonth)));
+            kpis.appendChild(week);
+            kpis.appendChild(kpiCard(String(stats.done), t('schedulesDoneMonth'), ''));
+        }
         panel.appendChild(kpis);
         panel.appendChild(scheduleToolbar());
         if (state.scheduleMode === 'list') panel.appendChild(scheduleTable());
         else if (state.scheduleMode === 'people') panel.appendChild(schedulePeople());
+        else if (state.scheduleMode === 'staff') panel.appendChild(scheduleStaff());
         else panel.appendChild(scheduleCalendar());
         return panel;
     }
@@ -11349,7 +11391,7 @@
     function scheduleToolbar() {
         var bar = el('div', 'asset-tree-sheet-bar');
         var seg = el('div', 'asset-tree-seg');
-        [['calendar', 'schedulesCalendar'], ['list', 'schedulesList'], ['people', 'schedulesPeople']].forEach(function (pair) {
+        [['calendar', 'schedulesCalendar'], ['list', 'schedulesList'], ['people', 'schedulesPeople'], ['staff', 'schedulesStaff']].forEach(function (pair) {
             var item = button(t(pair[1]), 'asset-tree-seg-btn' + (state.scheduleMode === pair[0] ? ' is-on' : ''), function () {
                 state.scheduleMode = pair[0];
                 renderFrame();
@@ -11368,8 +11410,10 @@
         }));
         nav.appendChild(button('\u203A', 'asset-tree-btn slim', function () { shiftScheduleMonth(1); }));
         bar.appendChild(nav);
-        bar.appendChild(scheduleKindSelect());
-        bar.appendChild(schedulePersonSelect());
+        if (state.scheduleMode !== 'staff') {
+            bar.appendChild(scheduleKindSelect());
+            bar.appendChild(schedulePersonSelect());
+        }
         return bar;
     }
 
@@ -11529,6 +11573,264 @@
                 block.appendChild(line);
             });
             wrap.appendChild(block);
+        });
+        return wrap;
+    }
+
+    function loadStaff() {
+        if (state.staffLoading) return;
+        state.staffLoading = true;
+        var token = ++state.staffToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/staff', null, function (status, payload) {
+            if (token !== state.staffToken) return;
+            state.staffLoading = false;
+            if (status === 200 && Object.prototype.toString.call(payload) === '[object Array]') {
+                state.staffRows = payload;
+                state.staffError = '';
+            } else {
+                state.staffRows = [];
+                state.staffError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'schedules' && state.scheduleMode === 'staff') renderFrame();
+        });
+    }
+
+    function reloadStaff() {
+        state.staffRows = null;
+        state.staffLoading = false;
+        state.staffToken++;
+        if (state.view === 'schedules') renderFrame();
+    }
+
+    function staffHas(userKey) {
+        var rows = state.staffRows || [];
+        var index;
+        for (index = 0; index < rows.length; index++) {
+            if (rows[index].userKey === userKey && rows[index].kind === 'hours') return true;
+        }
+        return false;
+    }
+
+    function staffGroups() {
+        var people = {};
+        var order = [];
+        (state.staffRows || []).forEach(function (row) {
+            if (!row || !row.userKey || !people[row.userKey]) {
+                if (!row || !row.userKey) return;
+                people[row.userKey] = { userKey: row.userKey, userName: row.userName || row.userKey, hours: null, leaves: [] };
+                order.push(row.userKey);
+            }
+            if (row.kind === 'leave') people[row.userKey].leaves.push(row);
+            else if (row.kind === 'hours') {
+                people[row.userKey].hours = row;
+                if (row.userName) people[row.userKey].userName = row.userName;
+            }
+        });
+        order = order.filter(function (key) { return !!people[key].hours; });
+        order.sort(function (left, right) {
+            return String(people[left].userName).localeCompare(String(people[right].userName));
+        });
+        return { people: people, order: order };
+    }
+
+    function staffTally(weekdays, hours, leaves, year, month) {
+        var count = new Date(year, month, 0).getDate();
+        var work = 0;
+        var away = 0;
+        var day;
+        for (day = 1; day <= count; day++) {
+            var date = new Date(year, month - 1, day);
+            var iso = isoDate(date);
+            var onLeave = false;
+            var index;
+            for (index = 0; index < leaves.length; index++) {
+                var start = leaves[index].startOn || '';
+                var end = leaves[index].endOn || '';
+                if (start && end && iso >= start && iso <= end) {
+                    onLeave = true;
+                    break;
+                }
+            }
+            if (onLeave) away++;
+            else if (weekdays & (1 << ((date.getDay() + 6) % 7))) work++;
+        }
+        var per = parseInt(hours, 10) || 0;
+        if (per < 0) per = 0;
+        if (per > 24) per = 24;
+        return { days: work, hours: work * per, leave: away };
+    }
+
+    function staffMonthSum() {
+        var grouped = staffGroups();
+        var days = 0;
+        var hours = 0;
+        var leave = 0;
+        grouped.order.forEach(function (key) {
+            var person = grouped.people[key];
+            if (!person.hours) return;
+            var tally = staffTally(person.hours.weekdays, person.hours.hours, person.leaves, state.scheduleYear, state.scheduleMonth);
+            days += tally.days;
+            hours += tally.hours;
+            leave += tally.leave;
+        });
+        return { days: days, hours: hours, leave: leave };
+    }
+
+    function saveStaffHours(userKey, weekdays, hours) {
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/staff', {
+            userKey: userKey,
+            weekdays: weekdays,
+            hours: hours
+        }, function (status, payload) {
+            if (status >= 200 && status < 300) reloadStaff();
+            else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function staffFinder() {
+        var box = el('div', 'asset-tree-staff-find');
+        box.appendChild(el('span', null, t('staffAdd')));
+        var query = document.createElement('input');
+        query.type = 'search';
+        query.placeholder = t('schedulesFindUser');
+        query.setAttribute('aria-label', t('staffAdd'));
+        var hits = el('div', 'asset-tree-staff-hits');
+        var timer = null;
+        query.addEventListener('input', function () {
+            clearTimeout(timer);
+            var value = query.value;
+            timer = setTimeout(function () {
+                hits.innerHTML = '';
+                if (!value.trim()) return;
+                ajax('GET', '/users?q=' + encodeURIComponent(value.trim()), null, function (status, payload) {
+                    hits.innerHTML = '';
+                    if (status !== 200) return;
+                    (payload || []).forEach(function (user) {
+                        hits.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                            if (!staffHas(user.userKey)) saveStaffHours(user.userKey, 31, 8);
+                            hits.innerHTML = '';
+                            query.value = '';
+                        }));
+                    });
+                });
+            }, 200);
+        });
+        box.appendChild(query);
+        box.appendChild(hits);
+        return box;
+    }
+
+    function staffCard(person) {
+        var row = person.hours || { weekdays: 31, hours: 8, id: 0 };
+        var tally = staffTally(row.weekdays, row.hours, person.leaves, state.scheduleYear, state.scheduleMonth);
+        var card = el('section', 'asset-tree-staff-card');
+        var head = el('div', 'asset-tree-staff-head');
+        head.appendChild(el('strong', null, person.userName));
+        head.appendChild(el('span', 'asset-tree-staff-tally', t('staffDaysCount', tally.days) + ' · ' + t('staffHoursCount', tally.hours) + ' · ' + t('staffLeaveCount', tally.leave)));
+        if (state.canEdit && row.id) {
+            head.appendChild(button(t('staffRemove'), 'asset-tree-btn slim', function () {
+                if (!window.confirm(t('staffRemoveConfirm', person.userName))) return;
+                ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/' + row.id, null, function (status, payload) {
+                    if (status >= 200 && status < 300) reloadStaff();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+        }
+        card.appendChild(head);
+        var days = el('div', 'asset-tree-staff-days');
+        var labels = weekdayLabels();
+        var bit;
+        for (bit = 0; bit < 7; bit++) {
+            var on = !!(row.weekdays & (1 << bit));
+            (function (index, pressed) {
+                var toggle = button(labels[index] || String(index + 1), 'asset-tree-day-toggle' + (pressed ? ' is-on' : ''), function () {
+                    if (!state.canEdit || !person.hours) return;
+                    var next = person.hours.weekdays ^ (1 << index);
+                    if (next < 1 || next > 127) return;
+                    saveStaffHours(person.userKey, next, person.hours.hours || 8);
+                });
+                toggle.disabled = !state.canEdit;
+                toggle.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+                days.appendChild(toggle);
+            })(bit, on);
+        }
+        card.appendChild(days);
+        var hoursField = el('label', 'asset-tree-staff-hours');
+        hoursField.appendChild(el('span', null, t('staffHours')));
+        var hours = document.createElement('input');
+        hours.type = 'number';
+        hours.min = '1';
+        hours.max = '24';
+        hours.value = String(row.hours || 8);
+        hours.disabled = !state.canEdit;
+        hours.setAttribute('aria-label', t('staffHours'));
+        hours.addEventListener('change', function () {
+            if (!person.hours) return;
+            var value = parseInt(hours.value, 10) || 0;
+            if (value < 1 || value > 24) {
+                hours.value = String(person.hours.hours || 8);
+                return;
+            }
+            if (value !== person.hours.hours) saveStaffHours(person.userKey, person.hours.weekdays, value);
+        });
+        hoursField.appendChild(hours);
+        card.appendChild(hoursField);
+        person.leaves.forEach(function (leave) {
+            var line = el('div', 'asset-tree-staff-leave');
+            line.appendChild(el('span', null, t('staffLeave') + ' ' + formatFieldDate(leave.startOn) + ' \u2013 ' + formatFieldDate(leave.endOn)));
+            if (state.canEdit) {
+                line.appendChild(button(t('delete'), 'asset-tree-btn slim', function () {
+                    ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/' + leave.id, null, function (status, payload) {
+                        if (status >= 200 && status < 300) reloadStaff();
+                        else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            card.appendChild(line);
+        });
+        if (state.canEdit && person.hours) {
+            var add = el('div', 'asset-tree-staff-leave');
+            var from = document.createElement('input');
+            from.type = 'date';
+            from.setAttribute('aria-label', t('staffLeaveFrom'));
+            var to = document.createElement('input');
+            to.type = 'date';
+            to.setAttribute('aria-label', t('staffLeaveTo'));
+            var start = isoDate(new Date(state.scheduleYear, state.scheduleMonth - 1, 1));
+            from.value = start;
+            to.value = start;
+            add.appendChild(el('span', null, t('staffLeave')));
+            add.appendChild(from);
+            add.appendChild(to);
+            add.appendChild(button(t('staffLeaveAdd'), 'asset-tree-btn slim', function () {
+                if (!from.value || !to.value) return;
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/leave', {
+                    userKey: person.userKey,
+                    startOn: from.value,
+                    endOn: to.value
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300) reloadStaff();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            card.appendChild(add);
+        }
+        return card;
+    }
+
+    function scheduleStaff() {
+        var wrap = el('div', 'asset-tree-staff');
+        if (state.staffRows == null) {
+            wrap.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadStaff();
+            return wrap;
+        }
+        if (state.staffError) wrap.appendChild(el('p', 'asset-tree-hint', state.staffError));
+        if (state.canEdit) wrap.appendChild(staffFinder());
+        var grouped = staffGroups();
+        if (!grouped.order.length) wrap.appendChild(el('p', 'asset-tree-hint', t('staffEmpty')));
+        grouped.order.forEach(function (key) {
+            wrap.appendChild(staffCard(grouped.people[key]));
         });
         return wrap;
     }

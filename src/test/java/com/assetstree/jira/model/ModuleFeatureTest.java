@@ -3,6 +3,7 @@ package com.assetstree.jira.model;
 import org.junit.Test;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -33,6 +34,25 @@ public class ModuleFeatureTest {
         assertEquals(LocalDate.parse(chosen), days.get(0));
         assertEquals(LocalDate.parse(chosen), ServiceDue.next(ScheduleAnchor.before(chosen, 1, "once"), 1, "once"));
         assertEquals(LocalDate.parse(chosen), ServiceDue.next(ScheduleAnchor.before(chosen, 1, "week"), 1, "week"));
+    }
+
+    @Test
+    public void octoberCountsWorkdaysHoursAndLeave() {
+        int[] full = StaffCalendar.tally(31, 8, null, 2026, 10);
+        assertEquals(22, full[0]);
+        assertEquals(176, full[1]);
+        assertEquals(0, full[2]);
+        List<LocalDate[]> leave = new ArrayList<LocalDate[]>();
+        leave.add(new LocalDate[] { LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 9) });
+        int[] away = StaffCalendar.tally(31, 8, leave, 2026, 10);
+        assertEquals(17, away[0]);
+        assertEquals(136, away[1]);
+        assertEquals(5, away[2]);
+        leave.add(new LocalDate[] { LocalDate.of(2026, 10, 9), LocalDate.of(2026, 10, 11) });
+        int[] overlap = StaffCalendar.tally(31, 8, leave, 2026, 10);
+        assertEquals(17, overlap[0]);
+        assertEquals(136, overlap[1]);
+        assertEquals(7, overlap[2]);
     }
 
     @Test

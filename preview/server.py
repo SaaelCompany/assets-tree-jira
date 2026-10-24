@@ -492,6 +492,7 @@ STATE = {
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
+    "duty_seq": 1, "duties": {},
     "floor_seq": 1, "floors": {},
     "report_seq": 1, "saved_reports": {},
     "lives": {},
@@ -1711,6 +1712,113 @@ def schedule_rows(project_key):
             continue
         rows.append(schedule_item(plan, asset))
     return rows
+
+
+def staff_dto(row):
+    user = USERS.get(row.get("userKey") or "") or {}
+    return {
+        "id": row["id"],
+        "userKey": row.get("userKey") or "",
+        "userName": user.get("displayName") or row.get("userKey") or "",
+        "kind": row.get("kind") or "",
+        "weekdays": int(row.get("weekdays") or 0),
+        "hours": int(row.get("hours") or 0),
+        "startOn": row.get("startOn") or "",
+        "endOn": row.get("endOn") or "",
+    }
+
+
+def staff_list(project_key):
+    rows = [staff_dto(row) for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    rows.sort(key=lambda item: ((item.get("userName") or "").lower(), 0 if item.get("kind") == "hours" else 1, item.get("startOn") or "", item["id"]))
+    return rows
+
+
+def parse_staff_day(raw):
+    text_day = (raw or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text_day):
+        return None
+    try:
+        return datetime.date.fromisoformat(text_day)
+    except ValueError:
+        return None
+
+
+def save_staff(project_key, body, text):
+    body = body or {}
+    user_key = (body.get("userKey") or "").strip()
+    if user_key not in USERS:
+        return 400, {"message": text["asset-tree.error.user"]}
+    try:
+        weekdays = int(body.get("weekdays") or 0)
+        hours = int(body.get("hours") or 0)
+    except (TypeError, ValueError):
+        return 400, {"message": text["asset-tree.error.staff"]}
+    if weekdays < 1 or weekdays > 127 or hours < 1 or hours > 24:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    existing = None
+    owned = [row for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    for row in owned:
+        if row.get("userKey") == user_key and row.get("kind") == "hours":
+            existing = row
+            break
+    if existing is None and len(owned) >= 60:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    if existing is None:
+        duty_id = STATE["duty_seq"]
+        STATE["duty_seq"] += 1
+        existing = {"id": duty_id, "projectKey": project_key, "userKey": user_key, "kind": "hours"}
+        STATE["duties"][duty_id] = existing
+    existing["weekdays"] = weekdays
+    existing["hours"] = hours
+    existing["startOn"] = ""
+    existing["endOn"] = ""
+    return 200, staff_dto(existing)
+
+
+def add_staff_leave(project_key, body, text):
+    body = body or {}
+    user_key = (body.get("userKey") or "").strip()
+    if user_key not in USERS:
+        return 400, {"message": text["asset-tree.error.user"]}
+    start = parse_staff_day(body.get("startOn"))
+    end = parse_staff_day(body.get("endOn"))
+    if start is None or end is None or end < start or (end - start).days > 366:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    owned = [row for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    known = False
+    leaves = 0
+    for row in owned:
+        if row.get("userKey") != user_key:
+            continue
+        if row.get("kind") == "hours":
+            known = True
+        elif row.get("kind") == "leave":
+            leaves += 1
+    if not known or leaves >= 24 or len(owned) >= 60:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    duty_id = STATE["duty_seq"]
+    STATE["duty_seq"] += 1
+    row = {
+        "id": duty_id, "projectKey": project_key, "userKey": user_key, "kind": "leave",
+        "weekdays": 0, "hours": 0, "startOn": start.isoformat(), "endOn": end.isoformat(),
+    }
+    STATE["duties"][duty_id] = row
+    return 201, staff_dto(row)
+
+
+def delete_staff(project_key, duty_id, text):
+    row = STATE["duties"].get(duty_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    if row.get("kind") == "hours":
+        person = row.get("userKey")
+        gone = [item["id"] for item in list(STATE["duties"].values()) if item.get("projectKey") == project_key and item.get("userKey") == person]
+        for item_id in gone:
+            STATE["duties"].pop(item_id, None)
+    else:
+        STATE["duties"].pop(duty_id, None)
+    return 204, None
 
 
 def create_schedule(project_key, body, text):
@@ -4331,7 +4439,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.22",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.23",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -4403,6 +4511,33 @@ setTimeout(function () {
                 return 200, schedule_rows(project_key)
             if method == "POST":
                 return create_schedule(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, staff_list(project_key)
+            if method == "PUT":
+                return save_staff(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff/leave", path)
+        if match and method == "POST":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            return add_staff_leave(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff/(\d+)", path)
+        if match and method == "DELETE":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            return delete_staff(project_key, int(match.group(2)), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/floors", path)
         if match:
             project_key = match.group(1)

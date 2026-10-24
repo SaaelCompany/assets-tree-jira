@@ -27,6 +27,7 @@ import com.assetstree.jira.dto.ReportDto;
 import com.assetstree.jira.dto.ReportViewDto;
 import com.assetstree.jira.dto.SavedReportDto;
 import com.assetstree.jira.dto.ScheduleRowDto;
+import com.assetstree.jira.dto.StaffDutyDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CardLayout;
@@ -47,6 +48,7 @@ import com.assetstree.jira.dto.ServicePlanDto;
 import com.assetstree.jira.model.LifecycleDraft;
 import com.assetstree.jira.model.SavedReportDraft;
 import com.assetstree.jira.model.ScheduleDraft;
+import com.assetstree.jira.model.StaffDutyDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
 import com.assetstree.jira.model.WriteoffDraft;
 import com.assetstree.jira.model.StatusDraft;
@@ -205,6 +207,14 @@ public interface AssetService {
     List<ScheduleRowDto> schedule(ApplicationUser user, String projectKey);
 
     List<ScheduleRowDto> createSchedule(ApplicationUser user, String projectKey, ScheduleDraft draft);
+
+    List<StaffDutyDto> staff(ApplicationUser user, String projectKey);
+
+    StaffDutyDto saveStaff(ApplicationUser user, String projectKey, StaffDutyDraft draft);
+
+    StaffDutyDto addStaffLeave(ApplicationUser user, String projectKey, StaffDutyDraft draft);
+
+    void deleteStaff(ApplicationUser user, String projectKey, int dutyId);
 
     List<FloorDto> floors(ApplicationUser user, String projectKey);
 
