@@ -14,6 +14,11 @@ public class ServicePlanDraft {
     private Boolean notify;
     /** True records the service as done today and starts the next interval. */
     private Boolean done;
+    private String kind;
+    private String assigneeKey;
+    private String note;
+    private String startTime;
+    private String endTime;
 
     public String getName() {
         return name;
@@ -70,4 +75,27 @@ public class ServicePlanDraft {
     public void setDone(Boolean done) {
         this.done = done;
     }
+
+    public String getKind() {
+        return kind;
+    }
+
+    public void setKind(String kind) {
+        this.kind = kind;
+    }
+
+    public String getAssigneeKey() {
+        return assigneeKey;
+    }
+
+    public void setAssigneeKey(String assigneeKey) {
+        this.assigneeKey = assigneeKey;
+    }
+
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+    public String getStartTime() { return startTime; }
+    public void setStartTime(String startTime) { this.startTime = startTime; }
+    public String getEndTime() { return endTime; }
+    public void setEndTime(String endTime) { this.endTime = endTime; }
 }

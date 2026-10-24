@@ -46,4 +46,36 @@ public interface ServicePlanEntity extends Entity {
     String getAppliedFor();
 
     void setAppliedFor(String appliedFor);
+
+    /** to, kts, or verify. Empty on rows created before kinds existed. */
+    @StringLength(16)
+    String getKind();
+
+    void setKind(String kind);
+
+    @StringLength(255)
+    String getAssigneeKey();
+
+    void setAssigneeKey(String assigneeKey);
+
+    @StringLength(StringLength.UNLIMITED)
+    String getNote();
+
+    void setNote(String note);
+
+    @StringLength(8)
+    String getStartTime();
+
+    void setStartTime(String startTime);
+
+    @StringLength(8)
+    String getEndTime();
+
+    void setEndTime(String endTime);
+
+    /** The day a person marked the work done. Empty until then. */
+    @StringLength(16)
+    String getCompletedOn();
+
+    void setCompletedOn(String completedOn);
 }

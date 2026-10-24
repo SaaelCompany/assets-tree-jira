@@ -21,7 +21,13 @@ import com.assetstree.jira.dto.IssueContextDto;
 import com.assetstree.jira.dto.IssueRefDto;
 import com.assetstree.jira.dto.MetaDto;
 import com.assetstree.jira.dto.PickerNodeDto;
+import com.assetstree.jira.dto.FloorDto;
+import com.assetstree.jira.dto.LifecycleDto;
 import com.assetstree.jira.dto.ReportDto;
+import com.assetstree.jira.dto.ReportViewDto;
+import com.assetstree.jira.dto.SavedReportDto;
+import com.assetstree.jira.dto.ScheduleRowDto;
+import com.assetstree.jira.dto.StaffDutyDto;
 import com.assetstree.jira.dto.UserProfileDto;
 import com.assetstree.jira.model.AssetDraft;
 import com.assetstree.jira.model.CardLayout;
@@ -39,7 +45,12 @@ import com.assetstree.jira.model.PlaceTypeDraft;
 import com.assetstree.jira.model.FlowRuleDraft;
 import com.assetstree.jira.model.PortalRuleDraft;
 import com.assetstree.jira.dto.ServicePlanDto;
+import com.assetstree.jira.model.LifecycleDraft;
+import com.assetstree.jira.model.SavedReportDraft;
+import com.assetstree.jira.model.ScheduleDraft;
+import com.assetstree.jira.model.StaffDutyDraft;
 import com.assetstree.jira.model.ServicePlanDraft;
+import com.assetstree.jira.model.WriteoffDraft;
 import com.assetstree.jira.model.StatusDraft;
 import com.assetstree.jira.model.TypeDraft;
 
@@ -192,4 +203,40 @@ public interface AssetService {
 
     /** Moves equipment whose service date has arrived and queues the letters. */
     void applyDuePlans();
+
+    List<ScheduleRowDto> schedule(ApplicationUser user, String projectKey);
+
+    List<ScheduleRowDto> createSchedule(ApplicationUser user, String projectKey, ScheduleDraft draft);
+
+    List<StaffDutyDto> staff(ApplicationUser user, String projectKey);
+
+    StaffDutyDto saveStaff(ApplicationUser user, String projectKey, StaffDutyDraft draft);
+
+    StaffDutyDto addStaffLeave(ApplicationUser user, String projectKey, StaffDutyDraft draft);
+
+    void deleteStaff(ApplicationUser user, String projectKey, int dutyId);
+
+    List<FloorDto> floors(ApplicationUser user, String projectKey);
+
+    FloorDto createFloor(ApplicationUser user, String projectKey, FloorDto draft);
+
+    FloorDto saveFloor(ApplicationUser user, String projectKey, int floorId, FloorDto draft);
+
+    void deleteFloor(ApplicationUser user, String projectKey, int floorId);
+
+    List<SavedReportDto> reports(ApplicationUser user, String projectKey);
+
+    SavedReportDto createReport(ApplicationUser user, String projectKey, SavedReportDraft draft);
+
+    void deleteReport(ApplicationUser user, String projectKey, String reportKey);
+
+    ReportViewDto reportView(ApplicationUser user, String projectKey, String reportKey);
+
+    LifecycleDto lifecycle(ApplicationUser user, int assetId);
+
+    LifecycleDto saveLifecycle(ApplicationUser user, int assetId, LifecycleDraft draft);
+
+    LifecycleDto requestWriteoff(ApplicationUser user, int assetId, WriteoffDraft draft);
+
+    LifecycleDto decideWriteoff(ApplicationUser user, int assetId, WriteoffDraft draft);
 }

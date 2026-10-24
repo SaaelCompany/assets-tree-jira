@@ -1,8 +1,12 @@
 package com.assetstree.jira.servlet;
 
+import com.atlassian.activeobjects.external.ActiveObjects;
 import com.atlassian.jira.component.ComponentAccessor;
 import com.atlassian.jira.user.ApplicationUser;
+import com.assetstree.jira.ao.ProjectViewEntity;
+import com.assetstree.jira.model.ProjectModules;
 import com.assetstree.jira.web.PortalLookup;
+import net.java.ao.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,7 +102,30 @@ public class PortalPageFilter implements Filter {
         } catch (RuntimeException ex) {
             log.debug("Portal project was not resolved for {}", portalId, ex);
         }
+        if (!portalModuleOn(projectKey)) {
+            return new byte[0];
+        }
         return PortalPageMarkup.snippet(base, portalId, projectKey, fieldIds);
+    }
+
+    private static boolean portalModuleOn(String projectKey) {
+        if (projectKey == null || projectKey.isEmpty()) {
+            return false;
+        }
+        try {
+            ActiveObjects ao = ComponentAccessor.getOSGiComponentInstanceOfType(ActiveObjects.class);
+            if (ao == null) {
+                return false;
+            }
+            ProjectViewEntity[] rows = ao.find(ProjectViewEntity.class, Query.select().where("PROJECT_KEY = ?", projectKey));
+            if (rows == null || rows.length == 0 || rows[0] == null) {
+                return false;
+            }
+            return ProjectModules.has(rows[0].getModuleList(), ProjectModules.PORTAL);
+        } catch (RuntimeException ex) {
+            log.debug("Portal module was not read for {}", projectKey, ex);
+            return false;
+        }
     }
 
     private static final class CapturingResponse extends HttpServletResponseWrapper {

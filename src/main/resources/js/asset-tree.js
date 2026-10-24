@@ -410,7 +410,8 @@
         editing: false,
         detail: null,
         typeGroup: null,
-        schemaTab: 'statuses',
+        schemaTab: 'project',
+        moduleDialog: '',
         importResult: null,
         schemaTypeKey: '',
         schemaAdding: false,
@@ -425,7 +426,44 @@
         cardDraft: null,
         cardDrag: '',
         cardSuppressClick: false,
-        cardSelected: ''
+        cardSelected: '',
+        scheduleYear: 0,
+        scheduleMonth: 0,
+        scheduleRows: null,
+        scheduleOpen: false,
+        scheduleLoading: false,
+        scheduleToken: 0,
+        scheduleError: '',
+        scheduleMode: 'calendar',
+        scheduleKindFilter: '',
+        schedulePersonFilter: '',
+        scheduleFocusAsset: 0,
+        staffRows: null,
+        staffLoading: false,
+        staffToken: 0,
+        staffError: '',
+        floors: null,
+        floorId: 0,
+        mapTool: 'select',
+        mapAssetId: 0,
+        mapDraft: null,
+        mapLoading: false,
+        mapToken: 0,
+        mapSelection: null,
+        mapEditing: false,
+        mapDirty: false,
+        mapZoom: 1,
+        reportCatalog: null,
+        reportKey: 'status',
+        reportView: null,
+        reportOpen: false,
+        galleryToken: 0,
+        galleryLoading: false,
+        life: {},
+        lifeLoading: {},
+        lifeFailed: {},
+        lifeToken: {},
+        lifeEditing: {}
     };
     var idIndex = null;
     var childIndex = null;
@@ -436,7 +474,7 @@
 
     function normalizeView(raw) {
         var value = String(raw || '').toLowerCase();
-        if (value === 'mine' || value === 'settings') {
+        if (value === 'mine' || value === 'settings' || value === 'schedules' || value === 'reports' || value === 'map') {
             return value;
         }
         return 'all';
@@ -445,7 +483,20 @@
     function viewTitle(view) {
         if (view === 'mine') return t('menuMine');
         if (view === 'settings') return t('menuSettings');
+        if (view === 'schedules') return t('menuSchedules');
+        if (view === 'reports') return t('menuReports');
+        if (view === 'map') return t('menuMap');
         return t('menuAll');
+    }
+
+    function moduleOn(key) {
+        var project = currentProject();
+        var list = project && project.modules;
+        if (!list) return false;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] === key) return true;
+        }
+        return false;
     }
 
     function rememberView(view) {
@@ -1889,6 +1940,9 @@
             { view: 'mine', label: t('menuMine') },
             { view: 'all', label: t('tabAssets') }
         ];
+        if (moduleOn('service')) items.push({ view: 'schedules', label: t('menuSchedules') });
+        if (moduleOn('reports')) items.push({ view: 'reports', label: t('menuReports') });
+        if (moduleOn('map')) items.push({ view: 'map', label: t('menuMap') });
         if (state.canManage) {
             items.push({ view: 'settings', label: t('menuSettings') });
         }
@@ -1949,12 +2003,15 @@
     }
 
     function mount() {
+        closeAllModals();
         app.innerHTML = '';
         var top = el('div', 'asset-tree-top');
         top.appendChild(viewTabs());
         var row = el('div', 'asset-tree-top-row');
         var titles = el('div', 'asset-tree-heading');
-        titles.appendChild(el('h1', null, viewTitle(state.view)));
+        if (state.view !== 'schedules') {
+            titles.appendChild(el('h1', null, viewTitle(state.view)));
+        }
         if (state.view === 'all') {
             titles.appendChild(el('p', 'asset-tree-hint', t('allHint')));
         }
@@ -2116,10 +2173,29 @@
             frame.appendChild(renderMine());
             return;
         }
+        if ((state.view === 'schedules' && !moduleOn('service'))
+                || (state.view === 'reports' && !moduleOn('reports'))
+                || (state.view === 'map' && !moduleOn('map'))) {
+            state.view = 'all';
+            rememberView('all');
+            mount();
+            return;
+        }
+        if (state.view === 'schedules') {
+            frame.appendChild(renderSchedules());
+            return;
+        }
+        if (state.view === 'reports') {
+            frame.appendChild(renderReports());
+            return;
+        }
+        if (state.view === 'map') {
+            frame.appendChild(renderMap());
+            return;
+        }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
-            var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
-            if (portalPanel) fitPortalPanel(portalPanel);
+            refreshModuleDialog();
             return;
         }
         if (state.view === 'all' && needsAssetKey()) {
@@ -3771,7 +3847,7 @@
         }
         if (state.canArrange && !emptyRoot) tools.appendChild(columnsButton());
         if (tools.childNodes.length) head.appendChild(tools);
-        var showSummary = !asset && !remote && !projectFiltering();
+        var showSummary = moduleOn('reports') && !asset && !remote && !projectFiltering();
         if (showSummary) head.classList.add('is-with-summary');
         section.appendChild(head);
         if (showSummary) section.appendChild(summaryBand());
@@ -4155,7 +4231,7 @@
     }
 
     function nameCell(asset, onOpen) {
-        var due = asset && asset.serviceDue;
+        var due = moduleOn('service') && asset && asset.serviceDue;
         var copyable = asset && !isFolder(asset) && mayEdit(asset);
         if (!copyable && !due) return openName(asset ? asset.name : '', onOpen);
         var line = el('span', 'asset-tree-name-line');
@@ -4194,46 +4270,98 @@
         return !!(type && type.service);
     }
 
+    function touchSchedule(iso) {
+        state.scheduleRows = null;
+        state.scheduleLoading = false;
+        var chosen = parseIsoDate(iso);
+        if (!chosen) return;
+        state.scheduleYear = chosen.getFullYear();
+        state.scheduleMonth = chosen.getMonth() + 1;
+    }
+
+    function openPlansOnSchedule(asset) {
+        var soon = '';
+        (asset.plans || []).forEach(function (plan) {
+            var day = plan.nextDue || plan.lastDone || '';
+            if (day && (!soon || day < soon)) soon = day;
+        });
+        state.scheduleKindFilter = '';
+        state.schedulePersonFilter = '';
+        state.scheduleFocusAsset = asset && asset.id ? asset.id : 0;
+        touchSchedule(soon);
+        showView('schedules');
+    }
+
     function serviceBlock(asset) {
-        if (!asset || isFolder(asset) || !asset.plans) return null;
+        if (!moduleOn('service') || !asset || isFolder(asset) || !asset.plans) return null;
         var offered = typeOffersService(asset);
         if (!offered && !asset.plans.length) return null;
         var body = el('div', 'asset-tree-service');
+        body.appendChild(el('p', 'asset-tree-hint', t('serviceHint')));
         var due = asset.plans.filter(function (plan) { return plan.due; });
         if (due.length) {
             body.appendChild(el('div', 'asset-tree-service-banner', t('serviceDue') + ': ' + due.map(function (plan) {
                 return plan.name;
             }).join(', ')));
         }
-        asset.plans.forEach(function (plan) {
-            body.appendChild(mayEdit(asset) ? serviceEditor(asset, plan) : serviceRead(plan));
+        var editing = offered && mayEdit(asset);
+        var creating = editing && state.serviceOpen === asset.id;
+        var lastPlan = asset.plans.length - 1;
+        asset.plans.forEach(function (plan, index) {
+            if (!mayEdit(asset)) {
+                body.appendChild(serviceRead(plan));
+                return;
+            }
+            var extras = null;
+            if (!creating && index === lastPlan) extras = { open: true, add: editing };
+            body.appendChild(serviceEditor(asset, plan, extras));
         });
-        if (!asset.plans.length && state.serviceOpen !== asset.id) {
+        if (!asset.plans.length && !creating) {
             body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
         }
-        if (offered && mayEdit(asset)) {
-            if (state.serviceOpen === asset.id) {
-                body.appendChild(serviceEditor(asset, null));
-            } else {
-                body.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
-                    state.serviceOpen = asset.id;
-                    showDetail(state.detail || asset, false);
-                }));
-            }
+        if (creating) {
+            body.appendChild(serviceEditor(asset, null, asset.plans.length ? { open: true } : null));
         }
-        return moduleBlock(t('serviceTitle'), body, true);
+        if (!mayEdit(asset) && asset.plans.length) {
+            var tools = el('div', 'asset-tree-inline-actions');
+            tools.appendChild(button(t('serviceOpenSchedule'), 'asset-tree-btn', function () {
+                openPlansOnSchedule(asset);
+            }));
+            body.appendChild(tools);
+        }
+        if (!asset.plans.length && editing && !creating) {
+            var lone = el('div', 'asset-tree-plan-actions');
+            lone.appendChild(button(t('serviceAdd'), 'asset-tree-btn primary', function () {
+                state.serviceOpen = asset.id;
+                showDetail(state.detail || asset, false);
+            }));
+            body.appendChild(lone);
+        }
+        return moduleBlock(t('serviceTitle'), body, false);
+    }
+
+    function serviceUnitWord(unit) {
+        if (unit === 'day') return t('serviceUnitDay');
+        if (unit === 'week') return t('serviceUnitWeek');
+        if (unit === 'year') return t('serviceUnitYear');
+        return t('serviceUnitMonth');
+    }
+
+    function serviceRepeatText(plan) {
+        if (!plan || plan.everyUnit === 'once') return t('schedulesOnce');
+        return t('serviceEvery') + ' ' + (plan.everyCount || 1) + ' ' + serviceUnitWord(plan.everyUnit);
     }
 
     function serviceRead(plan) {
         var row = el('div', 'asset-tree-plan is-read' + (plan.due ? ' is-due' : ''));
         var title = el('div', 'asset-tree-plan-title');
         title.appendChild(el('strong', null, plan.name));
+        title.appendChild(el('span', null, kindName(plan.kind)));
         if (plan.due) title.appendChild(el('span', 'asset-tree-due-mark', t('serviceDueMark')));
         row.appendChild(title);
-        var unit = plan.everyUnit === 'day' ? t('serviceUnitDay') : t('serviceUnitMonth');
-        row.appendChild(el('p', 'asset-tree-plan-meta', t('serviceLast') + ' ' + formatFieldDate(plan.lastDone)
-            + ' · ' + t('serviceEvery') + ' ' + plan.everyCount + ' ' + unit
-            + ' · ' + t('serviceNext') + ' ' + formatFieldDate(plan.nextDue)));
+        var when = plan.nextDue || plan.lastDone || '';
+        row.appendChild(el('p', 'asset-tree-plan-meta', t('serviceOnSchedule') + ' ' + formatFieldDate(when)
+            + ' · ' + serviceRepeatText(plan)));
         if (plan.statusKey) row.appendChild(lozenge(plan.statusKey));
         return row;
     }
@@ -4245,7 +4373,7 @@
         return field;
     }
 
-    function serviceEditor(asset, plan) {
+    function serviceEditor(asset, plan, extras) {
         var creating = !plan;
         var row = el('form', 'asset-tree-plan' + (plan && plan.due ? ' is-due' : ''));
         row.addEventListener('submit', function (event) { event.preventDefault(); });
@@ -4254,19 +4382,43 @@
         name.setAttribute('aria-label', t('serviceName'));
         var last = document.createElement('input');
         last.type = 'date';
-        last.value = plan && plan.lastDone ? plan.lastDone : '';
+        last.value = plan ? (plan.nextDue || plan.lastDone || '') : isoDate(new Date());
         var every = document.createElement('input');
         every.type = 'number';
         every.min = '1';
         every.value = plan ? String(plan.everyCount || 1) : '1';
         var unit = document.createElement('select');
-        [['month', 'serviceUnitMonth'], ['day', 'serviceUnitDay']].forEach(function (pair) {
+        [['once', 'schedulesOnce'], ['day', 'serviceUnitDay'], ['week', 'serviceUnitWeek'], ['month', 'serviceUnitMonth'], ['year', 'serviceUnitYear']].forEach(function (pair) {
             var option = document.createElement('option');
             option.value = pair[0];
             option.textContent = t(pair[1]);
             unit.appendChild(option);
         });
-        unit.value = plan && plan.everyUnit === 'day' ? 'day' : 'month';
+        var knownUnits = { once: true, day: true, week: true, month: true, year: true };
+        var pickedUnit = plan && knownUnits[plan.everyUnit] ? plan.everyUnit : (moduleSetup().scheduleUnit || 'month');
+        if (!knownUnits[pickedUnit]) pickedUnit = 'month';
+        unit.value = pickedUnit;
+        function syncEvery() {
+            var once = unit.value === 'once';
+            every.style.display = once ? 'none' : '';
+            every.disabled = once;
+            if (once) every.value = '1';
+            var caps = { day: '3650', week: '520', month: '120', year: '30', once: '1' };
+            every.max = caps[unit.value] || '120';
+        }
+        unit.addEventListener('change', syncEvery);
+        syncEvery();
+        var kind = document.createElement('select');
+        kind.setAttribute('aria-label', t('schedulesKind'));
+        enabledKinds().forEach(function (key) {
+            var labels = { to: 'kindTo', kts: 'kindKts', verify: 'kindVerify' };
+            var option = document.createElement('option');
+            option.value = key;
+            option.textContent = t(labels[key]);
+            kind.appendChild(option);
+        });
+        if (plan && plan.kind) kind.value = plan.kind;
+        if (!kind.value) kind.value = enabledKinds()[0] || 'to';
         var everyWrap = el('div', 'asset-tree-plan-every');
         everyWrap.appendChild(every);
         everyWrap.appendChild(unit);
@@ -4282,18 +4434,19 @@
             status.appendChild(option);
         });
         if (plan && plan.statusKey) status.value = plan.statusKey;
-        var notify = el('label', 'asset-tree-check asset-tree-plan-notify');
+        var notifyRow = el('label', 'asset-tree-check asset-tree-plan-notify');
         var box = document.createElement('input');
         box.type = 'checkbox';
         box.checked = !plan || !!plan.notify;
-        notify.appendChild(box);
-        notify.appendChild(document.createTextNode(t('serviceNotify')));
-        var next = el('div', 'asset-tree-plan-next', plan && plan.nextDue ? formatFieldDate(plan.nextDue) : '');
+        notifyRow.appendChild(box);
+        notifyRow.appendChild(document.createTextNode(t('serviceNotify')));
         function payload(done) {
+            var count = unit.value === 'once' ? 1 : (parseInt(every.value, 10) || 0);
             var body = {
                 name: name.value.trim(),
-                lastDone: last.value,
-                everyCount: parseInt(every.value, 10) || 0,
+                kind: kind.value,
+                lastDone: scheduleAnchor(last.value, count, unit.value),
+                everyCount: count,
                 everyUnit: unit.value,
                 statusKey: status.value,
                 notify: box.checked
@@ -4306,17 +4459,35 @@
             ajax(creating ? 'POST' : 'PUT', path, payload(done), function (statusCode, response) {
                 if (statusCode >= 200 && statusCode < 300) {
                     if (creating) state.serviceOpen = null;
+                    state.scheduleKindFilter = '';
+                    state.schedulePersonFilter = '';
+                    state.scheduleFocusAsset = asset.id;
+                    var shown = last.value;
+                    if (done && response && (response.nextDue || response.lastDone)) shown = response.nextDue || response.lastDone;
+                    touchSchedule(shown);
+                    if (!done) notify(t('serviceSame'));
                     reloadCard(asset.id);
                 } else notify((response && response.message) || t('errorTitle'));
             });
         }
         row.appendChild(planField(t('serviceName'), name));
-        row.appendChild(planField(t('serviceLast'), last));
+        row.appendChild(planField(t('schedulesKind'), kind));
+        row.appendChild(planField(t('serviceOnSchedule'), last));
         row.appendChild(planField(t('serviceEvery'), everyWrap));
         row.appendChild(planField(t('status'), status));
-        if (!creating) row.appendChild(planField(t('serviceNext'), next));
-        row.appendChild(notify);
+        row.appendChild(notifyRow);
         var actions = el('div', 'asset-tree-plan-actions');
+        if (extras && extras.open) {
+            actions.appendChild(button(t('serviceOpenSchedule'), 'asset-tree-btn', function () {
+                openPlansOnSchedule(asset);
+            }));
+        }
+        if (extras && extras.add) {
+            actions.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
+                state.serviceOpen = asset.id;
+                showDetail(state.detail || asset, false);
+            }));
+        }
         actions.appendChild(button(creating ? t('serviceAdd') : t('save'), 'asset-tree-btn' + (creating ? ' primary' : ''), function () {
             send(false);
         }));
@@ -4325,8 +4496,11 @@
             actions.appendChild(button(t('delete'), 'asset-tree-btn', function () {
                 if (!window.confirm(t('serviceDeleteConfirm', plan.name))) return;
                 ajax('DELETE', '/assets/' + asset.id + '/plans/' + plan.id, null, function (statusCode, response) {
-                    if (statusCode >= 200 && statusCode < 300) reloadCard(asset.id);
-                    else notify((response && response.message) || t('errorTitle'));
+                    if (statusCode >= 200 && statusCode < 300) {
+                        state.scheduleRows = null;
+                        state.scheduleLoading = false;
+                        reloadCard(asset.id);
+                    } else notify((response && response.message) || t('errorTitle'));
                 });
             }));
         }
@@ -4440,11 +4614,13 @@
             if (onlyObjects) {
                 bar.appendChild(button(t('status'), 'asset-tree-btn', function () { openBulkStatus(); }));
                 bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
-                bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
-                    printCards(items.map(function (item) {
-                        return item.asset || assetByAnyId(parseInt(item.key, 10));
+                if (moduleOn('card')) {
+                    bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
+                        printCards(items.map(function (item) {
+                            return item.asset || assetByAnyId(parseInt(item.key, 10));
+                        }));
                     }));
-                }));
+                }
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
             }
             if (assetsOnly) {
@@ -6050,13 +6226,13 @@
                 ops.appendChild(toolButton(t('copy'), 'copy', function () { copyAsset(asset); }));
             }
         }
-        if (!isFolder(asset)) {
+        if (!isFolder(asset) && moduleOn('card')) {
             ops.appendChild(toolButton(t('printCard'), 'print', function () {
                 printCards([state.detail && state.detail.id === asset.id ? state.detail : asset]);
             }));
         }
         var extra = [];
-        if (mayEdit(asset) && !isFolder(asset)) {
+        if (mayEdit(asset) && !isFolder(asset) && moduleOn('card')) {
             var current = state.detail && state.detail.id === asset.id ? state.detail : asset;
             if (current.cardImage) {
                 extra.push({ label: t('cardQrRemove'), onClick: function () { deleteCardImage(current); } });
@@ -6093,6 +6269,9 @@
         main.appendChild(moduleBlock(t('detailsTitle'), detailGrid(items)));
         var service = serviceBlock(asset);
         if (service) main.appendChild(service);
+        if (moduleOn('life') && !isFolder(asset)) {
+            main.appendChild(lifeBlock(asset));
+        }
         main.appendChild(descriptionModule(asset, true));
         main.appendChild(fileBlock(asset));
 
@@ -6587,12 +6766,142 @@
     }
 
     function optionsEditor(id, value) {
-        var area = el('textarea');
-        if (id) area.id = id;
-        area.rows = 4;
-        area.value = value || '';
-        area.placeholder = t('fieldOptionsHint');
-        return area;
+        var box = el('div', 'asset-tree-option-editor');
+        var hidden = el('input');
+        hidden.type = 'hidden';
+        if (id) hidden.id = id;
+        var items = optionLines(value);
+        var list = el('div', 'asset-tree-option-list');
+        var draft = el('input');
+        draft.type = 'text';
+        draft.className = 'asset-tree-option-draft';
+        draft.placeholder = t('fieldOptionPlaceholder');
+        draft.setAttribute('aria-label', t('fieldOptionPlaceholder'));
+        var add = button(t('fieldOptionAdd'), 'asset-tree-btn', function () {
+            commitDraft();
+        });
+        var addRow = el('div', 'asset-tree-option-add');
+        addRow.appendChild(draft);
+        addRow.appendChild(add);
+        var dragFrom = -1;
+
+        function notifyChange() {
+            var event;
+            try {
+                event = document.createEvent('Event');
+                event.initEvent('change', true, true);
+            } catch (error) {
+                return;
+            }
+            box.dispatchEvent(event);
+        }
+
+        function sync(notify) {
+            var lines = [];
+            items.forEach(function (item) {
+                var text = String(item || '').replace(/^\s+|\s+$/g, '');
+                if (text) lines.push(text);
+            });
+            hidden.value = lines.join('\n');
+            box.value = hidden.value;
+            if (notify) notifyChange();
+        }
+
+        function paint() {
+            list.innerHTML = '';
+            items.forEach(function (item, index) {
+                var row = el('div', 'asset-tree-option-row');
+                var grip = el('span', 'asset-tree-option-grip', '\u2807');
+                grip.setAttribute('aria-hidden', 'true');
+                grip.title = t('fieldDragHint');
+                var text = el('input');
+                text.type = 'text';
+                text.value = item;
+                text.addEventListener('input', function () {
+                    items[index] = text.value;
+                    sync(false);
+                });
+                text.addEventListener('change', function () {
+                    items[index] = text.value;
+                    sync(true);
+                });
+                text.addEventListener('keydown', function (event) {
+                    if (event.key === 'Enter') event.preventDefault();
+                });
+                var remove = button('\u00d7', 'asset-tree-btn slim asset-tree-option-remove', function () {
+                    items.splice(index, 1);
+                    paint();
+                    sync(true);
+                });
+                remove.title = t('delete');
+                remove.setAttribute('aria-label', t('delete'));
+                row.draggable = true;
+                grip.addEventListener('mousedown', function () { row.draggable = true; });
+                text.addEventListener('mousedown', function () { row.draggable = false; });
+                remove.addEventListener('mousedown', function () { row.draggable = false; });
+                row.addEventListener('dragstart', function (event) {
+                    dragFrom = index;
+                    if (event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try { event.dataTransfer.setData('text/plain', String(index)); } catch (error) { /* IE */ }
+                    }
+                    row.classList.add('is-dragging');
+                });
+                row.addEventListener('dragend', function () {
+                    row.classList.remove('is-dragging');
+                    dragFrom = -1;
+                });
+                row.addEventListener('dragover', function (event) {
+                    if (dragFrom < 0) return;
+                    event.preventDefault();
+                    row.classList.add('is-drop');
+                });
+                row.addEventListener('dragleave', function () {
+                    row.classList.remove('is-drop');
+                });
+                row.addEventListener('drop', function (event) {
+                    event.preventDefault();
+                    row.classList.remove('is-drop');
+                    var from = dragFrom;
+                    if (event.dataTransfer) {
+                        var raw = event.dataTransfer.getData('text/plain');
+                        if (raw) from = parseInt(raw, 10);
+                    }
+                    if (isNaN(from) || from === index || from < 0 || from >= items.length) return;
+                    var moved = items.splice(from, 1)[0];
+                    items.splice(index, 0, moved);
+                    paint();
+                    sync(true);
+                });
+                row.appendChild(grip);
+                row.appendChild(text);
+                row.appendChild(remove);
+                list.appendChild(row);
+            });
+            sync(false);
+        }
+
+        function commitDraft() {
+            var next = String(draft.value || '').replace(/^\s+|\s+$/g, '');
+            if (!next) return;
+            items.push(next);
+            draft.value = '';
+            paint();
+            sync(true);
+            draft.focus();
+        }
+
+        draft.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitDraft();
+            }
+        });
+        box.appendChild(hidden);
+        box.appendChild(list);
+        box.appendChild(addRow);
+        paint();
+        return box;
     }
 
     function singleSelect(options, value, disabled) {
@@ -7104,7 +7413,7 @@
                 requiredLabel.appendChild(required);
                 requiredLabel.appendChild(el('span', null, t('fieldRequired')));
                 var options = optionsEditor('', draft.options || '');
-                options.className = 'asset-tree-draft-options';
+                options.classList.add('asset-tree-draft-options');
                 options.addEventListener('change', function () {
                     drafts = readDrafts();
                     paintDrafts();
@@ -7391,37 +7700,41 @@
         });
     }
 
-    function openFieldModal(type, done) {
+    function openFieldModal(type, done, existing) {
+        var editing = !!(existing && existing.fieldKey);
         openModal(function (dialog) {
-            dialog.appendChild(el('h2', null, t('addFieldTitle')));
+            dialog.appendChild(el('h2', null, editing ? t('editFieldTitle') : t('addFieldTitle')));
             dialog.appendChild(el('p', 'asset-tree-hint', type.label));
             var form = el('form');
-            form.appendChild(field(t('fieldLabel'), input('field-label', '', false), true));
-            var fieldKind = kindSelect('field-kind', 'text');
+            form.appendChild(field(t('fieldLabel'), input('field-label', editing ? (existing.label || '') : '', false), true));
+            var fieldKind = kindSelect('field-kind', editing ? (existing.kind || 'text') : 'text');
             form.appendChild(field(t('fieldKind'), fieldKind, true));
-            var fieldOptionsBox = optionsEditor('field-options', '');
+            var fieldOptionsBox = optionsEditor('field-options', editing ? fieldOptions(existing).join('\n') : '');
             var fieldOptionsWrap = field(t('fieldOptions'), fieldOptionsBox, true);
             fieldOptionsWrap.appendChild(el('p', 'asset-tree-hint', t('fieldOptionsHint')));
-            fieldOptionsWrap.hidden = true;
+            fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
             form.appendChild(fieldOptionsWrap);
             fieldKind.addEventListener('change', function () {
                 fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
             });
+            var flags = el('div', 'asset-tree-field-flags');
             var requiredLabel = el('label', 'asset-tree-check');
             var required = el('input');
             required.type = 'checkbox';
             required.id = 'field-required';
+            required.checked = editing ? !!existing.required : false;
             requiredLabel.appendChild(required);
             requiredLabel.appendChild(el('span', null, t('fieldRequired')));
-            form.appendChild(requiredLabel);
+            flags.appendChild(requiredLabel);
             var issueLabel = el('label', 'asset-tree-check');
             var issue = el('input');
             issue.type = 'checkbox';
             issue.id = 'field-issue';
-            issue.checked = true;
+            issue.checked = editing ? existing.showOnIssue !== false : true;
             issueLabel.appendChild(issue);
             issueLabel.appendChild(el('span', null, t('showOnIssue')));
-            form.appendChild(issueLabel);
+            flags.appendChild(issueLabel);
+            form.appendChild(flags);
             form.appendChild(el('p', 'asset-tree-hint', t('showOnIssueHint')));
             var error = el('div', 'asset-tree-form-error');
             error.hidden = true;
@@ -7439,13 +7752,16 @@
                     error.textContent = t('fieldOptionsRequired');
                     return;
                 }
-                ajax('POST', '/types/' + encodeURIComponent(type.typeKey) + '/fields', {
+                var body = {
                     label: label.trim(),
                     kind: kind,
                     required: document.getElementById('field-required').checked,
                     showOnIssue: document.getElementById('field-issue').checked,
                     options: document.getElementById('field-options').value
-                }, function (status, payload) {
+                };
+                var path = '/types/' + encodeURIComponent(type.typeKey) + '/fields';
+                if (editing) path += '/' + encodeURIComponent(existing.fieldKey);
+                ajax(editing ? 'PUT' : 'POST', path, body, function (status, payload) {
                     if (status >= 200 && status < 300) {
                         if (done) {
                             closeModal();
@@ -7462,7 +7778,7 @@
             }
             var actions = el('div', 'asset-tree-dialog-actions');
             actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
-            actions.appendChild(button(t('addField'), 'asset-tree-btn primary', saveField));
+            actions.appendChild(button(editing ? t('save') : t('addField'), 'asset-tree-btn primary', saveField));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
@@ -7743,28 +8059,30 @@
             treeToggle.appendChild(treeBox);
             treeToggle.appendChild(el('span', null, t('showInTree')));
             wrap.appendChild(treeToggle);
-            var serviceToggle = el('label', 'asset-tree-check');
-            serviceToggle.title = t('serviceTypeHint');
-            var serviceBox = el('input');
-            serviceBox.type = 'checkbox';
-            serviceBox.checked = !!type.service;
-            serviceBox.disabled = !state.canConfigure;
-            if (!state.canConfigure) serviceBox.setAttribute('data-disabled', '1');
-            serviceBox.addEventListener('change', function () {
-                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey), { service: serviceBox.checked }, function (status, payload) {
-                    if (status >= 200 && status < 300) refreshSchema();
-                    else {
-                        serviceBox.checked = !serviceBox.checked;
-                        notify((payload && payload.message) || t('errorTitle'));
-                    }
+            if (moduleOn('service')) {
+                var serviceToggle = el('label', 'asset-tree-check');
+                serviceToggle.title = t('serviceTypeHint');
+                var serviceBox = el('input');
+                serviceBox.type = 'checkbox';
+                serviceBox.checked = !!type.service;
+                serviceBox.disabled = !state.canConfigure;
+                if (!state.canConfigure) serviceBox.setAttribute('data-disabled', '1');
+                serviceBox.addEventListener('change', function () {
+                    ajax('PUT', '/types/' + encodeURIComponent(type.typeKey), { service: serviceBox.checked }, function (status, payload) {
+                        if (status >= 200 && status < 300) refreshSchema();
+                        else {
+                            serviceBox.checked = !serviceBox.checked;
+                            notify((payload && payload.message) || t('errorTitle'));
+                        }
+                    });
                 });
-            });
-            serviceToggle.appendChild(serviceBox);
-            serviceToggle.appendChild(el('span', null, t('serviceType')));
-            var serviceRow = el('div', 'asset-tree-service-type');
-            serviceRow.appendChild(serviceToggle);
-            serviceRow.appendChild(el('p', 'asset-tree-hint', t('serviceTypeHint')));
-            wrap.appendChild(serviceRow);
+                serviceToggle.appendChild(serviceBox);
+                serviceToggle.appendChild(el('span', null, t('serviceType')));
+                var serviceRow = el('div', 'asset-tree-service-type');
+                serviceRow.appendChild(serviceToggle);
+                serviceRow.appendChild(el('p', 'asset-tree-hint', t('serviceTypeHint')));
+                wrap.appendChild(serviceRow);
+            }
         }
         var fieldTools = el('div', 'asset-tree-schema-tools');
         var fieldRows = [];
@@ -7784,54 +8102,94 @@
         wrap.appendChild(fieldTools);
         var fields = el('div', 'asset-tree-schema-scroll asset-tree-field-list');
         var fieldOrder = (type.fields || []).map(function (fieldDef) { return fieldDef.fieldKey; });
-        function moveField(index, delta) {
-            var target = index + delta;
-            if (target < 0 || target >= fieldOrder.length) return;
-            var next = fieldOrder.slice();
-            var moved = next.splice(index, 1)[0];
-            next.splice(target, 0, moved);
+        function reorderFields(movingKey, targetKey, after) {
+            if (!movingKey || movingKey === targetKey) return;
+            var next = fieldOrder.filter(function (key) { return key !== movingKey; });
+            var at = next.indexOf(targetKey);
+            if (at < 0) return;
+            next.splice(after ? at + 1 : at, 0, movingKey);
             ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/field-order', { fieldKeys: next }, function (status, payload) {
                 if (status >= 200 && status < 300) refreshSchema();
                 else notify((payload && payload.message) || t('errorTitle'));
             });
         }
-        (type.fields || []).forEach(function (fieldDef, fieldIndex) {
-            var fieldRow = el('div', 'asset-tree-type-field');
+        function fieldControlTarget(node) {
+            while (node && node !== fields) {
+                var tag = node.tagName;
+                if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'LABEL' || tag === 'A' || tag === 'SELECT' || tag === 'TEXTAREA') {
+                    return true;
+                }
+                node = node.parentNode;
+            }
+            return false;
+        }
+        (type.fields || []).forEach(function (fieldDef) {
+            var fieldRow = el('div', 'asset-tree-type-field' + (state.canConfigure ? ' is-editable' : ''));
             fieldRow.setAttribute('data-name', fieldDef.label || '');
-            fieldRow.appendChild(el('span', null, fieldDef.label));
-            fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
-            var issueLabel = el('label', 'asset-tree-check asset-tree-field-issue');
-            issueLabel.title = t('showOnIssueHint');
-            var issueBox = el('input');
-            issueBox.type = 'checkbox';
-            issueBox.checked = fieldDef.showOnIssue !== false;
-            issueBox.disabled = !state.canConfigure;
-            if (!state.canConfigure) issueBox.setAttribute('data-disabled', '1');
-            issueBox.addEventListener('change', function () {
-                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), {
-                    showOnIssue: issueBox.checked
-                }, function (status, payload) {
-                    if (status >= 200 && status < 300) refreshSchema();
-                    else {
-                        issueBox.checked = !issueBox.checked;
-                        notify((payload && payload.message) || t('errorTitle'));
+            fieldRow.setAttribute('data-field', fieldDef.fieldKey);
+            if (state.canConfigure) {
+                fieldRow.draggable = true;
+                var grip = el('span', 'asset-tree-field-grip', '\u2807');
+                grip.title = t('fieldDragHint');
+                fieldRow.appendChild(grip);
+                fieldRow.addEventListener('mousedown', function (event) {
+                    fieldRow.draggable = !fieldControlTarget(event.target);
+                });
+                fieldRow.addEventListener('mouseup', function () {
+                    fieldRow.draggable = true;
+                });
+                fieldRow.addEventListener('dragstart', function (event) {
+                    if (!fieldRow.draggable || fieldControlTarget(event.target)) {
+                        event.preventDefault();
+                        return;
+                    }
+                    state.fieldDrag = fieldDef.fieldKey;
+                    fieldRow.classList.add('is-dragging');
+                    if (event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try { event.dataTransfer.setData('text/plain', fieldDef.fieldKey); } catch (ignore) {}
                     }
                 });
-            });
-            issueLabel.appendChild(issueBox);
-            issueLabel.appendChild(el('span', null, t('showOnIssue')));
-            fieldRow.appendChild(issueLabel);
+                fieldRow.addEventListener('dragend', function () {
+                    state.fieldDrag = null;
+                    fieldRow.classList.remove('is-dragging');
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                    fieldRow.draggable = true;
+                });
+                fieldRow.addEventListener('dragover', function (event) {
+                    if (!state.fieldDrag || state.fieldDrag === fieldDef.fieldKey) return;
+                    event.preventDefault();
+                    var box = fieldRow.getBoundingClientRect();
+                    var after = event.clientY > box.top + box.height / 2;
+                    fieldRow.classList.toggle('is-drop-after', after);
+                    fieldRow.classList.toggle('is-drop-before', !after);
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                });
+                fieldRow.addEventListener('dragleave', function (event) {
+                    var next = event.relatedTarget;
+                    if (next && fieldRow.contains && fieldRow.contains(next)) return;
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                });
+                fieldRow.addEventListener('drop', function (event) {
+                    event.preventDefault();
+                    var moving = state.fieldDrag;
+                    var after = fieldRow.classList.contains('is-drop-after');
+                    state.fieldDrag = null;
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                    reorderFields(moving, fieldDef.fieldKey, after);
+                });
+            }
+            fieldRow.appendChild(el('span', 'asset-tree-field-label', fieldDef.label));
+            fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
             if (state.canConfigure) {
-                var fieldUp = button('\u2191', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, -1); });
-                fieldUp.title = t('moveUp');
-                fieldUp.setAttribute('aria-label', t('moveUp'));
-                fieldUp.disabled = fieldIndex === 0;
-                var fieldDown = button('\u2193', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, 1); });
-                fieldDown.title = t('moveDown');
-                fieldDown.setAttribute('aria-label', t('moveDown'));
-                fieldDown.disabled = fieldIndex === fieldOrder.length - 1;
-                fieldRow.appendChild(fieldUp);
-                fieldRow.appendChild(fieldDown);
+                var editField = button(t('editField'), 'asset-tree-btn', function () {
+                    openFieldModal(type, null, fieldDef);
+                });
+                editField.title = t('editFieldTitle');
+                fieldRow.appendChild(editField);
                 fieldRow.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
                     ajax('DELETE', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), null, function (status, payload) {
                         if (status >= 200 && status < 300) refreshSchema();
@@ -7890,23 +8248,29 @@
         treeToggle.appendChild(el('span', null, t('showInTree')));
         treeToggle.title = t('showInTreeHint');
         form.appendChild(treeToggle);
-        var serviceToggle = el('label', 'asset-tree-check');
-        var serviceInput = el('input');
-        serviceInput.type = 'checkbox';
-        serviceInput.id = 'type-service';
-        serviceToggle.appendChild(serviceInput);
-        serviceToggle.appendChild(el('span', null, t('serviceType')));
-        serviceToggle.title = t('serviceTypeHint');
-        form.appendChild(serviceToggle);
-        form.appendChild(el('p', 'asset-tree-hint asset-tree-service-type-hint', t('serviceTypeHint')));
+        var serviceToggle = null;
+        var serviceInput = null;
+        if (moduleOn('service')) {
+            serviceToggle = el('label', 'asset-tree-check');
+            serviceInput = el('input');
+            serviceInput.type = 'checkbox';
+            serviceInput.id = 'type-service';
+            serviceToggle.appendChild(serviceInput);
+            serviceToggle.appendChild(el('span', null, t('serviceType')));
+            serviceToggle.title = t('serviceTypeHint');
+            form.appendChild(serviceToggle);
+            form.appendChild(el('p', 'asset-tree-hint asset-tree-service-type-hint', t('serviceTypeHint')));
+        }
         locationInput.addEventListener('change', function () {
             treeInput.disabled = locationInput.checked;
             if (locationInput.checked) treeInput.checked = false;
-            serviceInput.disabled = locationInput.checked;
-            if (locationInput.checked) serviceInput.checked = false;
-            serviceToggle.hidden = locationInput.checked;
-            var serviceHint = form.querySelector('.asset-tree-service-type-hint');
-            if (serviceHint) serviceHint.hidden = locationInput.checked;
+            if (serviceInput) {
+                serviceInput.disabled = locationInput.checked;
+                if (locationInput.checked) serviceInput.checked = false;
+                serviceToggle.hidden = locationInput.checked;
+                var serviceHint = form.querySelector('.asset-tree-service-type-hint');
+                if (serviceHint) serviceHint.hidden = locationInput.checked;
+            }
             captionField.hidden = !locationInput.checked;
             captionHint.hidden = !locationInput.checked;
             parentField.hidden = locationInput.checked;
@@ -7950,7 +8314,7 @@
                 projectKey: state.projectKey,
                 location: place,
                 showInTree: place || treeInput.checked,
-                service: !place && serviceInput.checked,
+                service: !!(serviceInput && !place && serviceInput.checked),
                 placeCaption: place ? captionInput.value.trim() : '',
                 parentTypeKey: place ? '' : parentSelect.value
             }, function (status, payload) {
@@ -7972,7 +8336,7 @@
     }
 
 
-    function openModal(builder) {
+    function openModal(builder, root) {
         var backdrop = el('div', 'asset-tree-backdrop');
         var dialog = el('div', 'asset-tree-dialog');
         dialog.setAttribute('role', 'dialog');
@@ -7982,16 +8346,17 @@
         backdrop.addEventListener('click', function (event) {
             if (event.target === backdrop) closeModal();
         });
-        document.body.appendChild(backdrop);
-        var first = dialog.querySelector('input, select, button');
+        (root || document.body).appendChild(backdrop);
+        var first = dialog.querySelector('input:not([type="hidden"]), select, button');
         if (first) first.focus();
     }
 
     function closeModal() {
         var nodes = document.querySelectorAll('.asset-tree-backdrop');
-        if (nodes.length) {
-            nodes[nodes.length - 1].parentNode.removeChild(nodes[nodes.length - 1]);
-        }
+        if (!nodes.length) return;
+        var last = nodes[nodes.length - 1];
+        if (last.querySelector('#asset-tree-module-dialog')) state.moduleDialog = '';
+        last.parentNode.removeChild(last);
     }
 
     function closeAllModals() {
@@ -7999,6 +8364,7 @@
         for (var i = 0; i < nodes.length; i++) {
             nodes[i].parentNode.removeChild(nodes[i]);
         }
+        state.moduleDialog = '';
     }
 
     function reloadTree(done) {
@@ -8114,6 +8480,32 @@
         loadSavedFilters();
         state.dirty = false;
         state.report = null;
+        state.reportFailed = false;
+        state.scheduleRows = null;
+        state.scheduleOpen = false;
+        state.scheduleLoading = false;
+        state.scheduleToken++;
+        state.scheduleError = '';
+        state.staffRows = null;
+        state.staffLoading = false;
+        state.staffToken++;
+        state.staffError = '';
+        state.floors = null;
+        state.floorId = 0;
+        state.mapDraft = null;
+        state.mapLoading = false;
+        state.mapToken++;
+        state.mapSelection = null;
+        state.reportCatalog = null;
+        state.reportKey = 'status';
+        state.reportView = null;
+        state.reportOpen = false;
+        state.galleryToken++;
+        state.galleryLoading = false;
+        state.life = {};
+        state.lifeLoading = {};
+        state.lifeFailed = {};
+        state.lifeToken = {};
         state.importResult = null;
         state.picked = {};
         state.pickScope = '';
@@ -8201,12 +8593,23 @@
         text.type = 'search';
         text.placeholder = t('custodianSearch');
         text.disabled = !!disabled;
-        text.value = userKey ? (label || userKey) : '';
+        var chosenKey = userKey || '';
+        var chosenLabel = userKey ? (label || userKey) : '';
+        text.value = chosenLabel;
         var list = el('div', 'asset-tree-user-results');
         var timer = null;
         var searchSeq = 0;
+        function rememberChoice(key, name) {
+            chosenKey = key || '';
+            chosenLabel = name || chosenKey;
+            hidden.value = chosenKey;
+            text.value = chosenLabel;
+        }
         text.addEventListener('input', function () {
-            hidden.value = '';
+            var typed = text.value.trim();
+            if (!typed) hidden.value = '';
+            else if (chosenKey && typed === String(chosenLabel).trim()) hidden.value = chosenKey;
+            else hidden.value = '';
             clearTimeout(timer);
             var query = text.value.trim();
             timer = setTimeout(function () {
@@ -8221,8 +8624,7 @@
                     if (status !== 200) return;
                     (payload || []).forEach(function (user) {
                         var hit = button(user.displayName + (user.email ? ' · ' + user.email : ''), 'asset-tree-user-hit', function () {
-                            hidden.value = user.userKey;
-                            text.value = user.displayName;
+                            rememberChoice(user.userKey, user.displayName || user.userKey);
                             list.innerHTML = '';
                             var card = box.querySelector('.asset-tree-profile');
                             if (card) card.parentNode.removeChild(card);
@@ -8240,10 +8642,10 @@
     }
 
     function custodianField(id, profile) {
-        var box = userBox(profile ? profile.userKey : '', !state.canEdit);
+        var box = userBox(profile ? profile.userKey : '', !state.canEdit, profile ? (profile.displayName || '') : '');
         box.querySelector('.asset-tree-field-value').id = id;
         var text = box.querySelector('input[type="search"]');
-        if (profile && text) text.value = profile.displayName || '';
+        if (profile && text && !text.value) text.value = profile.displayName || '';
         var wrap = field(t('custodian'), box, true);
         if (profile) wrap.appendChild(profileCard(profile));
         return wrap;
@@ -8329,6 +8731,7 @@
 
     function assetsChanged() {
         state.report = null;
+        state.reportFailed = false;
         reportToken++;
         if (state.view === 'mine') {
             loadMine();
@@ -8346,11 +8749,18 @@
             if (token !== reportToken) {
                 return;
             }
-            state.report = status === 200 ? payload : null;
+            if (status === 200) {
+                state.report = payload;
+                state.reportFailed = false;
+            } else {
+                state.report = null;
+                state.reportFailed = true;
+            }
             var dash = document.getElementById('asset-tree-dashboard');
             if (dash) {
                 fillDashboard(dash);
             }
+            if (state.view === 'reports') renderFrame();
         });
     }
 
@@ -9164,6 +9574,20 @@
         return panel;
     }
 
+    function copyRule(rule) {
+        var copy = {
+            field: rule.field,
+            op: rule.op,
+            value: rule.value || ''
+        };
+        if (rule.values && rule.values.length) copy.values = rule.values.slice();
+        if (rule.keys && rule.keys.length) copy.keys = rule.keys.slice();
+        if (rule.kind) copy.kind = rule.kind;
+        if (rule.label) copy.label = rule.label;
+        if (rule.caption) copy.caption = rule.caption;
+        return copy;
+    }
+
     function filterBar() {
         var bar = el('div', 'asset-tree-filterbar');
         bar.appendChild(el('span', 'asset-tree-filter-label', t('sortBy')));
@@ -9195,9 +9619,7 @@
             (state.savedFilters || []).forEach(function (filter) {
                 if (filter.id === picker.value) chosen = filter;
             });
-            state.rules = chosen ? chosen.rules.map(function (rule) {
-                return { field: rule.field, op: rule.op, value: rule.value || '' };
-            }) : [];
+            state.rules = chosen ? chosen.rules.map(copyRule) : [];
             refreshBrowse();
         });
         bar.appendChild(picker);
@@ -9241,9 +9663,7 @@
         var draft = {
             id: state.activeFilterId || '',
             name: '',
-            rules: (state.rules || []).map(function (rule) {
-                return { field: rule.field, op: rule.op, value: rule.value || '' };
-            })
+            rules: (state.rules || []).map(copyRule)
         };
         (state.savedFilters || []).forEach(function (filter) {
             if (filter.id === draft.id) draft.name = filter.name;
@@ -9269,6 +9689,10 @@
                 var rules = [];
                 for (var i = 0; i < rows.length; i++) {
                     var row = rows[i];
+                    if (row._kept) {
+                        rules.push(copyRule(row._kept));
+                        continue;
+                    }
                     var fieldBox = row.querySelector('.asset-tree-rule-field');
                     var opBox = row.querySelector('.asset-tree-rule-op');
                     var valueBox = row.querySelector('.asset-tree-rule-value');
@@ -9297,6 +9721,20 @@
                 if (!draft.rules.length) draft.rules.push({ field: 'name', op: 'contains', value: '' });
                 list.innerHTML = '';
                 draft.rules.forEach(function (rule, index) {
+                    if (rule.keys && rule.keys.length) {
+                        var locked = el('div', 'asset-tree-rule');
+                        locked.setAttribute('data-rule', String(index));
+                        locked._kept = copyRule(rule);
+                        var caption = el('span', 'asset-tree-rule-caption', rule.caption || (rule.label || rule.field));
+                        locked.appendChild(caption);
+                        locked.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
+                            draft.rules = readRules();
+                            draft.rules.splice(index, 1);
+                            paintRules(true);
+                        }));
+                        list.appendChild(locked);
+                        return;
+                    }
                     var spec = fieldSpec(rule.field);
                     var ops = opsFor(spec.kind);
                     if (ops.indexOf(rule.op) < 0) rule.op = ops[0];
@@ -9380,7 +9818,9 @@
             form.appendChild(error);
             function applyRules(save) {
                 var rules = readRules().filter(function (rule) {
+                    if (rule.keys && rule.keys.length) return true;
                     if (rule.op === 'empty' || rule.op === 'notEmpty') return true;
+                    if (rule.op === 'in' && rule.values && rule.values.length) return true;
                     return String(rule.value || '').trim().length > 0;
                 });
                 if (!rules.length) {
@@ -10086,15 +10526,13 @@
                 window.removeEventListener('resize', apply);
                 return;
             }
-            var top = panel.getBoundingClientRect().top;
-            var next = Math.max(280, Math.round(window.innerHeight - top - 44));
-            panel.style.height = next + 'px';
-            panel.style.maxHeight = next + 'px';
+            panel.style.height = '';
+            panel.style.maxHeight = '';
             var board = panel.querySelector('.asset-tree-flow-board');
             var canvas = panel.querySelector('.asset-tree-flow-canvas');
             if (board && canvas) {
                 var room = board.clientHeight;
-                if (room > 120 && canvas.offsetHeight - room < 40) canvas.style.height = room + 'px';
+                if (room > 160 && canvas.offsetHeight < room) canvas.style.height = room + 'px';
             }
         }
         if (state.portalFit) window.removeEventListener('resize', state.portalFit);
@@ -10199,7 +10637,8 @@
                         mount();
                         return;
                     }
-                    saveProjectView({ treeObjects: tree.checked }, function () {
+                    saveProjectView({ treeObjects: tree.checked }, function (ok) {
+                        if (ok === false) return;
                         closeModal();
                         mount();
                     });
@@ -10242,20 +10681,221 @@
         });
     }
 
+    function moduleTitleKey(moduleKey) {
+        if (moduleKey === 'service') return 'moduleService';
+        if (moduleKey === 'map') return 'moduleMap';
+        if (moduleKey === 'reports') return 'moduleReports';
+        if (moduleKey === 'life') return 'moduleLife';
+        if (moduleKey === 'portal') return 'modulePortal';
+        if (moduleKey === 'card') return 'moduleCard';
+        return 'setupTitle';
+    }
+
+    function paintModuleDialog(host, moduleKey) {
+        if (moduleKey === 'portal') {
+            renderPortalSettings(host);
+            if (host.parentNode) fitPortalPanel(host.parentNode);
+        } else if (moduleKey === 'card') {
+            renderCardSettings(host);
+        } else {
+            host.appendChild(moduleSetupPanel(moduleKey));
+        }
+    }
+
+    function refreshModuleDialog() {
+        var host = document.getElementById('asset-tree-module-dialog');
+        if (!host || !state.moduleDialog) return false;
+        host.innerHTML = '';
+        paintModuleDialog(host, state.moduleDialog);
+        return true;
+    }
+
+    function openModuleSetup(moduleKey) {
+        closeAllModals();
+        state.moduleDialog = moduleKey;
+        var root = document.getElementById('asset-tree-app') || document.body;
+        openModal(function (dialog) {
+            if (moduleKey === 'portal' || moduleKey === 'card') dialog.classList.add('is-module');
+            else dialog.classList.add('is-wide');
+            dialog.appendChild(el('h2', null, t(moduleTitleKey(moduleKey))));
+            var host = el('div');
+            host.id = 'asset-tree-module-dialog';
+            paintModuleDialog(host, moduleKey);
+            dialog.appendChild(host);
+        }, root);
+    }
+
+    function moduleSetupPanel(moduleKey) {
+        var setup = moduleSetup();
+        var panel = el('div', 'asset-tree-module-setup');
+        function saveSetup(next) {
+            saveProjectView({ setup: next }, function (ok) {
+                if (ok) closeModal();
+            });
+        }
+        if (moduleKey === 'service') {
+            var kinds = el('div', 'asset-tree-check-list');
+            ['to', 'kts', 'verify'].forEach(function (key) {
+                var labels = { to: 'kindToLong', kts: 'kindKtsLong', verify: 'kindVerifyLong' };
+                var label = el('label', 'asset-tree-check');
+                var box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = setup.scheduleKinds.split(',').indexOf(key) >= 0;
+                box.setAttribute('data-kind', key);
+                label.appendChild(box);
+                label.appendChild(document.createTextNode(t(labels[key])));
+                kinds.appendChild(label);
+            });
+            panel.appendChild(el('span', 'asset-tree-nav-label', t('setupKinds')));
+            panel.appendChild(kinds);
+            var unit = document.createElement('select');
+            [['once', 'schedulesOnce'], ['day', 'schedulesEachDay'], ['week', 'schedulesEachWeek'], ['month', 'schedulesEachMonth'], ['year', 'schedulesEachYear']].forEach(function (pair) {
+                var option = document.createElement('option');
+                option.value = pair[0];
+                option.textContent = t(pair[1]);
+                unit.appendChild(option);
+            });
+            unit.value = setup.scheduleUnit;
+            panel.appendChild(planField(t('setupRepeat'), unit));
+            var notify = el('label', 'asset-tree-check');
+            var notifyBox = document.createElement('input');
+            notifyBox.type = 'checkbox';
+            notifyBox.checked = setup.scheduleNotify;
+            notify.appendChild(notifyBox);
+            notify.appendChild(document.createTextNode(t('setupNotify')));
+            panel.appendChild(notify);
+            panel.appendChild(button(t('setupSave'), 'asset-tree-btn', function () {
+                var picked = [];
+                var boxes = kinds.querySelectorAll('input');
+                for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) picked.push(boxes[i].getAttribute('data-kind'));
+                var next = moduleSetup();
+                next.scheduleKinds = picked.join(',');
+                next.scheduleUnit = unit.value;
+                next.scheduleNotify = notifyBox.checked;
+                saveSetup(next);
+            }));
+        }
+        if (moduleKey === 'map') {
+            var width = document.createElement('input');
+            width.type = 'number';
+            width.min = '640';
+            width.max = '2400';
+            width.value = String(setup.mapWidth);
+            var height = document.createElement('input');
+            height.type = 'number';
+            height.min = '480';
+            height.max = '1600';
+            height.value = String(setup.mapHeight);
+            var gridSize = document.createElement('select');
+            [8, 12, 16, 24, 32].forEach(function (step) {
+                var option = document.createElement('option');
+                option.value = String(step);
+                option.textContent = String(step);
+                gridSize.appendChild(option);
+            });
+            gridSize.value = String(setup.mapGrid);
+            var snap = el('label', 'asset-tree-check');
+            var snapBox = document.createElement('input');
+            snapBox.type = 'checkbox';
+            snapBox.checked = setup.mapSnap;
+            snap.appendChild(snapBox);
+            snap.appendChild(document.createTextNode(t('setupSnap')));
+            panel.appendChild(planField(t('setupPlanW'), width));
+            panel.appendChild(planField(t('setupPlanH'), height));
+            panel.appendChild(planField(t('setupGrid'), gridSize));
+            panel.appendChild(snap);
+            panel.appendChild(button(t('setupSave'), 'asset-tree-btn', function () {
+                var next = moduleSetup();
+                next.mapWidth = clampNum(width.value, 640, 2400);
+                next.mapHeight = clampNum(height.value, 480, 1600);
+                next.mapGrid = Number(gridSize.value);
+                next.mapSnap = snapBox.checked;
+                saveSetup(next);
+            }));
+        }
+        if (moduleKey === 'reports') {
+            var reports = el('div', 'asset-tree-check-list');
+            [['status', 'reportStatusTitle'], ['type', 'reportTypeTitle'], ['place', 'reportPlaceTitle'], ['holder', 'reportHolderTitle'], ['receipts', 'reportReceipts'], ['cost', 'reportCostTitle'], ['warranty', 'reportWarrantyTitle'], ['age', 'reportAge'], ['writeoff', 'reportWriteoffs'], ['work', 'reportWork']].forEach(function (pair) {
+                var label = el('label', 'asset-tree-check');
+                var box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = setup.reportHidden.split(',').indexOf(pair[0]) < 0;
+                box.setAttribute('data-report', pair[0]);
+                label.appendChild(box);
+                label.appendChild(document.createTextNode(t(pair[1])));
+                reports.appendChild(label);
+            });
+            panel.appendChild(el('span', 'asset-tree-nav-label', t('setupShow')));
+            panel.appendChild(reports);
+            panel.appendChild(button(t('setupSave'), 'asset-tree-btn', function () {
+                var hidden = [];
+                var boxes = reports.querySelectorAll('input');
+                for (var i = 0; i < boxes.length; i++) if (!boxes[i].checked) hidden.push(boxes[i].getAttribute('data-report'));
+                var next = moduleSetup();
+                next.reportHidden = hidden.join(',');
+                saveSetup(next);
+            }));
+        }
+        if (moduleKey === 'life') {
+            var approval = el('label', 'asset-tree-check');
+            var approvalBox = document.createElement('input');
+            approvalBox.type = 'checkbox';
+            approvalBox.checked = setup.lifeApproval;
+            approval.appendChild(approvalBox);
+            approval.appendChild(document.createTextNode(t('setupApproval')));
+            var approver = document.createElement('input');
+            approver.value = setup.lifeApprover || '';
+            approver.setAttribute('aria-label', t('setupApprover'));
+            var currency = document.createElement('select');
+            ['RUB', 'USD', 'EUR'].forEach(function (code) {
+                var option = document.createElement('option');
+                option.value = code;
+                option.textContent = code;
+                currency.appendChild(option);
+            });
+            currency.value = setup.lifeCurrency || 'RUB';
+            var months = document.createElement('input');
+            months.type = 'number';
+            months.min = '0';
+            months.max = '600';
+            months.value = String(setup.lifeMonths || 0);
+            panel.appendChild(approval);
+            panel.appendChild(button(t('schedulesMe'), 'asset-tree-btn slim', function () {
+                approver.value = state.userKey || '';
+            }));
+            panel.appendChild(planField(t('setupApprover'), approver));
+            panel.appendChild(planField(t('setupCurrency'), currency));
+            panel.appendChild(planField(t('setupMonths'), months));
+            panel.appendChild(button(t('setupSave'), 'asset-tree-btn', function () {
+                var next = moduleSetup();
+                next.lifeApproval = approvalBox.checked;
+                next.lifeApprover = approver.value.trim();
+                next.lifeCurrency = currency.value;
+                next.lifeMonths = clampNum(months.value, 0, 600);
+                saveSetup(next);
+            }));
+        }
+        return panel;
+    }
+
     function saveProjectView(patch, done) {
         setBusy(true);
         ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/view', patch, function (status, payload) {
-            setBusy(false);
             if (status < 200 || status >= 300) {
+                setBusy(false);
                 notify((payload && payload.message) || t('errorTitle'));
+                if (done) done(false);
                 return;
             }
             var project = currentProject();
             if (project && payload) {
-                project.treeObjects = !!payload.treeObjects;
-                project.columns = payload.columns || [];
+                if (payload.treeObjects != null) project.treeObjects = !!payload.treeObjects;
+                if (payload.columns) project.columns = payload.columns;
+                if (payload.modules) project.modules = payload.modules;
+                if (payload.setup) project.setup = payload.setup;
             }
-            if (done) done();
+            setBusy(false);
+            if (done) done(true);
             notify(t('viewSaved'));
         });
     }
@@ -10265,20 +10905,21 @@
         var project = currentProject();
         var name = project ? (project.name || project.key) : state.projectKey;
         panel.appendChild(el('h2', null, t('settingsProject', name)));
-        if (state.schemaTab !== 'portal') panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
+        panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
         if (!state.canConfigure && !state.canGrant && !state.canObjects) {
             panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
             return panel;
         }
         var sections = [];
+        if (state.canConfigure) {
+            sections.push(['project', t('projectSection'), null]);
+        }
         if (state.canObjects) {
             sections.push(['exchange', t('exchangeSection'), null]);
         }
         if (state.canConfigure) {
             sections.push(['statuses', t('statusSection'), (state.statuses || []).length]);
             sections.push(['types', t('typesSection'), state.types.length]);
-            sections.push(['card', t('cardSection'), null]);
-            sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
@@ -10311,23 +10952,2492 @@
             tabs.appendChild(tab);
         });
         panel.appendChild(tabs);
-        if (state.schemaTab === 'portal') panel.classList.add('is-portal');
         if (state.schemaTab === 'types') {
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
-        } else if (state.schemaTab === 'card') {
-            renderCardSettings(panel);
         } else if (state.schemaTab === 'exchange') {
             renderExchangeSettings(panel);
-        } else if (state.schemaTab === 'portal') {
-            renderPortalSettings(panel);
         } else if (state.schemaTab === 'access') {
             renderAccessSettings(panel);
+        } else if (state.schemaTab === 'project') {
+            renderProjectSettings(panel);
         } else {
             renderStatusSettings(panel);
         }
         return panel;
+    }
+
+    function renderProjectSettings(panel) {
+        var project = currentProject();
+        var current = projectAssetKey(project);
+        var allowed = !!state.canArrange;
+        panel.appendChild(el('p', 'asset-tree-hint', t('projectSectionHint')));
+        var stack = el('div', 'asset-tree-project-stack');
+
+        var keyCard = el('section', 'asset-tree-project-card');
+        keyCard.appendChild(el('h3', 'asset-tree-settings-title', t('assetKeyTitle')));
+        keyCard.appendChild(el('p', 'asset-tree-hint', current ? t('assetKeyCurrent', current) : t('assetKeyHint')));
+        if (!allowed) {
+            keyCard.appendChild(el('p', 'asset-tree-hint', t('assetKeyDenied')));
+        } else {
+            var field = el('label', 'asset-tree-key-field');
+            field.appendChild(el('span', null, t('assetKeyLabel')));
+            var input = el('input', 'asset-tree-text');
+            input.type = 'text';
+            input.id = 'asset-tree-project-key';
+            input.maxLength = 10;
+            input.autocomplete = 'off';
+            input.spellcheck = false;
+            input.placeholder = t('assetKeyPlaceholder');
+            input.value = current;
+            input.setAttribute('aria-label', t('assetKeyLabel'));
+            var example = el('p', 'asset-tree-hint', '');
+            function refreshExample() {
+                var sample = assetKeyExamplePrefix(assetKeyPreview(input.value));
+                example.textContent = sample ? t('assetKeyExample', sample) : '';
+            }
+            input.addEventListener('input', function () {
+                var next = assetKeyPreview(input.value);
+                if (input.value !== next) input.value = next;
+                refreshExample();
+            });
+            refreshExample();
+            field.appendChild(input);
+            keyCard.appendChild(field);
+            keyCard.appendChild(example);
+            var actions = el('div', 'asset-tree-inline-actions');
+            actions.appendChild(button(t('assetKeySave'), 'asset-tree-btn primary', function () {
+                saveAssetKey(input.value);
+            }));
+            keyCard.appendChild(actions);
+        }
+        stack.appendChild(keyCard);
+
+        var treeCard = el('section', 'asset-tree-project-card');
+        treeCard.appendChild(el('h3', 'asset-tree-settings-title', t('projectTreeTitle')));
+        var treeRow = el('label', 'asset-tree-check-row');
+        var tree = el('input');
+        tree.type = 'checkbox';
+        tree.checked = treeObjectsOn();
+        tree.disabled = !allowed;
+        if (!allowed) tree.setAttribute('data-disabled', '1');
+        tree.setAttribute('aria-label', t('treeObjects'));
+        tree.addEventListener('change', function () {
+            var want = tree.checked;
+            saveProjectView({ treeObjects: want }, function (ok) {
+                if (ok === false) tree.checked = !want;
+            });
+        });
+        treeRow.appendChild(tree);
+        var treeText = el('span');
+        treeText.appendChild(el('strong', null, t('treeObjects')));
+        treeText.appendChild(el('span', 'asset-tree-hint', t('treeObjectsHint')));
+        treeRow.appendChild(treeText);
+        treeCard.appendChild(treeRow);
+        stack.appendChild(treeCard);
+
+        var modules = el('section', 'asset-tree-project-card');
+        var head = el('h3', 'asset-tree-settings-title', t('modulesTitle'));
+        head.appendChild(el('span', 'asset-tree-beta', t('modulesBeta')));
+        modules.appendChild(head);
+        modules.appendChild(el('p', 'asset-tree-hint', t('modulesHint')));
+        var grid = el('div', 'asset-tree-module-grid');
+        [
+            ['service', 'moduleService', 'moduleServiceHint', 'schedules'],
+            ['map', 'moduleMap', 'moduleMapHint', 'map'],
+            ['reports', 'moduleReports', 'moduleReportsHint', 'reports'],
+            ['life', 'moduleLife', 'moduleLifeHint', ''],
+            ['portal', 'modulePortal', 'modulePortalHint', ''],
+            ['card', 'moduleCard', 'moduleCardHint', '']
+        ].forEach(function (item) {
+            var option = el('div', 'asset-tree-module-option');
+            var label = el('label');
+            var box = el('input');
+            box.type = 'checkbox';
+            box.checked = moduleOn(item[0]);
+            box.disabled = !allowed;
+            if (!allowed) box.setAttribute('data-disabled', '1');
+            box.setAttribute('aria-label', t(item[1]));
+            box.addEventListener('change', function () {
+                var want = box.checked;
+                var next = [];
+                var order = ['service', 'map', 'reports', 'life', 'portal', 'card'];
+                order.forEach(function (key) {
+                    var on = key === item[0] ? want : moduleOn(key);
+                    if (on) next.push(key);
+                });
+                saveProjectView({ modules: next }, function (ok) {
+                    if (!ok) {
+                        box.checked = !want;
+                        return;
+                    }
+                    if (!want && item[3] && state.view === item[3]) {
+                        state.view = 'settings';
+                        rememberView('settings');
+                    }
+                    mount();
+                });
+            });
+            var text = el('span');
+            text.appendChild(el('strong', null, t(item[1])));
+            text.appendChild(el('span', 'asset-tree-hint', t(item[2])));
+            label.appendChild(box);
+            label.appendChild(text);
+            option.appendChild(label);
+            if (moduleOn(item[0]) && allowed) {
+                var pencil = button('', 'asset-tree-btn slim asset-tree-module-pencil', function () {
+                    openModuleSetup(item[0]);
+                });
+                pencil.title = t('setupTitle');
+                pencil.setAttribute('aria-label', t('setupTitle'));
+                pencil.appendChild(toolIcon('edit'));
+                option.appendChild(pencil);
+            }
+            grid.appendChild(option);
+        });
+        modules.appendChild(grid);
+        stack.appendChild(modules);
+        panel.appendChild(stack);
+    }
+
+    function openListedAsset(asset) {
+        state.view = 'all';
+        state.pane = 'card';
+        state.selectedId = asset.id;
+        rememberView('all');
+        mount();
+        selectAsset(asset.id, true);
+    }
+
+    function equipmentAssets() {
+        return (state.assets || []).filter(function (asset) {
+            return asset && !isFolder(asset);
+        }).sort(function (left, right) {
+            return String(left.name || '').localeCompare(String(right.name || ''));
+        });
+    }
+
+    function placeAssets() {
+        return (state.assets || []).filter(function (asset) { return isFolder(asset); });
+    }
+
+    function parseIsoDate(value) {
+        var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+        if (!match) return null;
+        var date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+        if (date.getFullYear() !== Number(match[1]) || date.getMonth() !== Number(match[2]) - 1) return null;
+        return date;
+    }
+
+    function isoDate(date) {
+        var month = date.getMonth() + 1;
+        var day = date.getDate();
+        return date.getFullYear() + '-' + (month < 10 ? '0' : '') + month + '-' + (day < 10 ? '0' : '') + day;
+    }
+
+    function dayNumber(date) {
+        return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+    }
+
+    function shiftDays(date, count) {
+        return new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
+    }
+
+    function shiftMonths(date, count) {
+        var day = date.getDate();
+        var next = new Date(date.getFullYear(), date.getMonth() + count, 1);
+        var last = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(day, last));
+        return next;
+    }
+
+    function scheduleAnchor(first, count, unit) {
+        var parsed = parseIsoDate(first);
+        var clean = unit || '';
+        if (!parsed || clean === 'once' || count < 1) return first || '';
+        if (clean === 'day' && count <= 3650) return isoDate(shiftDays(parsed, -count));
+        if (clean === 'week' && count <= 520) return isoDate(shiftDays(parsed, -count * 7));
+        if (clean === 'month' && count <= 120) return isoDate(shiftMonths(parsed, -count));
+        if (clean === 'year' && count <= 30) return isoDate(shiftMonths(parsed, -count * 12));
+        return first || '';
+    }
+
+    function planNextDate(lastDone, count, unit) {
+        var last = parseIsoDate(lastDone);
+        if (!last || count < 1) return null;
+        if (unit === 'once' && count === 1) return last;
+        if (unit === 'day' && count <= 3650) return shiftDays(last, count);
+        if (unit === 'week' && count <= 520) return shiftDays(last, count * 7);
+        if (unit === 'month' && count <= 120) return shiftMonths(last, count);
+        if (unit === 'year' && count <= 30) return shiftMonths(last, count * 12);
+        return null;
+    }
+
+    function monthDates(plan, year, month) {
+        var count = parseInt(plan.everyCount, 10) || 0;
+        var unit = plan.everyUnit || '';
+        if (unit === 'once') {
+            var only = parseIsoDate(plan.lastDone);
+            if (!only || only.getFullYear() !== year || only.getMonth() + 1 !== month) return [];
+            return [isoDate(only)];
+        }
+        if (unit !== 'day' && unit !== 'week' && unit !== 'month' && unit !== 'year') return [];
+        var first = planNextDate(plan.lastDone, count, unit);
+        if (!first || month < 1 || month > 12) return [];
+        var start = new Date(year, month - 1, 1);
+        var end = new Date(year, month, 0);
+        var cursor = new Date(first.getTime());
+        if (dayNumber(cursor) < dayNumber(start)) {
+            if (unit === 'day' || unit === 'week') {
+                var span = unit === 'week' ? count * 7 : count;
+                var steps = Math.floor((dayNumber(start) - dayNumber(first)) / span);
+                cursor = shiftDays(first, steps * span);
+                if (dayNumber(cursor) < dayNumber(start)) cursor = shiftDays(cursor, span);
+            } else {
+                var step = unit === 'year' ? count * 12 : count;
+                var months = (start.getFullYear() - first.getFullYear()) * 12 + (start.getMonth() - first.getMonth());
+                cursor = shiftMonths(first, Math.floor(months / step) * step);
+                var guard = 0;
+                while (dayNumber(cursor) < dayNumber(start) && guard < 24) {
+                    cursor = shiftMonths(cursor, step);
+                    guard++;
+                }
+            }
+        }
+        var found = [];
+        var seen = 0;
+        var endN = dayNumber(end);
+        var startN = dayNumber(start);
+        while (cursor && dayNumber(cursor) <= endN && seen < 40) {
+            if (dayNumber(cursor) >= startN) found.push(isoDate(cursor));
+            cursor = planNextDate(isoDate(cursor), count, unit);
+            seen++;
+        }
+        return found;
+    }
+
+    function kindName(kind) {
+        if (kind === 'kts') return t('kindKts');
+        if (kind === 'verify') return t('kindVerify');
+        return t('kindTo');
+    }
+
+    function kindLong(kind) {
+        if (kind === 'kts') return t('kindKtsLong');
+        if (kind === 'verify') return t('kindVerifyLong');
+        return t('kindToLong');
+    }
+
+    function kindColor(kind) {
+        if (kind === 'kts') return '#FF8B00';
+        if (kind === 'verify') return '#6554C0';
+        return '#0052CC';
+    }
+
+    function monthTitle(year, month) {
+        var locale = String(state.locale || 'ru').toLowerCase().indexOf('en') === 0 ? 'en-US' : 'ru-RU';
+        try {
+            return new Date(year, month - 1, 1).toLocaleDateString(locale, { month: 'long', year: 'numeric' });
+        } catch (error) {
+            return year + '-' + month;
+        }
+    }
+
+    function weekdayLabels() {
+        var locale = String(state.locale || 'ru').toLowerCase().indexOf('en') === 0 ? 'en-US' : 'ru-RU';
+        var labels = [];
+        var day;
+        for (day = 0; day < 7; day++) {
+            try {
+                labels.push(new Date(2026, 0, 5 + day).toLocaleDateString(locale, { weekday: 'short' }));
+            } catch (error) {
+                labels.push('');
+            }
+        }
+        return labels;
+    }
+
+    function assetPlaceName(asset) {
+        var guard = 0;
+        var current = asset;
+        while (current && current.parentId && guard < 20) {
+            var parent = byId()[current.parentId];
+            if (!parent) return '';
+            if (isFolder(parent)) return parent.name || '';
+            current = parent;
+            guard++;
+        }
+        return '';
+    }
+
+    function sheetHead(titleKey, hintKey) {
+        var head = el('div', 'asset-tree-sheet-head');
+        var title = el('h2', null, t(titleKey));
+        title.appendChild(el('span', 'asset-tree-beta', t('modulesBeta')));
+        head.appendChild(title);
+        return head;
+    }
+
+    function loadSchedules() {
+        if (state.scheduleLoading) return;
+        state.scheduleLoading = true;
+        var token = ++state.scheduleToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/schedule', null, function (status, payload) {
+            if (token !== state.scheduleToken) return;
+            state.scheduleLoading = false;
+            if (status === 200 && Object.prototype.toString.call(payload) === '[object Array]') {
+                state.scheduleRows = payload;
+                state.scheduleError = '';
+            } else {
+                state.scheduleRows = [];
+                state.scheduleError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'schedules') renderFrame();
+        });
+    }
+
+    function scheduleVisible(plan) {
+        if (state.scheduleKindFilter && plan.kind !== state.scheduleKindFilter) return false;
+        if (state.schedulePersonFilter === '__none__') return !plan.assigneeKey;
+        if (state.schedulePersonFilter && plan.assigneeKey !== state.schedulePersonFilter) return false;
+        return true;
+    }
+
+    function datesInRange(plan, start, end) {
+        var found = [];
+        var cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+        var last = new Date(end.getFullYear(), end.getMonth(), 1);
+        while (cursor <= last) {
+            monthDates(plan, cursor.getFullYear(), cursor.getMonth() + 1).forEach(function (iso) {
+                var day = parseIsoDate(iso);
+                if (day && dayNumber(day) >= dayNumber(start) && dayNumber(day) <= dayNumber(end)) found.push(iso);
+            });
+            cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        }
+        return found;
+    }
+
+    function scheduleStats() {
+        var plans = (state.scheduleRows || []).filter(scheduleVisible);
+        var overdue = 0;
+        var monthCount = 0;
+        var weekCount = 0;
+        var done = 0;
+        var now = new Date();
+        var weekStart = shiftDays(now, -((now.getDay() + 6) % 7));
+        var weekEnd = shiftDays(weekStart, 6);
+        var monthPrefix = state.scheduleYear + '-' + (state.scheduleMonth < 10 ? '0' : '') + state.scheduleMonth;
+        plans.forEach(function (plan) {
+            if (plan.due) overdue++;
+            if (plan.completedOn && String(plan.completedOn).indexOf(monthPrefix) === 0) done++;
+            monthCount += monthDates(plan, state.scheduleYear, state.scheduleMonth).length;
+            weekCount += datesInRange(plan, weekStart, weekEnd).length;
+        });
+        return { overdue: overdue, monthCount: monthCount, weekCount: weekCount, done: done };
+    }
+
+    function renderSchedules() {
+        if (!state.scheduleYear) {
+            var now = new Date();
+            state.scheduleYear = now.getFullYear();
+            state.scheduleMonth = now.getMonth() + 1;
+        }
+        var panel = el('section', 'asset-tree-sheet');
+        var head = sheetHead('schedulesPageTitle');
+        if (state.canEdit) {
+            head.appendChild(button(t('schedulesNew'), 'asset-tree-btn primary', openScheduleDialog));
+        }
+        panel.appendChild(head);
+        panel.appendChild(el('p', 'asset-tree-hint', t(state.scheduleMode === 'staff' ? 'staffHint' : 'schedulesHint')));
+        if (state.scheduleRows == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadSchedules();
+            return panel;
+        }
+        if (state.scheduleError) panel.appendChild(el('p', 'asset-tree-hint', state.scheduleError));
+        var kpis = el('div', 'asset-tree-kpis');
+        if (state.scheduleMode === 'staff') {
+            var sum = staffMonthSum();
+            var daysCard = kpiCard(String(sum.days), t('staffDaysLabel'), '');
+            daysCard.appendChild(el('span', 'asset-tree-kpi-sub', monthTitle(state.scheduleYear, state.scheduleMonth)));
+            kpis.appendChild(daysCard);
+            kpis.appendChild(kpiCard(String(sum.hours), t('staffHoursLabel'), ''));
+            kpis.appendChild(kpiCard(String(sum.leave), t('staffLeaveLabel'), ''));
+        } else {
+            var stats = scheduleStats();
+            kpis.appendChild(kpiCard(String(stats.overdue), t('schedulesOverdue'), stats.overdue ? 'is-alert' : ''));
+            var week = kpiCard(String(stats.weekCount), t('schedulesWeek'), '');
+            week.appendChild(el('span', 'asset-tree-kpi-sub', stats.monthCount + ' ' + t('schedulesPlanned') + ' · ' + monthTitle(state.scheduleYear, state.scheduleMonth)));
+            kpis.appendChild(week);
+            kpis.appendChild(kpiCard(String(stats.done), t('schedulesDoneMonth'), ''));
+        }
+        panel.appendChild(kpis);
+        panel.appendChild(scheduleToolbar());
+        if (state.scheduleMode === 'list') panel.appendChild(scheduleTable());
+        else if (state.scheduleMode === 'people') panel.appendChild(schedulePeople());
+        else if (state.scheduleMode === 'staff') panel.appendChild(scheduleStaff());
+        else panel.appendChild(scheduleCalendar());
+        return panel;
+    }
+
+    function kpiCard(value, label, extra) {
+        var card = el('div', 'asset-tree-kpi' + (extra ? ' ' + extra : ''));
+        card.appendChild(el('strong', null, value));
+        card.appendChild(el('span', null, label));
+        return card;
+    }
+
+    function scheduleToolbar() {
+        var bar = el('div', 'asset-tree-sheet-bar');
+        var seg = el('div', 'asset-tree-seg');
+        [['calendar', 'schedulesCalendar'], ['list', 'schedulesList'], ['people', 'schedulesPeople'], ['staff', 'schedulesStaff']].forEach(function (pair) {
+            var item = button(t(pair[1]), 'asset-tree-seg-btn' + (state.scheduleMode === pair[0] ? ' is-on' : ''), function () {
+                state.scheduleMode = pair[0];
+                renderFrame();
+            });
+            seg.appendChild(item);
+        });
+        bar.appendChild(seg);
+        var nav = el('div', 'asset-tree-calendar-nav');
+        nav.appendChild(button('\u2039', 'asset-tree-btn slim', function () { shiftScheduleMonth(-1); }));
+        nav.appendChild(el('strong', 'asset-tree-calendar-title', monthTitle(state.scheduleYear, state.scheduleMonth)));
+        nav.appendChild(button(t('schedulesToday'), 'asset-tree-btn slim', function () {
+            var now = new Date();
+            state.scheduleYear = now.getFullYear();
+            state.scheduleMonth = now.getMonth() + 1;
+            renderFrame();
+        }));
+        nav.appendChild(button('\u203A', 'asset-tree-btn slim', function () { shiftScheduleMonth(1); }));
+        bar.appendChild(nav);
+        if (state.scheduleMode !== 'staff') {
+            bar.appendChild(scheduleKindSelect());
+            bar.appendChild(schedulePersonSelect());
+        }
+        return bar;
+    }
+
+    function shiftScheduleMonth(delta) {
+        state.scheduleMonth += delta;
+        if (state.scheduleMonth < 1) {
+            state.scheduleMonth = 12;
+            state.scheduleYear -= 1;
+        }
+        if (state.scheduleMonth > 12) {
+            state.scheduleMonth = 1;
+            state.scheduleYear += 1;
+        }
+        renderFrame();
+    }
+
+    function scheduleKindSelect() {
+        var select = document.createElement('select');
+        select.className = 'asset-tree-filter';
+        select.setAttribute('aria-label', t('schedulesKind'));
+        var all = document.createElement('option');
+        all.value = '';
+        all.textContent = t('schedulesAllKinds');
+        select.appendChild(all);
+        enabledKinds().forEach(function (key) {
+            var labels = { to: 'kindTo', kts: 'kindKts', verify: 'kindVerify' };
+            var option = document.createElement('option');
+            option.value = key;
+            option.textContent = t(labels[key]);
+            select.appendChild(option);
+        });
+        select.value = state.scheduleKindFilter || '';
+        select.addEventListener('change', function () {
+            state.scheduleKindFilter = select.value;
+            renderFrame();
+        });
+        return select;
+    }
+
+    function schedulePersonSelect() {
+        var select = document.createElement('select');
+        select.className = 'asset-tree-filter';
+        select.setAttribute('aria-label', t('schedulesAssignee'));
+        var all = document.createElement('option');
+        all.value = '';
+        all.textContent = t('schedulesAllPeople');
+        select.appendChild(all);
+        var none = document.createElement('option');
+        none.value = '__none__';
+        none.textContent = t('schedulesNobody');
+        select.appendChild(none);
+        var seen = {};
+        (state.scheduleRows || []).forEach(function (plan) {
+            if (!plan.assigneeKey || seen[plan.assigneeKey]) return;
+            seen[plan.assigneeKey] = true;
+            var option = document.createElement('option');
+            option.value = plan.assigneeKey;
+            option.textContent = plan.assigneeName || plan.assigneeKey;
+            select.appendChild(option);
+        });
+        select.value = state.schedulePersonFilter || '';
+        select.addEventListener('change', function () {
+            state.schedulePersonFilter = select.value;
+            renderFrame();
+        });
+        return select;
+    }
+
+    function scheduleCalendar() {
+        var byDay = {};
+        (state.scheduleRows || []).filter(scheduleVisible).forEach(function (plan) {
+            monthDates(plan, state.scheduleYear, state.scheduleMonth).forEach(function (iso) {
+                if (!byDay[iso]) byDay[iso] = [];
+                byDay[iso].push(plan);
+            });
+        });
+        var grid = el('div', 'asset-tree-calendar');
+        weekdayLabels().forEach(function (label) {
+            grid.appendChild(el('div', 'asset-tree-weekday', label));
+        });
+        var start = new Date(state.scheduleYear, state.scheduleMonth - 1, 1);
+        var days = new Date(state.scheduleYear, state.scheduleMonth, 0).getDate();
+        var lead = (start.getDay() + 6) % 7;
+        var total = Math.ceil((lead + days) / 7) * 7;
+        var today = isoDate(new Date());
+        var index;
+        for (index = 0; index < total; index++) {
+            var date = shiftDays(start, index - lead);
+            var iso = isoDate(date);
+            var inMonth = date.getMonth() === start.getMonth();
+            var cell = el('div', 'asset-tree-day' + (inMonth ? '' : ' is-out') + (iso === today ? ' is-today' : ''));
+            cell.appendChild(el('span', 'asset-tree-day-num', String(date.getDate())));
+            if (inMonth) {
+                (byDay[iso] || []).forEach(function (plan) {
+                    var day = iso;
+                    var focused = state.scheduleFocusAsset && plan.assetId === state.scheduleFocusAsset;
+                    var label = kindName(plan.kind);
+                    if (plan.name) label += ' · ' + plan.name;
+                    var chip = button(label, 'asset-tree-bar-event' + (focused ? ' is-focus' : ''), function () { openPlanEvent(plan, day); });
+                    chip.style.background = kindColor(plan.kind);
+                    chip.title = (plan.name || kindLong(plan.kind)) + (plan.assetName ? ' · ' + plan.assetName : '');
+                    cell.appendChild(chip);
+                });
+            }
+            grid.appendChild(cell);
+        }
+        return grid;
+    }
+
+    function scheduleTable() {
+        var table = el('table', 'asset-tree-sheet-table');
+        var head = el('tr');
+        [t('schedulesFirst'), t('schedulesKind'), t('name'), t('schedulesAssets'), t('schedulesAssignee'), t('schedulesWhat')].forEach(function (label) {
+            head.appendChild(el('th', null, label));
+        });
+        table.appendChild(head);
+        (state.scheduleRows || []).filter(scheduleVisible).forEach(function (plan) {
+            var row = el('tr');
+            var when = plan.nextDue || plan.lastDone || '';
+            if (plan.startTime) when += ' ' + plan.startTime + (plan.endTime ? '–' + plan.endTime : '');
+            row.appendChild(el('td', null, formatFieldDate(when) || when));
+            row.appendChild(el('td', null, kindName(plan.kind)));
+            var name = el('td');
+            name.appendChild(button(plan.name || kindLong(plan.kind), 'asset-tree-linkish', function () {
+                openPlanEvent(plan, plan.nextDue || plan.lastDone || '');
+            }));
+            row.appendChild(name);
+            row.appendChild(el('td', null, (plan.assetName || '') + (plan.objectKey ? ' · ' + plan.objectKey : '')));
+            row.appendChild(el('td', null, plan.assigneeName || t('schedulesNobody')));
+            row.appendChild(el('td', null, plan.note || ''));
+            table.appendChild(row);
+        });
+        return table;
+    }
+
+    function schedulePeople() {
+        var groups = {};
+        var order = [];
+        (state.scheduleRows || []).filter(scheduleVisible).forEach(function (plan) {
+            var key = plan.assigneeKey || '';
+            if (!groups[key]) {
+                groups[key] = [];
+                order.push(key);
+            }
+            groups[key].push(plan);
+        });
+        var wrap = el('div', 'asset-tree-people');
+        if (!order.length) wrap.appendChild(el('p', 'asset-tree-hint', t('schedulesEmpty')));
+        order.forEach(function (key) {
+            var block = el('section', 'asset-tree-people-group');
+            var sample = groups[key][0];
+            block.appendChild(el('h3', null, key ? (sample.assigneeName || key) : t('schedulesNobody')));
+            groups[key].forEach(function (plan) {
+                var line = button(kindName(plan.kind) + ' · ' + (plan.assetName || plan.name || '') + (plan.nextDue ? ' · ' + formatFieldDate(plan.nextDue) : ''), 'asset-tree-people-line', function () {
+                    openPlanEvent(plan, plan.nextDue || plan.lastDone || '');
+                });
+                block.appendChild(line);
+            });
+            wrap.appendChild(block);
+        });
+        return wrap;
+    }
+
+    function loadStaff() {
+        if (state.staffLoading) return;
+        state.staffLoading = true;
+        var token = ++state.staffToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/staff', null, function (status, payload) {
+            if (token !== state.staffToken) return;
+            state.staffLoading = false;
+            if (status === 200 && Object.prototype.toString.call(payload) === '[object Array]') {
+                state.staffRows = payload;
+                state.staffError = '';
+            } else {
+                state.staffRows = [];
+                state.staffError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'schedules' && state.scheduleMode === 'staff') renderFrame();
+        });
+    }
+
+    function reloadStaff() {
+        state.staffRows = null;
+        state.staffLoading = false;
+        state.staffToken++;
+        if (state.view === 'schedules') renderFrame();
+    }
+
+    function staffHas(userKey) {
+        var rows = state.staffRows || [];
+        var index;
+        for (index = 0; index < rows.length; index++) {
+            if (rows[index].userKey === userKey && rows[index].kind === 'hours') return true;
+        }
+        return false;
+    }
+
+    function staffGroups() {
+        var people = {};
+        var order = [];
+        (state.staffRows || []).forEach(function (row) {
+            if (!row || !row.userKey || !people[row.userKey]) {
+                if (!row || !row.userKey) return;
+                people[row.userKey] = { userKey: row.userKey, userName: row.userName || row.userKey, hours: null, leaves: [] };
+                order.push(row.userKey);
+            }
+            if (row.kind === 'leave') people[row.userKey].leaves.push(row);
+            else if (row.kind === 'hours') {
+                people[row.userKey].hours = row;
+                if (row.userName) people[row.userKey].userName = row.userName;
+            }
+        });
+        order = order.filter(function (key) { return !!people[key].hours; });
+        order.sort(function (left, right) {
+            return String(people[left].userName).localeCompare(String(people[right].userName));
+        });
+        return { people: people, order: order };
+    }
+
+    function staffTally(weekdays, hours, leaves, year, month) {
+        var count = new Date(year, month, 0).getDate();
+        var work = 0;
+        var away = 0;
+        var day;
+        for (day = 1; day <= count; day++) {
+            var date = new Date(year, month - 1, day);
+            var iso = isoDate(date);
+            var onLeave = false;
+            var index;
+            for (index = 0; index < leaves.length; index++) {
+                var start = leaves[index].startOn || '';
+                var end = leaves[index].endOn || '';
+                if (start && end && iso >= start && iso <= end) {
+                    onLeave = true;
+                    break;
+                }
+            }
+            if (onLeave) away++;
+            else if (weekdays & (1 << ((date.getDay() + 6) % 7))) work++;
+        }
+        var per = parseInt(hours, 10) || 0;
+        if (per < 0) per = 0;
+        if (per > 24) per = 24;
+        return { days: work, hours: work * per, leave: away };
+    }
+
+    function staffMonthSum() {
+        var grouped = staffGroups();
+        var days = 0;
+        var hours = 0;
+        var leave = 0;
+        grouped.order.forEach(function (key) {
+            var person = grouped.people[key];
+            if (!person.hours) return;
+            var tally = staffTally(person.hours.weekdays, person.hours.hours, person.leaves, state.scheduleYear, state.scheduleMonth);
+            days += tally.days;
+            hours += tally.hours;
+            leave += tally.leave;
+        });
+        return { days: days, hours: hours, leave: leave };
+    }
+
+    function saveStaffHours(userKey, weekdays, hours) {
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/staff', {
+            userKey: userKey,
+            weekdays: weekdays,
+            hours: hours
+        }, function (status, payload) {
+            if (status >= 200 && status < 300) reloadStaff();
+            else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function staffFinder() {
+        var box = el('div', 'asset-tree-staff-find');
+        box.appendChild(el('span', null, t('staffAdd')));
+        var query = document.createElement('input');
+        query.type = 'search';
+        query.placeholder = t('schedulesFindUser');
+        query.setAttribute('aria-label', t('staffAdd'));
+        var hits = el('div', 'asset-tree-staff-hits');
+        var timer = null;
+        query.addEventListener('input', function () {
+            clearTimeout(timer);
+            var value = query.value;
+            timer = setTimeout(function () {
+                hits.innerHTML = '';
+                if (!value.trim()) return;
+                ajax('GET', '/users?q=' + encodeURIComponent(value.trim()), null, function (status, payload) {
+                    hits.innerHTML = '';
+                    if (status !== 200) return;
+                    (payload || []).forEach(function (user) {
+                        hits.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                            if (!staffHas(user.userKey)) saveStaffHours(user.userKey, 31, 8);
+                            hits.innerHTML = '';
+                            query.value = '';
+                        }));
+                    });
+                });
+            }, 200);
+        });
+        box.appendChild(query);
+        box.appendChild(hits);
+        return box;
+    }
+
+    function staffCard(person) {
+        var row = person.hours || { weekdays: 31, hours: 8, id: 0 };
+        var tally = staffTally(row.weekdays, row.hours, person.leaves, state.scheduleYear, state.scheduleMonth);
+        var card = el('section', 'asset-tree-staff-card');
+        var head = el('div', 'asset-tree-staff-head');
+        head.appendChild(el('strong', null, person.userName));
+        head.appendChild(el('span', 'asset-tree-staff-tally', t('staffDaysCount', tally.days) + ' · ' + t('staffHoursCount', tally.hours) + ' · ' + t('staffLeaveCount', tally.leave)));
+        if (state.canEdit && row.id) {
+            head.appendChild(button(t('staffRemove'), 'asset-tree-btn slim', function () {
+                if (!window.confirm(t('staffRemoveConfirm', person.userName))) return;
+                ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/' + row.id, null, function (status, payload) {
+                    if (status >= 200 && status < 300) reloadStaff();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+        }
+        card.appendChild(head);
+        var days = el('div', 'asset-tree-staff-days');
+        var labels = weekdayLabels();
+        var bit;
+        for (bit = 0; bit < 7; bit++) {
+            var on = !!(row.weekdays & (1 << bit));
+            (function (index, pressed) {
+                var toggle = button(labels[index] || String(index + 1), 'asset-tree-day-toggle' + (pressed ? ' is-on' : ''), function () {
+                    if (!state.canEdit || !person.hours) return;
+                    var next = person.hours.weekdays ^ (1 << index);
+                    if (next < 1 || next > 127) return;
+                    saveStaffHours(person.userKey, next, person.hours.hours || 8);
+                });
+                toggle.disabled = !state.canEdit;
+                toggle.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+                days.appendChild(toggle);
+            })(bit, on);
+        }
+        card.appendChild(days);
+        var hoursField = el('label', 'asset-tree-staff-hours');
+        hoursField.appendChild(el('span', null, t('staffHours')));
+        var hours = document.createElement('input');
+        hours.type = 'number';
+        hours.min = '1';
+        hours.max = '24';
+        hours.value = String(row.hours || 8);
+        hours.disabled = !state.canEdit;
+        hours.setAttribute('aria-label', t('staffHours'));
+        hours.addEventListener('change', function () {
+            if (!person.hours) return;
+            var value = parseInt(hours.value, 10) || 0;
+            if (value < 1 || value > 24) {
+                hours.value = String(person.hours.hours || 8);
+                return;
+            }
+            if (value !== person.hours.hours) saveStaffHours(person.userKey, person.hours.weekdays, value);
+        });
+        hoursField.appendChild(hours);
+        card.appendChild(hoursField);
+        person.leaves.forEach(function (leave) {
+            var line = el('div', 'asset-tree-staff-leave');
+            line.appendChild(el('span', null, t('staffLeave') + ' ' + formatFieldDate(leave.startOn) + ' \u2013 ' + formatFieldDate(leave.endOn)));
+            if (state.canEdit) {
+                line.appendChild(button(t('delete'), 'asset-tree-btn slim', function () {
+                    ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/' + leave.id, null, function (status, payload) {
+                        if (status >= 200 && status < 300) reloadStaff();
+                        else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            card.appendChild(line);
+        });
+        if (state.canEdit && person.hours) {
+            var add = el('div', 'asset-tree-staff-leave');
+            var from = document.createElement('input');
+            from.type = 'date';
+            from.setAttribute('aria-label', t('staffLeaveFrom'));
+            var to = document.createElement('input');
+            to.type = 'date';
+            to.setAttribute('aria-label', t('staffLeaveTo'));
+            var start = isoDate(new Date(state.scheduleYear, state.scheduleMonth - 1, 1));
+            from.value = start;
+            to.value = start;
+            add.appendChild(el('span', null, t('staffLeave')));
+            add.appendChild(from);
+            add.appendChild(to);
+            add.appendChild(button(t('staffLeaveAdd'), 'asset-tree-btn slim', function () {
+                if (!from.value || !to.value) return;
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/staff/leave', {
+                    userKey: person.userKey,
+                    startOn: from.value,
+                    endOn: to.value
+                }, function (status, payload) {
+                    if (status >= 200 && status < 300) reloadStaff();
+                    else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            card.appendChild(add);
+        }
+        return card;
+    }
+
+    function scheduleStaff() {
+        var wrap = el('div', 'asset-tree-staff');
+        if (state.staffRows == null) {
+            wrap.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadStaff();
+            return wrap;
+        }
+        if (state.staffError) wrap.appendChild(el('p', 'asset-tree-hint', state.staffError));
+        if (state.canEdit) wrap.appendChild(staffFinder());
+        var grouped = staffGroups();
+        if (!grouped.order.length) wrap.appendChild(el('p', 'asset-tree-hint', t('staffEmpty')));
+        grouped.order.forEach(function (key) {
+            wrap.appendChild(staffCard(grouped.people[key]));
+        });
+        return wrap;
+    }
+
+    function openPlanEvent(plan, iso) {
+        openModal(function (dialog) {
+            dialog.className += ' asset-tree-work-dialog';
+            dialog.appendChild(el('h2', null, plan.name || kindLong(plan.kind)));
+            dialog.appendChild(el('p', null, kindLong(plan.kind) + ' · ' + (plan.assetName || '') + (plan.objectKey ? ' · ' + plan.objectKey : '')));
+            var meta = formatFieldDate(iso || plan.nextDue || '');
+            if (plan.startTime) meta += ' · ' + plan.startTime + (plan.endTime ? '–' + plan.endTime : '');
+            if (plan.assigneeName) meta += ' · ' + plan.assigneeName;
+            dialog.appendChild(el('p', null, meta));
+            if (plan.note) dialog.appendChild(el('p', null, plan.note));
+            var actions = el('div', 'asset-tree-inline-actions');
+            if (state.canEdit && !plan.completed) {
+                actions.appendChild(button(t('serviceDone'), 'asset-tree-btn primary', function () {
+                    ajax('PUT', '/assets/' + plan.assetId + '/plans/' + plan.id, { done: true }, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            closeModal();
+                            state.scheduleRows = null;
+                            state.scheduleLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            if (state.canEdit) {
+                actions.appendChild(button(t('delete'), 'asset-tree-btn', function () {
+                    if (!window.confirm(t('serviceDeleteConfirm', plan.name || kindName(plan.kind)))) return;
+                    ajax('DELETE', '/assets/' + plan.assetId + '/plans/' + plan.id, null, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            closeModal();
+                            state.scheduleRows = null;
+                            state.scheduleLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+            actions.appendChild(button(plan.assetName || t('open'), 'asset-tree-btn', function () {
+                closeModal();
+                var asset = byId()[plan.assetId];
+                if (asset) openListedAsset(asset);
+            }));
+            actions.appendChild(button(t('close'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function openScheduleDialog() {
+        var draft = {
+            name: '', kind: 'to', first: isoDate(new Date()), allDay: true, startTime: '', endTime: '',
+            repeat: 'once', assigneeKey: '', assigneeName: '', assetIds: {}, note: '', assetQuery: ''
+        };
+        openModal(function (dialog) {
+            dialog.className += ' asset-tree-work-dialog';
+            dialog.appendChild(el('h2', null, t('schedulesNew')));
+            var kind = document.createElement('select');
+            var longLabels = { to: 'kindToLong', kts: 'kindKtsLong', verify: 'kindVerifyLong' };
+            enabledKinds().forEach(function (key) {
+                var option = document.createElement('option');
+                option.value = key;
+                option.textContent = t(longLabels[key]);
+                kind.appendChild(option);
+            });
+            kind.value = enabledKinds()[0] || 'to';
+            var name = document.createElement('input');
+            name.placeholder = t('name');
+            name.setAttribute('aria-label', t('name'));
+            var first = document.createElement('input');
+            first.type = 'date';
+            first.value = draft.first;
+            var allDay = document.createElement('input');
+            allDay.type = 'radio';
+            allDay.name = 'asset-tree-when';
+            allDay.checked = true;
+            var ranged = document.createElement('input');
+            ranged.type = 'radio';
+            ranged.name = 'asset-tree-when';
+            var startTime = document.createElement('input');
+            startTime.type = 'time';
+            var endTime = document.createElement('input');
+            endTime.type = 'time';
+            startTime.disabled = true;
+            endTime.disabled = true;
+            allDay.addEventListener('change', function () {
+                draft.allDay = true;
+                startTime.disabled = true;
+                endTime.disabled = true;
+            });
+            ranged.addEventListener('change', function () {
+                draft.allDay = false;
+                startTime.disabled = false;
+                endTime.disabled = false;
+            });
+            var timeRow = el('div', 'asset-tree-time-row');
+            var allLabel = el('label', 'asset-tree-check');
+            allLabel.appendChild(allDay);
+            allLabel.appendChild(document.createTextNode(t('schedulesAllDay')));
+            var rangeLabel = el('label', 'asset-tree-check');
+            rangeLabel.appendChild(ranged);
+            rangeLabel.appendChild(startTime);
+            rangeLabel.appendChild(endTime);
+            timeRow.appendChild(allLabel);
+            timeRow.appendChild(rangeLabel);
+            var repeat = document.createElement('select');
+            [['once', 'schedulesOnce'], ['day', 'schedulesEachDay'], ['week', 'schedulesEachWeek'], ['month', 'schedulesEachMonth'], ['year', 'schedulesEachYear']].forEach(function (pair) {
+                var option = document.createElement('option');
+                option.value = pair[0];
+                option.textContent = t(pair[1]);
+                repeat.appendChild(option);
+            });
+            repeat.value = moduleSetup().scheduleUnit || 'once';
+            if (!repeat.value) repeat.value = 'once';
+            var nobody = document.createElement('input');
+            nobody.type = 'radio';
+            nobody.name = 'asset-tree-who';
+            nobody.checked = true;
+            var mine = document.createElement('input');
+            mine.type = 'radio';
+            mine.name = 'asset-tree-who';
+            var who = el('div', 'asset-tree-time-row');
+            var nobodyLabel = el('label', 'asset-tree-check');
+            nobodyLabel.appendChild(nobody);
+            nobodyLabel.appendChild(document.createTextNode(t('schedulesNobody')));
+            var mineLabel = el('label', 'asset-tree-check');
+            mineLabel.appendChild(mine);
+            mineLabel.appendChild(document.createTextNode(t('schedulesMe')));
+            who.appendChild(nobodyLabel);
+            who.appendChild(mineLabel);
+            var chosen = el('div', 'asset-tree-userpick-name', '');
+            nobody.addEventListener('change', function () {
+                draft.assigneeKey = '';
+                draft.assigneeName = '';
+                chosen.textContent = '';
+            });
+            mine.addEventListener('change', function () {
+                draft.assigneeKey = state.userKey || '';
+                draft.assigneeName = state.displayName || '';
+                chosen.textContent = draft.assigneeName;
+            });
+            var finder = document.createElement('input');
+            finder.type = 'search';
+            finder.placeholder = t('schedulesFindUser');
+            var hits = el('div', 'asset-tree-user-results');
+            var timer = null;
+            var seq = 0;
+            finder.addEventListener('input', function () {
+                clearTimeout(timer);
+                timer = setTimeout(function () {
+                    var query = finder.value.trim();
+                    var mark = ++seq;
+                    hits.innerHTML = '';
+                    if (query.length < 2) return;
+                    ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                        if (mark !== seq) return;
+                        hits.innerHTML = '';
+                        (payload || []).forEach(function (user) {
+                            hits.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                                draft.assigneeKey = user.userKey;
+                                draft.assigneeName = user.displayName;
+                                chosen.textContent = user.displayName;
+                                nobody.checked = false;
+                                mine.checked = false;
+                                hits.innerHTML = '';
+                            }));
+                        });
+                    });
+                }, 200);
+            });
+            var assetQuery = document.createElement('input');
+            assetQuery.type = 'search';
+            assetQuery.placeholder = t('schedulesFindAssets');
+            var assets = el('div', 'asset-tree-schedule-assets');
+            function paintAssets() {
+                assets.innerHTML = '';
+                var needle = assetQuery.value.trim().toLowerCase();
+                equipmentAssets().forEach(function (asset) {
+                    var place = assetPlaceName(asset);
+                    var typeLabel = typeFor(asset).label || '';
+                    var blob = (asset.name || '') + ' ' + (asset.objectKey || '') + ' ' + typeLabel + ' ' + place;
+                    if (needle && blob.toLowerCase().indexOf(needle) < 0) return;
+                    var label = el('label', 'asset-tree-check asset-tree-asset-row');
+                    var box = document.createElement('input');
+                    box.type = 'checkbox';
+                    box.checked = !!draft.assetIds[asset.id];
+                    box.addEventListener('change', function () {
+                        if (box.checked) draft.assetIds[asset.id] = true;
+                        else delete draft.assetIds[asset.id];
+                    });
+                    var text = el('span');
+                    text.appendChild(el('strong', null, asset.name || asset.objectKey || ''));
+                    text.appendChild(el('span', null, (asset.objectKey || '') + (typeLabel ? ' · ' + typeLabel : '') + (place ? ' · ' + place : '')));
+                    label.appendChild(box);
+                    label.appendChild(text);
+                    assets.appendChild(label);
+                });
+            }
+            assetQuery.addEventListener('input', paintAssets);
+            paintAssets();
+            var note = document.createElement('textarea');
+            note.placeholder = t('schedulesWhat');
+            note.setAttribute('aria-label', t('schedulesWhat'));
+            dialog.appendChild(planField(t('schedulesKind'), kind));
+            dialog.appendChild(planField(t('name'), name));
+            var when = el('div', 'asset-tree-plan-field');
+            when.appendChild(el('span', null, t('schedulesFirst')));
+            var whenRow = el('div', 'asset-tree-time-row');
+            whenRow.appendChild(first);
+            whenRow.appendChild(repeat);
+            when.appendChild(whenRow);
+            dialog.appendChild(when);
+            var timeField = el('div', 'asset-tree-plan-field');
+            timeField.appendChild(el('span', null, t('schedulesTime')));
+            timeField.appendChild(timeRow);
+            dialog.appendChild(timeField);
+            var whoField = el('div', 'asset-tree-plan-field');
+            whoField.appendChild(el('span', null, t('schedulesAssignee')));
+            whoField.appendChild(who);
+            whoField.appendChild(chosen);
+            whoField.appendChild(finder);
+            whoField.appendChild(hits);
+            dialog.appendChild(whoField);
+            var assetField = el('div', 'asset-tree-plan-field');
+            assetField.appendChild(el('span', null, t('schedulesAssets')));
+            assetField.appendChild(assetQuery);
+            assetField.appendChild(assets);
+            dialog.appendChild(assetField);
+            dialog.appendChild(planField(t('schedulesWhat'), note));
+            var actions = el('div', 'asset-tree-inline-actions');
+            actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+                var ids = [];
+                Object.keys(draft.assetIds).forEach(function (id) {
+                    if (draft.assetIds[id]) ids.push(parseInt(id, 10));
+                });
+                if (!ids.length || !first.value) {
+                    notify(t('schedulesAssets'));
+                    return;
+                }
+                var body = {
+                    assetIds: ids,
+                    name: name.value.trim(),
+                    kind: kind.value,
+                    lastDone: first.value,
+                    everyCount: 1,
+                    everyUnit: repeat.value,
+                    note: note.value,
+                    notify: !!moduleSetup().scheduleNotify
+                };
+                if (!allDay.checked && startTime.value) {
+                    body.startTime = startTime.value;
+                    body.endTime = endTime.value;
+                }
+                if (draft.assigneeKey) body.assigneeKey = draft.assigneeKey;
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/schedule', body, function (status, payload) {
+                    if (status >= 200 && status < 300) {
+                        closeModal();
+                        state.scheduleRows = null;
+                        state.scheduleLoading = false;
+                        var chosenDay = parseIsoDate(first.value);
+                        if (chosenDay) {
+                            state.scheduleYear = chosenDay.getFullYear();
+                            state.scheduleMonth = chosenDay.getMonth() + 1;
+                        }
+                        renderFrame();
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function csvCell(value) {
+        var text = String(value == null ? '' : value);
+        if (/[",\n;]/.test(text)) return '"' + text.split('"').join('""') + '"';
+        return text;
+    }
+
+    function downloadReport(view) {
+        var rows = [csvCell(groupWord(view.groupBy)) + ',' + csvCell(t('reportCount')) + ',' + csvCell(t('reportShare'))];
+        var total = view.total || 0;
+        (view.rows || []).forEach(function (row) {
+            rows.push([csvCell(row.label), csvCell(row.count), csvCell(shareText(row.count, total))].join(','));
+        });
+        rows.push([csvCell(t('reportTotalRow')), csvCell(total), csvCell(shareText(total, total))].join(','));
+        var blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'report.csv';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function shareText(count, total) {
+        if (!total) return '0 %';
+        var pct = count * 100 / total;
+        var text = Math.abs(pct - Math.round(pct)) < 0.05 ? String(Math.round(pct)) : pct.toFixed(1);
+        return text + ' %';
+    }
+
+    function groupWord(group) {
+        var map = {
+            status: 'groupWordStatus', type: 'groupWordType', place: 'groupWordPlace', holder: 'groupWordHolder',
+            month: 'groupWordMonth', age: 'groupWordAge', warranty: 'groupWordWarranty', writeoff: 'groupWordWriteoff', kind: 'groupWordKind'
+        };
+        return t(map[group] || 'groupWordStatus');
+    }
+
+    function loadGallery() {
+        if (state.galleryLoading) return;
+        state.galleryLoading = true;
+        var token = ++state.galleryToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/reports', null, function (status, payload) {
+            if (token !== state.galleryToken) return;
+            state.reportCatalog = status === 200 && Object.prototype.toString.call(payload) === '[object Array]' ? payload : [];
+            fetchGalleryView(token);
+        });
+    }
+
+    function fetchGalleryView(token) {
+        var key = state.reportKey || 'status';
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/reports/' + encodeURIComponent(key), null, function (status, payload) {
+            if (token !== state.galleryToken) return;
+            state.galleryLoading = false;
+            if (status === 200 && payload) {
+                state.reportView = payload;
+                state.reportError = '';
+            } else {
+                state.reportView = null;
+                state.reportError = (payload && payload.message) || t('errorTitle');
+            }
+            if (state.view === 'reports') renderFrame();
+        });
+    }
+
+    function openGallery(id) {
+        state.reportKey = id;
+        state.reportView = null;
+        state.galleryLoading = true;
+        var token = ++state.galleryToken;
+        renderFrame();
+        fetchGalleryView(token);
+    }
+
+    function renderReports() {
+        var panel = el('section', 'asset-tree-sheet');
+        var head = sheetHead('menuReports');
+        var actions = el('div', 'asset-tree-inline-actions');
+        if (state.canEdit) actions.appendChild(button(t('reportCreate'), 'asset-tree-btn primary', openReportDialog));
+        if (state.reportView) actions.appendChild(button(t('reportCsv'), 'asset-tree-btn', function () { downloadReport(state.reportView); }));
+        head.appendChild(actions);
+        panel.appendChild(head);
+        panel.appendChild(el('p', 'asset-tree-hint', t('reportPageHint')));
+        if (state.reportCatalog == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadGallery();
+            return panel;
+        }
+        var shell = el('div', 'asset-tree-report-shell');
+        var nav = el('nav', 'asset-tree-report-nav');
+        nav.appendChild(el('span', 'asset-tree-nav-label', t('reportStandard')));
+        (state.reportCatalog || []).forEach(function (item) {
+            if (!item.standard || reportHidden(item.id)) return;
+            nav.appendChild(button(item.name, 'asset-tree-report-link' + (item.id === state.reportKey ? ' is-current' : ''), function () {
+                openGallery(item.id);
+            }));
+        });
+        var saved = (state.reportCatalog || []).filter(function (item) { return !item.standard; });
+        if (saved.length) {
+            nav.appendChild(el('span', 'asset-tree-nav-label', t('reportSavedTitle')));
+            saved.forEach(function (item) {
+                nav.appendChild(button(item.name, 'asset-tree-report-link' + (item.id === state.reportKey ? ' is-current' : ''), function () {
+                    openGallery(item.id);
+                }));
+            });
+        }
+        shell.appendChild(nav);
+        var main = el('div', 'asset-tree-report-main');
+        if (state.galleryLoading || !state.reportView) {
+            main.appendChild(el('p', 'asset-tree-hint', state.reportError || t('loading')));
+        } else {
+            var view = state.reportView;
+            main.appendChild(el('h3', null, view.title || ''));
+            main.appendChild(el('p', 'asset-tree-hint', t('reportGroupBy') + ': ' + groupWord(view.groupBy)));
+            if (view.rows && view.rows.length) {
+                var chartWrap = el('div', 'asset-tree-chart-wrap' + (view.chart === 'donut' ? ' is-donut' : ''));
+                chartWrap.appendChild(view.chart === 'donut' ? donutChart(view.rows) : barChart(view.rows));
+                if (view.chart === 'donut') {
+                    var legend = el('div', 'asset-tree-legend');
+                    legend.appendChild(el('strong', null, String(view.total || 0) + ' ' + t('reportTotalRow')));
+                    view.rows.forEach(function (row) {
+                        var line = el('span', 'asset-tree-legend-line');
+                        var swatch = el('i');
+                        swatch.style.background = row.color || '#0052CC';
+                        line.appendChild(swatch);
+                        line.appendChild(document.createTextNode((row.label || '') + ' ' + row.count));
+                        legend.appendChild(line);
+                    });
+                    chartWrap.appendChild(legend);
+                }
+                main.appendChild(chartWrap);
+            }
+            var table = el('table', 'asset-tree-sheet-table');
+            var header = el('tr');
+            header.appendChild(el('th', null, groupWord(view.groupBy)));
+            header.appendChild(el('th', null, t('reportCount')));
+            header.appendChild(el('th', null, t('reportShare')));
+            table.appendChild(header);
+            (view.rows || []).forEach(function (row) {
+                var line = el('tr');
+                line.appendChild(el('td', null, row.label || ''));
+                line.appendChild(el('td', null, String(row.count)));
+                line.appendChild(el('td', null, shareText(row.count, view.total || 0)));
+                table.appendChild(line);
+            });
+            var total = el('tr', 'is-total');
+            total.appendChild(el('td', null, t('reportTotalRow')));
+            total.appendChild(el('td', null, String(view.total || 0)));
+            total.appendChild(el('td', null, shareText(view.total || 0, view.total || 0)));
+            table.appendChild(total);
+            main.appendChild(table);
+            main.appendChild(el('p', 'asset-tree-hint', t('reportCounted')));
+            if (!view.standard && state.canEdit) {
+                main.appendChild(button(t('reportDelete'), 'asset-tree-btn', function () {
+                    ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/reports/' + encodeURIComponent(view.id), null, function (status, payload) {
+                        if (status >= 200 && status < 300) {
+                            state.reportKey = 'status';
+                            state.reportCatalog = null;
+                            state.reportView = null;
+                            state.galleryLoading = false;
+                            renderFrame();
+                        } else notify((payload && payload.message) || t('errorTitle'));
+                    });
+                }));
+            }
+        }
+        shell.appendChild(main);
+        panel.appendChild(shell);
+        return panel;
+    }
+
+    function openReportDialog() {
+        var pickedTypes = {};
+        var pickedStatuses = {};
+        openModal(function (dialog) {
+            dialog.className += ' asset-tree-work-dialog';
+            dialog.appendChild(el('h2', null, t('reportCreate')));
+            var name = document.createElement('input');
+            name.placeholder = t('reportName');
+            name.setAttribute('aria-label', t('reportName'));
+            var group = document.createElement('select');
+            [['type', 'reportGroupType'], ['status', 'reportGroupStatus'], ['place', 'reportGroupPlace'], ['holder', 'reportGroupHolder']].forEach(function (pair) {
+                var option = document.createElement('option');
+                option.value = pair[0];
+                option.textContent = t(pair[1]);
+                group.appendChild(option);
+            });
+            group.value = 'type';
+            var chart = document.createElement('select');
+            [['bar', 'reportColumns'], ['donut', 'reportDonut']].forEach(function (pair) {
+                var option = document.createElement('option');
+                option.value = pair[0];
+                option.textContent = t(pair[1]);
+                chart.appendChild(option);
+            });
+            var metric = document.createElement('select');
+            var countOption = document.createElement('option');
+            countOption.value = 'count';
+            countOption.textContent = t('reportCount');
+            metric.appendChild(countOption);
+            var row = el('div', 'asset-tree-report-picks');
+            row.appendChild(planField(t('reportGroupBy'), group));
+            row.appendChild(planField(t('reportChart'), chart));
+            row.appendChild(planField(t('reportMetric'), metric));
+            dialog.appendChild(planField(t('reportName'), name));
+            dialog.appendChild(row);
+            dialog.appendChild(el('span', 'asset-tree-nav-label', t('reportOnlyTypes')));
+            var types = el('div', 'asset-tree-check-list');
+            (state.types || []).forEach(function (type) {
+                if (!type || type.location) return;
+                var label = el('label', 'asset-tree-check');
+                var box = document.createElement('input');
+                box.type = 'checkbox';
+                box.addEventListener('change', function () {
+                    if (box.checked) pickedTypes[type.typeKey] = true;
+                    else delete pickedTypes[type.typeKey];
+                });
+                label.appendChild(box);
+                label.appendChild(document.createTextNode(type.label || type.typeKey));
+                types.appendChild(label);
+            });
+            dialog.appendChild(types);
+            dialog.appendChild(el('span', 'asset-tree-nav-label', t('reportOnlyStatuses')));
+            var statuses = el('div', 'asset-tree-check-list');
+            (state.statuses || []).forEach(function (status) {
+                var label = el('label', 'asset-tree-check');
+                var box = document.createElement('input');
+                box.type = 'checkbox';
+                box.addEventListener('change', function () {
+                    if (box.checked) pickedStatuses[status.statusKey] = true;
+                    else delete pickedStatuses[status.statusKey];
+                });
+                label.appendChild(box);
+                label.appendChild(document.createTextNode(status.label || status.statusKey));
+                statuses.appendChild(label);
+            });
+            dialog.appendChild(statuses);
+            var actions = el('div', 'asset-tree-inline-actions');
+            actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+                if (!name.value.trim()) {
+                    notify(t('reportName'));
+                    return;
+                }
+                var typeKeys = Object.keys(pickedTypes);
+                var statusKeys = Object.keys(pickedStatuses);
+                var body = { name: name.value.trim(), groupBy: group.value, chart: chart.value, metric: metric.value, filterField: '', filterValue: '' };
+                if (typeKeys.length || statusKeys.length) {
+                    body.filterField = 'mix';
+                    var parts = [];
+                    if (typeKeys.length) parts.push('t=' + typeKeys.join(','));
+                    if (statusKeys.length) parts.push('s=' + statusKeys.join(','));
+                    body.filterValue = parts.join(';');
+                }
+                ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/reports', body, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload && payload.id) {
+                        closeModal();
+                        state.reportKey = payload.id;
+                        state.reportCatalog = null;
+                        state.reportView = null;
+                        state.galleryLoading = false;
+                        renderFrame();
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function clampNum(value, min, max) {
+        var number = Math.round(Number(value) || 0);
+        if (number < min) return min;
+        if (number > max) return max;
+        return number;
+    }
+
+    function moduleSetup() {
+        var project = currentProject();
+        var setup = project && project.setup ? project.setup : {};
+        return {
+            scheduleKinds: setup.scheduleKinds || 'to,kts,verify',
+            scheduleUnit: setup.scheduleUnit || 'month',
+            scheduleNotify: !!setup.scheduleNotify,
+            mapWidth: clampNum(setup.mapWidth || 1200, 640, 2400),
+            mapHeight: clampNum(setup.mapHeight || 760, 480, 1600),
+            mapGrid: [8, 12, 16, 24, 32].indexOf(Number(setup.mapGrid)) >= 0 ? Number(setup.mapGrid) : 24,
+            mapSnap: setup.mapSnap !== false,
+            reportHidden: setup.reportHidden || '',
+            lifeApproval: setup.lifeApproval !== false,
+            lifeApprover: setup.lifeApprover || '',
+            lifeCurrency: setup.lifeCurrency || 'RUB',
+            lifeMonths: clampNum(setup.lifeMonths || 0, 0, 600)
+        };
+    }
+
+    function enabledKinds() {
+        var known = ['to', 'kts', 'verify'];
+        var picked = String(moduleSetup().scheduleKinds || '').split(',');
+        var kept = [];
+        known.forEach(function (key) {
+            if (picked.indexOf(key) >= 0) kept.push(key);
+        });
+        return kept.length ? kept : known;
+    }
+
+    function reportHidden(id) {
+        return String(moduleSetup().reportHidden || '').split(',').indexOf(id) >= 0;
+    }
+
+    function roomColor(value) {
+        return /^#[0-9a-fA-F]{6}$/.test(String(value || '')) ? String(value).toLowerCase() : '';
+    }
+
+    function planSize(floor) {
+        var setup = moduleSetup();
+        var source = floor || {};
+        var width = Number(source.planW) || setup.mapWidth || 1200;
+        var height = Number(source.planH) || setup.mapHeight || 760;
+        return { w: clampNum(width, 640, 2400), h: clampNum(height, 480, 1600) };
+    }
+
+    function snapCoord(value) {
+        if (!moduleSetup().mapSnap) return Math.round(value);
+        var grid = moduleSetup().mapGrid || 24;
+        return Math.round(value / grid) * grid;
+    }
+
+    function clampRoom(room, size) {
+        var box = size || planSize(state.mapDraft || currentFloor());
+        var kind = room.kind || 'room';
+        var min = kind === 'room' ? 36 : 6;
+        var x = clampNum(room.x, 0, box.w - min);
+        var y = clampNum(room.y, 0, box.h - min);
+        var w = Math.max(min, Math.round(Number(room.w) || min));
+        var h = Math.max(min, Math.round(Number(room.h) || min));
+        if (x + w > box.w) w = box.w - x;
+        if (y + h > box.h) h = box.h - y;
+        return {
+            name: room.name || (kind === 'room' ? t('mapRoom') : ''),
+            kind: kind,
+            color: roomColor(room.color),
+            x: x, y: y, w: w, h: h
+        };
+    }
+
+    function cloneFloor(floor) {
+        var size = planSize(floor);
+        return {
+            id: floor.id,
+            name: floor.name || '',
+            level: floor.level || 0,
+            placeId: floor.placeId || 0,
+            planW: size.w,
+            planH: size.h,
+            rooms: (floor.rooms || []).map(function (room) { return clampRoom(room, size); }),
+            pins: (floor.pins || []).map(function (pin) {
+                return {
+                    assetId: pin.assetId,
+                    assetName: pin.assetName || '',
+                    objectKey: pin.objectKey || '',
+                    x: clampNum(pin.x, 0, size.w),
+                    y: clampNum(pin.y, 0, size.h)
+                };
+            })
+        };
+    }
+
+    function clearMapDrag() {
+        if (state.mapMove) {
+            window.removeEventListener('mousemove', state.mapMove);
+            window.removeEventListener('mouseup', state.mapUp);
+        }
+        state.mapMove = null;
+        state.mapUp = null;
+        state.mapDrag = null;
+    }
+
+    function svgPoint(svg, event) {
+        var rect = svg.getBoundingClientRect();
+        var size = planSize(state.mapDraft || currentFloor());
+        return {
+            x: ((event.clientX - rect.left) / (rect.width || 1)) * size.w,
+            y: ((event.clientY - rect.top) / (rect.height || 1)) * size.h
+        };
+    }
+
+    function beginDrag(svg, drag, onMove, onUp) {
+        clearMapDrag();
+        state.mapDrag = drag;
+        state.mapMove = function (event) { onMove(event, svg); };
+        state.mapUp = function () {
+            var finished = state.mapDrag;
+            clearMapDrag();
+            onUp(finished);
+        };
+        window.addEventListener('mousemove', state.mapMove);
+        window.addEventListener('mouseup', state.mapUp);
+    }
+
+    function storeFloor(floor) {
+        var next = [];
+        var found = false;
+        (state.floors || []).forEach(function (item) {
+            if (item.id === floor.id) {
+                next.push(floor);
+                found = true;
+            } else next.push(item);
+        });
+        if (!found) next.push(floor);
+        next.sort(function (left, right) { return (left.level - right.level) || (left.id - right.id); });
+        state.floors = next;
+        state.floorId = floor.id;
+        state.mapDraft = cloneFloor(floor);
+        state.mapDirty = false;
+    }
+
+    function loadFloors() {
+        if (state.mapLoading) return;
+        state.mapLoading = true;
+        var token = ++state.mapToken;
+        ajax('GET', '/projects/' + encodeURIComponent(state.projectKey) + '/floors', null, function (status, payload) {
+            if (token !== state.mapToken) return;
+            state.mapLoading = false;
+            state.floors = status === 200 && Object.prototype.toString.call(payload) === '[object Array]' ? payload : [];
+            var current = null;
+            state.floors.forEach(function (floor) {
+                if (floor.id === state.floorId) current = floor;
+            });
+            if (!current && state.floors.length) current = state.floors[0];
+            state.floorId = current ? current.id : 0;
+            state.mapDraft = current ? cloneFloor(current) : null;
+            state.mapDirty = false;
+            if (state.view === 'map') renderFrame();
+        });
+    }
+
+    function currentFloor() {
+        var found = null;
+        (state.floors || []).forEach(function (floor) {
+            if (floor.id === state.floorId) found = floor;
+        });
+        return found;
+    }
+
+    function renderMap() {
+        var panel = el('section', 'asset-tree-sheet');
+        var head = sheetHead('mapPageTitle');
+        if (state.mapEditing) {
+            head.appendChild(el('span', 'asset-tree-dirty', state.mapDirty ? t('mapDirty') : ''));
+            head.appendChild(button(t('save'), 'asset-tree-btn primary', saveMap));
+            head.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+                state.mapEditing = false;
+                state.mapDirty = false;
+                var floor = currentFloor();
+                state.mapDraft = floor ? cloneFloor(floor) : null;
+                renderFrame();
+            }));
+        } else {
+            head.appendChild(button(t('mapEdit'), 'asset-tree-linkish', function () {
+                if (!(state.floors || []).length) {
+                    addFloor(true);
+                    return;
+                }
+                state.mapEditing = true;
+                renderFrame();
+            }));
+        }
+        panel.appendChild(head);
+        panel.appendChild(el('p', 'asset-tree-hint', t('mapHint')));
+        if (state.floors == null) {
+            panel.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadFloors();
+            return panel;
+        }
+        var shell = el('div', 'asset-tree-map-shell');
+        shell.appendChild(mapRail());
+        var stage = el('div', 'asset-tree-map-stage');
+        if (!(state.floors || []).length) {
+            stage.appendChild(el('p', 'asset-tree-map-empty', t('mapEmpty')));
+            if (state.canEdit) stage.appendChild(button(t('mapAddFloor'), 'asset-tree-btn primary', function () { addFloor(true); }));
+        } else if (state.mapEditing && state.mapDraft) {
+            stage.appendChild(mapEditorBar());
+            stage.appendChild(floorCanvas(state.mapDraft, true));
+        } else {
+            var floor = currentFloor();
+            if (floor) stage.appendChild(floorCanvas(floor, false));
+        }
+        shell.appendChild(stage);
+        panel.appendChild(shell);
+        return panel;
+    }
+
+    function mapRail() {
+        var rail = el('aside', 'asset-tree-map-rail');
+        rail.appendChild(el('h3', null, t('mapFloors')));
+        var search = document.createElement('input');
+        search.type = 'search';
+        search.placeholder = t('mapSearch');
+        search.addEventListener('input', function () {
+            var needle = search.value.trim().toLowerCase();
+            var nodes = rail.querySelectorAll('.asset-tree-report-link');
+            for (var i = 0; i < nodes.length; i++) {
+                var text = (nodes[i].textContent || '').toLowerCase();
+                nodes[i].hidden = !!(needle && text.indexOf(needle) < 0);
+            }
+        });
+        rail.appendChild(search);
+        (state.floors || []).forEach(function (floor) {
+            rail.appendChild(button(floor.name || t('mapFloorName'), 'asset-tree-report-link' + (floor.id === state.floorId ? ' is-current' : ''), function () {
+                state.floorId = floor.id;
+                if (state.mapDirty && !window.confirm(t('mapDirty'))) return;
+                state.mapDraft = cloneFloor(floor);
+                state.mapDirty = false;
+                renderFrame();
+            }));
+        });
+        if (state.mapEditing && state.canEdit) {
+            rail.appendChild(button('+ ' + t('mapAddFloor'), 'asset-tree-linkish', function () { addFloor(false); }));
+            rail.appendChild(button(t('mapRename'), 'asset-tree-linkish', function () {
+                var input = document.querySelector('.asset-tree-floor-name');
+                if (input) input.focus();
+            }));
+            rail.appendChild(button(t('delete'), 'asset-tree-linkish', deleteCurrentFloor));
+            rail.appendChild(el('h3', null, t('mapEdit')));
+            var tools = el('div', 'asset-tree-map-tools');
+            [['select', 'mapSelect'], ['room', 'mapRoom'], ['wall', 'mapWall'], ['door', 'mapDoor'], ['window', 'mapWindow']].forEach(function (pair) {
+                var tool = button('', 'asset-tree-btn asset-tree-tool' + (state.mapTool === pair[0] ? ' is-on' : ''), function () {
+                    state.mapTool = pair[0];
+                    renderFrame();
+                });
+                tool.title = t(pair[1]);
+                tool.setAttribute('aria-label', t(pair[1]));
+                tool.appendChild(mapToolIcon(pair[0]));
+                tool.appendChild(el('span', null, t(pair[1])));
+                tools.appendChild(tool);
+            });
+            rail.appendChild(tools);
+            rail.appendChild(el('p', 'asset-tree-hint', t('mapDrawHint')));
+            rail.appendChild(mapInspector());
+            rail.appendChild(el('h3', null, t('mapGear')));
+            var gearQuery = document.createElement('input');
+            gearQuery.type = 'search';
+            gearQuery.placeholder = t('schedulesFindAssets');
+            gearQuery.addEventListener('input', function () {
+                var needle = gearQuery.value.trim().toLowerCase();
+                var nodes = list.querySelectorAll('.asset-tree-gear-row');
+                for (var i = 0; i < nodes.length; i++) {
+                    var text = (nodes[i].textContent || '').toLowerCase();
+                    nodes[i].hidden = !!(needle && text.indexOf(needle) < 0);
+                }
+            });
+            rail.appendChild(gearQuery);
+            var list = el('div', 'asset-tree-schedule-assets');
+            var onFloor = 0;
+            var pins = (state.mapDraft && state.mapDraft.pins) || [];
+            equipmentAssets().forEach(function (asset) {
+                var placed = false;
+                pins.forEach(function (pin) { if (pin.assetId === asset.id) placed = true; });
+                if (placed) onFloor++;
+                var place = assetPlaceName(asset);
+                var typeLabel = typeFor(asset).label || '';
+                var row = button('', 'asset-tree-gear-row' + (state.mapAssetId === asset.id ? ' is-current' : ''), function () {
+                    state.mapAssetId = asset.id;
+                    state.mapTool = 'select';
+                    renderFrame();
+                });
+                row.appendChild(el('strong', null, asset.name || asset.objectKey || ''));
+                row.appendChild(el('span', null, [asset.objectKey || '', typeLabel, place].filter(function (part) { return part; }).join(' · ')));
+                list.appendChild(row);
+            });
+            rail.appendChild(list);
+            rail.appendChild(el('p', 'asset-tree-hint', t('mapOnFloor') + ': ' + onFloor));
+        }
+        return rail;
+    }
+
+    function mapEditorBar() {
+        var size = planSize(state.mapDraft);
+        var bar = el('div', 'asset-tree-editor-bar');
+        var name = document.createElement('input');
+        name.className = 'asset-tree-floor-name';
+        name.value = state.mapDraft.name || '';
+        name.setAttribute('aria-label', t('mapFloorName'));
+        name.addEventListener('input', function () {
+            state.mapDraft.name = name.value;
+            state.mapDirty = true;
+            var dirty = document.querySelector('.asset-tree-dirty');
+            if (dirty) dirty.textContent = t('mapDirty');
+        });
+        bar.appendChild(name);
+        bar.appendChild(button(t('mapFit'), 'asset-tree-btn slim', function () {
+            state.mapZoom = 1;
+            renderFrame();
+        }));
+        var zoomOut = button('−', 'asset-tree-btn slim asset-tree-zoom', function () {
+            state.mapZoom = Math.max(0.5, Math.round(((state.mapZoom || 1) - 0.25) * 100) / 100);
+            renderFrame();
+        });
+        zoomOut.title = t('mapZoomOut');
+        zoomOut.setAttribute('aria-label', t('mapZoomOut'));
+        var zoomIn = button('+', 'asset-tree-btn slim asset-tree-zoom', function () {
+            state.mapZoom = Math.min(2, Math.round(((state.mapZoom || 1) + 0.25) * 100) / 100);
+            renderFrame();
+        });
+        zoomIn.title = t('mapZoomIn');
+        zoomIn.setAttribute('aria-label', t('mapZoomIn'));
+        bar.appendChild(zoomOut);
+        bar.appendChild(zoomIn);
+        bar.appendChild(el('span', 'asset-tree-plan-label', t('mapPlanSize')));
+        var width = document.createElement('input');
+        width.type = 'number';
+        width.min = '640';
+        width.max = '2400';
+        width.value = String(size.w);
+        width.className = 'asset-tree-plan-size';
+        width.setAttribute('aria-label', t('setupPlanW'));
+        var height = document.createElement('input');
+        height.type = 'number';
+        height.min = '480';
+        height.max = '1600';
+        height.value = String(size.h);
+        height.className = 'asset-tree-plan-size';
+        height.setAttribute('aria-label', t('setupPlanH'));
+        function resizePlan() {
+            state.mapDraft.planW = clampNum(width.value, 640, 2400);
+            state.mapDraft.planH = clampNum(height.value, 480, 1600);
+            var next = planSize(state.mapDraft);
+            state.mapDraft.rooms = (state.mapDraft.rooms || []).map(function (room) { return clampRoom(room, next); });
+            state.mapDraft.pins = (state.mapDraft.pins || []).map(function (pin) {
+                pin.x = clampNum(pin.x, 0, next.w);
+                pin.y = clampNum(pin.y, 0, next.h);
+                return pin;
+            });
+            state.mapDirty = true;
+            renderFrame();
+        }
+        width.addEventListener('change', resizePlan);
+        height.addEventListener('change', resizePlan);
+        bar.appendChild(width);
+        bar.appendChild(el('span', null, '×'));
+        bar.appendChild(height);
+        return bar;
+    }
+
+    function addFloor(edit) {
+        var level = (state.floors || []).length + 1;
+        var setup = moduleSetup();
+        ajax('POST', '/projects/' + encodeURIComponent(state.projectKey) + '/floors', { name: t('mapFloor') + ' ' + level, level: level, planW: setup.mapWidth, planH: setup.mapHeight }, function (status, payload) {
+            if (status >= 200 && status < 300 && payload) {
+                state.floors = state.floors || [];
+                state.floors.push(payload);
+                state.floorId = payload.id;
+                state.mapDraft = cloneFloor(payload);
+                state.mapEditing = !!edit || state.mapEditing;
+                state.mapDirty = false;
+                renderFrame();
+            } else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function deleteCurrentFloor() {
+        var floor = currentFloor();
+        if (!floor) return;
+        if (!window.confirm(t('mapDeleteFloor'))) return;
+        ajax('DELETE', '/projects/' + encodeURIComponent(state.projectKey) + '/floors/' + floor.id, null, function (status, payload) {
+            if (status >= 200 && status < 300) {
+                state.floors = (state.floors || []).filter(function (item) { return item.id !== floor.id; });
+                state.floorId = state.floors.length ? state.floors[0].id : 0;
+                state.mapDraft = state.floors.length ? cloneFloor(state.floors[0]) : null;
+                state.mapDirty = false;
+                if (!state.floors.length) state.mapEditing = false;
+                renderFrame();
+            } else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function saveMap() {
+        var draft = state.mapDraft;
+        if (!draft) return;
+        ajax('PUT', '/projects/' + encodeURIComponent(state.projectKey) + '/floors/' + draft.id, draft, function (status, payload) {
+            if (status >= 200 && status < 300 && payload) {
+                storeFloor(payload);
+                renderFrame();
+            } else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function floorCanvas(floor, editing) {
+        var size = planSize(floor);
+        var step = moduleSetup().mapGrid || 24;
+        var svg = svgEl('svg');
+        svg.setAttribute('viewBox', '0 0 ' + size.w + ' ' + size.h);
+        svg.setAttribute('class', 'asset-tree-canvas');
+        var zoom = editing ? (state.mapZoom || 1) : 1;
+        if (editing) {
+            svg.style.width = Math.round(size.w * zoom) + 'px';
+            svg.style.height = Math.round(size.h * zoom) + 'px';
+        } else {
+            svg.style.width = '100%';
+            svg.style.height = 'auto';
+        }
+        var defs = svgEl('defs');
+        var pattern = svgEl('pattern');
+        pattern.setAttribute('id', 'asset-tree-grid');
+        pattern.setAttribute('width', String(step));
+        pattern.setAttribute('height', String(step));
+        pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+        var grid = svgEl('path');
+        grid.setAttribute('d', 'M ' + step + ' 0 L 0 0 0 ' + step);
+        grid.setAttribute('fill', 'none');
+        grid.setAttribute('stroke', '#dfe1e6');
+        grid.setAttribute('stroke-width', '1');
+        pattern.appendChild(grid);
+        defs.appendChild(pattern);
+        svg.appendChild(defs);
+        var paper = svgEl('rect');
+        paper.setAttribute('width', String(size.w));
+        paper.setAttribute('height', String(size.h));
+        paper.setAttribute('fill', 'url(#asset-tree-grid)');
+        svg.appendChild(paper);
+        (floor.rooms || []).forEach(function (room, index) {
+            var rect = svgEl('rect');
+            rect.setAttribute('x', String(room.x));
+            rect.setAttribute('y', String(room.y));
+            rect.setAttribute('width', String(room.w));
+            rect.setAttribute('height', String(room.h));
+            rect.setAttribute('class', 'asset-tree-room is-' + (room.kind || 'room') + (state.mapSelection === index ? ' is-selected' : ''));
+            if ((room.kind || 'room') === 'room' && room.color) rect.setAttribute('fill', room.color);
+            if (editing) {
+                rect.addEventListener('mousedown', function (event) {
+                    if (state.mapTool !== 'select') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    state.mapSelection = index;
+                    var point = svgPoint(svg, event);
+                    beginDrag(svg, { kind: 'move', index: index, dx: point.x - room.x, dy: point.y - room.y, moved: false, x0: point.x, y0: point.y }, function (move) {
+                        var next = svgPoint(svg, move);
+                        var dx = next.x - state.mapDrag.x0;
+                        var dy = next.y - state.mapDrag.y0;
+                        if (!state.mapDrag.moved && dx * dx + dy * dy < 16) return;
+                        state.mapDrag.moved = true;
+                        room.x = clampNum(next.x - state.mapDrag.dx, 0, size.w - room.w);
+                        room.y = clampNum(next.y - state.mapDrag.dy, 0, size.h - room.h);
+                        rect.setAttribute('x', String(room.x));
+                        rect.setAttribute('y', String(room.y));
+                        state.mapDirty = true;
+                    }, function (finished) {
+                        if (finished && !finished.moved && state.mapAssetId) placeArmedPin(floor, finished.x0, finished.y0);
+                        renderFrame();
+                    });
+                });
+            }
+            svg.appendChild(rect);
+            var kindName = room.kind || 'room';
+            if (kindName === 'door' || kindName === 'window') {
+                var markLine = svgEl('path');
+                var horizontal = room.w >= room.h;
+                var d = kindName === 'door'
+                    ? (horizontal
+                        ? 'M ' + room.x + ' ' + (room.y + room.h) + ' A ' + room.w + ' ' + room.w + ' 0 0 1 ' + (room.x + room.w) + ' ' + room.y
+                        : 'M ' + room.x + ' ' + room.y + ' A ' + room.h + ' ' + room.h + ' 0 0 1 ' + (room.x + room.w) + ' ' + (room.y + room.h))
+                    : (horizontal
+                        ? 'M ' + room.x + ' ' + (room.y + room.h / 2) + ' L ' + (room.x + room.w) + ' ' + (room.y + room.h / 2)
+                        : 'M ' + (room.x + room.w / 2) + ' ' + room.y + ' L ' + (room.x + room.w / 2) + ' ' + (room.y + room.h));
+                markLine.setAttribute('d', d);
+                markLine.setAttribute('class', 'asset-tree-opening');
+                svg.appendChild(markLine);
+            }
+            if (kindName === 'room' && room.name) {
+                var label = svgEl('text');
+                label.setAttribute('x', String(room.x + 8));
+                label.setAttribute('y', String(room.y + 20));
+                label.setAttribute('class', 'asset-tree-room-label');
+                label.textContent = room.name;
+                svg.appendChild(label);
+            }
+        });
+        (floor.pins || []).forEach(function (pin) {
+            var mark = svgEl('g');
+            mark.setAttribute('class', 'asset-tree-pin' + (state.mapAssetId === pin.assetId ? ' is-selected' : ''));
+            mark.setAttribute('transform', 'translate(' + pin.x + ' ' + pin.y + ')');
+            var plate = svgEl('rect');
+            plate.setAttribute('x', '-12');
+            plate.setAttribute('y', '-12');
+            plate.setAttribute('width', '24');
+            plate.setAttribute('height', '24');
+            plate.setAttribute('rx', '4');
+            plate.setAttribute('class', 'asset-tree-pin-plate');
+            var glyph = svgEl('path');
+            glyph.setAttribute('d', 'M-6 -6h12v8h-12zM-4 2h8M-2 5h4');
+            glyph.setAttribute('class', 'asset-tree-pin-glyph');
+            mark.appendChild(plate);
+            mark.appendChild(glyph);
+            if (editing) {
+                mark.addEventListener('mousedown', function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    state.mapAssetId = pin.assetId;
+                    beginDrag(svg, { kind: 'pin' }, function (move) {
+                        var next = svgPoint(svg, move);
+                        pin.x = clampNum(snapCoord(next.x), 0, size.w);
+                        pin.y = clampNum(snapCoord(next.y), 0, size.h);
+                        mark.setAttribute('transform', 'translate(' + pin.x + ' ' + pin.y + ')');
+                        state.mapDirty = true;
+                    }, function () { renderFrame(); });
+                });
+            }
+            svg.appendChild(mark);
+            var caption = svgEl('text');
+            caption.setAttribute('x', String(pin.x + 16));
+            caption.setAttribute('y', String(pin.y + 4));
+            caption.setAttribute('class', 'asset-tree-pin-label');
+            caption.textContent = pin.assetName || pin.objectKey || '';
+            svg.appendChild(caption);
+        });
+        if (editing) {
+            paper.addEventListener('mousedown', function (event) {
+                if (state.mapTool !== 'select' || !state.mapAssetId) return;
+                var point = svgPoint(svg, event);
+                if (!placeArmedPin(floor, point.x, point.y)) return;
+                renderFrame();
+            });
+            svg.addEventListener('mousedown', function (event) {
+                if (state.mapTool === 'select') return;
+                event.preventDefault();
+                var point = svgPoint(svg, event);
+                beginDrag(svg, { kind: state.mapTool, x0: point.x, y0: point.y, x1: point.x, y1: point.y }, function (move) {
+                    var next = svgPoint(svg, move);
+                    state.mapDrag.x1 = next.x;
+                    state.mapDrag.y1 = next.y;
+                    paintRoomPreview(svg);
+                }, function (finished) {
+                    if (!finished) return;
+                    var shape = shapeFromDrag(finished.kind, finished.x0, finished.y0, finished.x1, finished.y1);
+                    if (shape) {
+                        floor.rooms = floor.rooms || [];
+                        floor.rooms.push(shape);
+                        state.mapSelection = floor.rooms.length - 1;
+                        state.mapDirty = true;
+                    }
+                    renderFrame();
+                });
+            });
+        }
+        return svg;
+    }
+
+    function placeArmedPin(floor, x, y) {
+        var asset = byId()[state.mapAssetId];
+        if (!asset) return false;
+        var box = planSize(floor);
+        var px = snapCoord(x);
+        var py = snapCoord(y);
+        var pins = floor.pins || [];
+        var existing = null;
+        pins.forEach(function (pin) { if (pin.assetId === asset.id) existing = pin; });
+        if (existing) {
+            existing.x = clampNum(px, 0, box.w);
+            existing.y = clampNum(py, 0, box.h);
+        } else {
+            pins.push({
+                assetId: asset.id,
+                assetName: asset.name || '',
+                objectKey: asset.objectKey || '',
+                x: clampNum(px, 0, box.w),
+                y: clampNum(py, 0, box.h)
+            });
+            floor.pins = pins;
+        }
+        state.mapDirty = true;
+        return true;
+    }
+
+    function mapToolIcon(kind) {
+        var svg = svgEl('svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('class', 'asset-tree-tool-icon');
+        var path = svgEl('path');
+        var d = 'M5 5h6v6H5zM13 13h6v6h-6z';
+        if (kind === 'select') d = 'M5 3l6 14 2-5 5-2z';
+        if (kind === 'room') d = 'M4 4h16v16H4z';
+        if (kind === 'wall') d = 'M3 10h18v4H3z';
+        if (kind === 'door') d = 'M6 20V5h8v15M14 5a8 8 0 0 1 0 15';
+        if (kind === 'window') d = 'M4 6h16v12H4zM12 6v12M4 12h16';
+        path.setAttribute('d', d);
+        path.setAttribute('fill', kind === 'select' || kind === 'wall' ? 'currentColor' : 'none');
+        path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '1.6');
+        svg.appendChild(path);
+        return svg;
+    }
+
+    function mapInspector() {
+        var block = el('div', 'asset-tree-inspector');
+        block.appendChild(el('h3', null, t('mapChosen')));
+        var rooms = state.mapDraft && state.mapDraft.rooms;
+        var room = rooms && state.mapSelection != null ? rooms[state.mapSelection] : null;
+        if (!room) {
+            block.appendChild(el('p', 'asset-tree-hint', '—'));
+            return block;
+        }
+        var name = document.createElement('input');
+        name.value = room.name || '';
+        name.setAttribute('aria-label', t('name'));
+        name.addEventListener('change', function () {
+            room.name = name.value;
+            state.mapDirty = true;
+            var dirty = document.querySelector('.asset-tree-dirty');
+            if (dirty) dirty.textContent = t('mapDirty');
+        });
+        block.appendChild(name);
+        if ((room.kind || 'room') === 'room') {
+            var colors = el('div', 'asset-tree-swatches');
+            ['', '#deebff', '#e3fcef', '#fff0b3', '#ffebe6', '#eae6ff'].forEach(function (color) {
+                var swatch = button('', 'asset-tree-swatch' + (roomColor(room.color) === roomColor(color) ? ' is-on' : ''), function () {
+                    room.color = color;
+                    state.mapDirty = true;
+                    renderFrame();
+                });
+                swatch.title = t('mapColor');
+                swatch.style.background = color || '#deebff';
+                colors.appendChild(swatch);
+            });
+            block.appendChild(colors);
+        }
+        block.appendChild(el('p', 'asset-tree-hint', mapSelectionLabel() + ' · ' + room.w + ' × ' + room.h));
+        block.appendChild(button(t('mapDeleteShape'), 'asset-tree-btn', function () {
+            state.mapDraft.rooms.splice(state.mapSelection, 1);
+            state.mapSelection = null;
+            state.mapDirty = true;
+            renderFrame();
+        }));
+        return block;
+    }
+
+    function mapSelectionLabel() {
+        var rooms = state.mapDraft && state.mapDraft.rooms;
+        var room = rooms && state.mapSelection != null ? rooms[state.mapSelection] : null;
+        if (!room) return '—';
+        var kind = room.kind || 'room';
+        if (kind === 'wall') return t('mapWall');
+        if (kind === 'door') return t('mapDoor');
+        if (kind === 'window') return t('mapWindow');
+        return room.name || t('mapRoom');
+    }
+
+    function paintRoomPreview(svg) {
+        var drag = state.mapDrag;
+        var node = svg.querySelector('#asset-tree-room-preview');
+        if (!drag || drag.kind === 'move' || drag.kind === 'pin') {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+            return;
+        }
+        if (!node) {
+            node = svgEl('rect');
+            node.id = 'asset-tree-room-preview';
+            svg.appendChild(node);
+        }
+        var x = Math.min(drag.x0, drag.x1);
+        var y = Math.min(drag.y0, drag.y1);
+        node.setAttribute('x', String(Math.round(x)));
+        node.setAttribute('y', String(Math.round(y)));
+        node.setAttribute('width', String(Math.max(1, Math.round(Math.abs(drag.x1 - drag.x0)))));
+        node.setAttribute('height', String(Math.max(1, Math.round(Math.abs(drag.y1 - drag.y0)))));
+    }
+
+    function shapeFromDrag(tool, x0, y0, x1, y1) {
+        x0 = snapCoord(x0);
+        y0 = snapCoord(y0);
+        x1 = snapCoord(x1);
+        y1 = snapCoord(y1);
+        var x = Math.min(x0, x1);
+        var y = Math.min(y0, y1);
+        var w = Math.abs(x1 - x0);
+        var h = Math.abs(y1 - y0);
+        if (tool === 'wall' || tool === 'door' || tool === 'window') {
+            var thick = tool === 'wall' ? 12 : 16;
+            if (w >= h) h = thick;
+            else w = thick;
+        }
+        if (w < 6 || h < 6) return null;
+        if (tool === 'room' && (w < 36 || h < 36)) return null;
+        return clampRoom({ kind: tool, name: tool === 'room' ? t('mapRoom') : '', x: x, y: y, w: w, h: h });
+    }
+
+    function moneyInput(value) {
+        if (value == null || value === '') return '0.00';
+        var text = String(value);
+        if (text.indexOf('.') < 0) return text + '.00';
+        return text;
+    }
+
+    function lifeBlank(life) {
+        return !life.purchased && !life.warrantyUntil && !life.commissioned && !life.supplier && !(life.price && life.price !== '0');
+    }
+
+    function lifeSteps(life) {
+        var buy = !!(life.purchased || life.supplier || (life.price && life.price !== '0'));
+        var use = !!life.commissioned;
+        var warranty = !!life.warrantyUntil;
+        var off = life.writeoffState === 'approved';
+        return [
+            { key: 'lifeStepBuy', on: buy },
+            { key: 'lifeStepUse', on: use },
+            { key: 'lifeStepWarranty', on: warranty },
+            { key: 'lifeStepRun', on: use && !off },
+            { key: 'lifeStepOff', on: off }
+        ];
+    }
+
+    function lifeStepper(life) {
+        var row = el('ol', 'asset-tree-steps');
+        lifeSteps(life).forEach(function (step, index) {
+            if (index) row.appendChild(el('li', 'asset-tree-step-line' + (step.on ? ' is-on' : ''), ''));
+            var item = el('li', 'asset-tree-step' + (step.on ? ' is-on' : ''));
+            item.appendChild(el('span', 'asset-tree-step-dot', ''));
+            item.appendChild(el('span', null, t(step.key)));
+            row.appendChild(item);
+        });
+        return row;
+    }
+
+    function loadLife(assetId) {
+        if (state.lifeLoading[assetId]) return;
+        state.lifeLoading[assetId] = true;
+        state.lifeFailed[assetId] = false;
+        var token = (state.lifeToken[assetId] || 0) + 1;
+        state.lifeToken[assetId] = token;
+        ajax('GET', '/assets/' + assetId + '/lifecycle', null, function (status, payload) {
+            if (state.lifeToken[assetId] !== token) return;
+            state.lifeLoading[assetId] = false;
+            if (status === 200 && payload) state.life[assetId] = payload;
+            else state.lifeFailed[assetId] = true;
+            if (state.detail && state.detail.id === assetId && document.getElementById('asset-tree-detail')) {
+                showDetail(state.detail, false);
+            }
+        });
+    }
+
+    function lifeBlock(asset) {
+        var host = el('section', 'asset-tree-life-block');
+        var head = el('h3', null, t('lifeTitle'));
+        head.appendChild(el('span', 'asset-tree-beta', t('modulesBeta')));
+        host.appendChild(head);
+        if (state.life[asset.id]) host.appendChild(lifeBody(asset, state.life[asset.id]));
+        else if (state.lifeFailed[asset.id]) {
+            host.appendChild(el('p', 'asset-tree-hint', t('errorTitle')));
+            host.appendChild(button(t('retry'), 'asset-tree-btn', function () {
+                state.lifeFailed[asset.id] = false;
+                state.lifeLoading[asset.id] = false;
+                loadLife(asset.id);
+            }));
+        } else {
+            host.appendChild(el('p', 'asset-tree-hint', t('loading')));
+            loadLife(asset.id);
+        }
+        return host;
+    }
+
+    function lifeBody(asset, life) {
+        var body = el('div', 'asset-tree-life');
+        body.appendChild(lifeStepper(life));
+        var editingLife = !!(state.lifeEditing[asset.id] && life.writeoffState !== 'approved');
+        if (editingLife) body.appendChild(lifeForm(asset, life));
+        else if (lifeBlank(life)) body.appendChild(el('p', 'asset-tree-hint', t('lifeEmpty')));
+        else {
+            var facts = el('div', 'asset-tree-life-facts');
+            if (life.price) facts.appendChild(el('span', null, t('lifePrice') + ': ' + life.price + ' ' + (life.currency || '')));
+            if (life.monthly) facts.appendChild(el('span', null, t('lifeMonthly') + ': ' + life.monthly));
+            if (life.book) facts.appendChild(el('span', null, t('lifeBook') + ': ' + life.book));
+            if (life.warrantyUntil) facts.appendChild(el('span', null, life.warrantyActive ? t('lifeWarrantyOn') : t('lifeWarrantyOff')));
+            body.appendChild(facts);
+        }
+        if (life.writeoffState === 'rejected') body.appendChild(el('p', 'asset-tree-life-state', t('lifeRejected')));
+        if (mayEdit(asset) || life.writeoffState) body.appendChild(lifeApprovalBlock(asset, life));
+        var actions = el('div', 'asset-tree-inline-actions');
+        if (!editingLife && mayEdit(asset) && life.writeoffState !== 'approved' && life.writeoffState !== 'pending') {
+            if (moduleSetup().lifeApproval) {
+                actions.appendChild(button(t('lifeAsk'), 'asset-tree-btn', function () { openWriteoffDialog(asset, life); }));
+            } else {
+                actions.appendChild(button(t('lifeWriteoffNow'), 'asset-tree-btn', function () { openWriteoffDialog(asset, life, true); }));
+            }
+            actions.appendChild(button(t('lifeFill'), 'asset-tree-btn', function () {
+                state.lifeEditing[asset.id] = true;
+                showDetail(state.detail || asset, false);
+            }));
+        } else if (!editingLife && mayEdit(asset) && life.writeoffState !== 'approved') {
+            actions.appendChild(button(t('lifeFill'), 'asset-tree-btn', function () {
+                state.lifeEditing[asset.id] = true;
+                showDetail(state.detail || asset, false);
+            }));
+        }
+        if (life.writeoffState === 'pending' && state.userKey && state.userKey === life.approverKey) {
+            actions.appendChild(button(t('lifeApprove'), 'asset-tree-btn primary', function () { decideWriteoff(asset, true); }));
+            actions.appendChild(button(t('lifeReject'), 'asset-tree-btn', function () { decideWriteoff(asset, false); }));
+        }
+        body.appendChild(actions);
+        return body;
+    }
+
+    function lifeForm(asset, life) {
+        var form = el('form', 'asset-tree-life-form');
+        form.addEventListener('submit', function (event) { event.preventDefault(); });
+        form.appendChild(el('h4', null, t('lifeSectionBuy')));
+        var buy = el('div', 'asset-tree-life-grid');
+        var purchased = document.createElement('input');
+        purchased.type = 'date';
+        purchased.value = life.purchased || '';
+        var supplier = document.createElement('input');
+        supplier.value = life.supplier || '';
+        var documentNo = document.createElement('input');
+        documentNo.value = life.document || '';
+        var price = document.createElement('input');
+        price.value = moneyInput(life.price);
+        var currency = document.createElement('select');
+        ['RUB', 'USD', 'EUR'].forEach(function (code) {
+            var option = document.createElement('option');
+            option.value = code;
+            option.textContent = code;
+            currency.appendChild(option);
+        });
+        currency.value = lifeBlank(life) ? (moduleSetup().lifeCurrency || 'RUB') : (life.currency || moduleSetup().lifeCurrency || 'RUB');
+        buy.appendChild(planField(t('lifePurchase'), purchased));
+        buy.appendChild(planField(t('lifeSupplier'), supplier));
+        buy.appendChild(planField(t('lifeDocument'), documentNo));
+        buy.appendChild(planField(t('lifePrice'), price));
+        buy.appendChild(planField(t('lifeCurrency'), currency));
+        form.appendChild(buy);
+        form.appendChild(el('h4', null, t('lifeSectionUse')));
+        var use = el('div', 'asset-tree-life-grid');
+        var commissioned = document.createElement('input');
+        commissioned.type = 'date';
+        commissioned.value = life.commissioned || '';
+        var warranty = document.createElement('input');
+        warranty.type = 'date';
+        warranty.value = life.warrantyUntil || '';
+        var service = document.createElement('input');
+        service.value = life.warrantyService || '';
+        use.appendChild(planField(t('lifeCommissioned'), commissioned));
+        use.appendChild(planField(t('lifeWarranty'), warranty));
+        use.appendChild(planField(t('lifeWarrantyService'), service));
+        form.appendChild(use);
+        form.appendChild(el('h4', null, t('lifeSectionMethod')));
+        var method = el('div', 'asset-tree-life-grid');
+        var months = document.createElement('input');
+        months.type = 'number';
+        months.min = '0';
+        months.max = '600';
+        months.value = life.lifeMonths ? String(life.lifeMonths) : String(moduleSetup().lifeMonths || 0);
+        var methodSelect = document.createElement('select');
+        var linear = document.createElement('option');
+        linear.value = 'linear';
+        linear.textContent = t('lifeMethodLinear');
+        methodSelect.appendChild(linear);
+        var residual = document.createElement('input');
+        residual.value = moneyInput(life.residual);
+        method.appendChild(planField(t('lifeMonths'), months));
+        method.appendChild(planField(t('lifeMethod'), methodSelect));
+        method.appendChild(planField(t('lifeResidual'), residual));
+        form.appendChild(method);
+        var actions = el('div', 'asset-tree-inline-actions');
+        actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
+            ajax('PUT', '/assets/' + asset.id + '/lifecycle', {
+                purchased: purchased.value,
+                supplier: supplier.value,
+                document: documentNo.value,
+                price: price.value,
+                currency: currency.value,
+                commissioned: commissioned.value,
+                warrantyUntil: warranty.value,
+                warrantyService: service.value,
+                lifeMonths: parseInt(months.value, 10) || 0,
+                residual: residual.value
+            }, function (status, payload) {
+                if (status >= 200 && status < 300 && payload) {
+                    state.life[asset.id] = payload;
+                    state.lifeEditing[asset.id] = false;
+                    showDetail(state.detail || asset, false);
+                } else notify((payload && payload.message) || t('errorTitle'));
+            });
+        }));
+        actions.appendChild(button(t('cancel'), 'asset-tree-btn', function () {
+            state.lifeEditing[asset.id] = false;
+            showDetail(state.detail || asset, false);
+        }));
+        form.appendChild(actions);
+        return form;
+    }
+
+    function lifePayload(life, approverKey) {
+        return {
+            purchased: life.purchased || '',
+            supplier: life.supplier || '',
+            document: life.document || '',
+            price: life.price || '0',
+            currency: lifeBlank(life) ? (moduleSetup().lifeCurrency || life.currency || 'RUB') : (life.currency || moduleSetup().lifeCurrency || 'RUB'),
+            commissioned: life.commissioned || '',
+            warrantyUntil: life.warrantyUntil || '',
+            warrantyService: life.warrantyService || '',
+            lifeMonths: life.lifeMonths || moduleSetup().lifeMonths || 0,
+            residual: life.residual || '0',
+            approverKey: approverKey || ''
+        };
+    }
+
+    function saveLifeApprover(asset, life, key, name) {
+        ajax('PUT', '/assets/' + asset.id + '/lifecycle', lifePayload(life, key), function (status, payload) {
+            if (status >= 200 && status < 300 && payload) {
+                payload.approverName = name || payload.approverName;
+                state.life[asset.id] = payload;
+                showDetail(state.detail || asset, false);
+            } else notify((payload && payload.message) || t('errorTitle'));
+        });
+    }
+
+    function lifeApprovalBlock(asset, life) {
+        var block = el('section', 'asset-tree-approval');
+        block.appendChild(el('h4', null, t('lifeApproval')));
+        if (life.writeoffState === 'approved') {
+            block.appendChild(el('p', null, t('lifeApproved') + (life.approverName ? ' · ' + life.approverName : '')));
+            return block;
+        }
+        if (life.writeoffState === 'pending') {
+            block.appendChild(el('p', null, t('lifePending') + (life.approverName ? ' · ' + life.approverName : '')));
+            return block;
+        }
+        var chosenKey = life.approverKey || moduleSetup().lifeApprover || '';
+        var chosenName = life.approverName || (chosenKey && chosenKey === state.userKey ? (state.displayName || chosenKey) : chosenKey);
+        var chosen = el('div', 'asset-tree-userpick-name', chosenName || t('lifeApproverEmpty'));
+        var finder = document.createElement('input');
+        finder.type = 'search';
+        finder.placeholder = t('schedulesFindUser');
+        var hits = el('div', 'asset-tree-user-results');
+        var timer = null;
+        var seq = 0;
+        finder.addEventListener('input', function () {
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                var query = finder.value.trim();
+                var mark = ++seq;
+                hits.innerHTML = '';
+                if (query.length < 2) return;
+                ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                    if (mark !== seq) return;
+                    hits.innerHTML = '';
+                    (payload || []).forEach(function (user) {
+                        hits.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                            saveLifeApprover(asset, life, user.userKey, user.displayName);
+                        }));
+                    });
+                });
+            }, 200);
+        });
+        block.appendChild(el('span', null, t('lifeApprover')));
+        block.appendChild(button(t('schedulesMe'), 'asset-tree-btn slim', function () {
+            saveLifeApprover(asset, life, state.userKey || '', state.displayName || '');
+        }));
+        block.appendChild(chosen);
+        block.appendChild(finder);
+        block.appendChild(hits);
+        return block;
+    }
+
+    function openWriteoffDialog(asset, life, direct) {
+        var approverKey = life.approverKey || moduleSetup().lifeApprover || state.userKey || '';
+        openModal(function (dialog) {
+            dialog.className += ' asset-tree-work-dialog';
+            dialog.appendChild(el('h2', null, t('lifeAsk')));
+            var reason = document.createElement('textarea');
+            reason.placeholder = t('lifeReason');
+            reason.value = life.writeoffReason || '';
+            var chosen = el('div', 'asset-tree-userpick-name', life.approverName || (approverKey === state.userKey ? (state.displayName || '') : approverKey));
+            var finder = document.createElement('input');
+            finder.type = 'search';
+            finder.placeholder = t('schedulesFindUser');
+            var hits = el('div', 'asset-tree-user-results');
+            var timer = null;
+            var seq = 0;
+            finder.addEventListener('input', function () {
+                clearTimeout(timer);
+                timer = setTimeout(function () {
+                    var query = finder.value.trim();
+                    var mark = ++seq;
+                    hits.innerHTML = '';
+                    if (query.length < 2) return;
+                    ajax('GET', '/users?q=' + encodeURIComponent(query), null, function (status, payload) {
+                        if (mark !== seq) return;
+                        hits.innerHTML = '';
+                        (payload || []).forEach(function (user) {
+                            hits.appendChild(button(user.displayName, 'asset-tree-user-hit', function () {
+                                approverKey = user.userKey;
+                                chosen.textContent = user.displayName;
+                                hits.innerHTML = '';
+                            }));
+                        });
+                    });
+                }, 200);
+            });
+            dialog.appendChild(planField(t('lifeReason'), reason));
+            var who = el('div', 'asset-tree-plan-field');
+            who.appendChild(el('span', null, t('lifeApprover')));
+            who.appendChild(button(t('schedulesMe'), 'asset-tree-btn slim', function () {
+                approverKey = state.userKey || '';
+                chosen.textContent = state.displayName || '';
+            }));
+            who.appendChild(chosen);
+            who.appendChild(finder);
+            who.appendChild(hits);
+            dialog.appendChild(who);
+            var actions = el('div', 'asset-tree-inline-actions');
+            actions.appendChild(button(direct ? t('lifeWriteoffNow') : t('lifeAsk'), 'asset-tree-btn primary', function () {
+                var who = direct ? (state.userKey || '') : approverKey;
+                ajax('POST', '/assets/' + asset.id + '/lifecycle/writeoff', { reason: reason.value, approverKey: who }, function (status, payload) {
+                    if (status >= 200 && status < 300 && payload) {
+                        closeModal();
+                        state.life[asset.id] = payload;
+                        if (direct) decideWriteoff(asset, true);
+                        else showDetail(state.detail || asset, false);
+                    } else notify((payload && payload.message) || t('errorTitle'));
+                });
+            }));
+            actions.appendChild(button(t('cancel'), 'asset-tree-btn', closeModal));
+            dialog.appendChild(actions);
+        });
+    }
+
+    function decideWriteoff(asset, approve) {
+        ajax('POST', '/assets/' + asset.id + '/lifecycle/decision', { approve: approve }, function (status, payload) {
+            if (status >= 200 && status < 300 && payload) {
+                state.life[asset.id] = payload;
+                if (approve && state.detail && state.detail.id === asset.id) state.detail.status = 'written_off';
+                showDetail(state.detail || asset, false);
+            } else notify((payload && payload.message) || t('errorTitle'));
+        });
     }
 
     function renderExchangeSettings(panel) {
@@ -10580,7 +13690,7 @@
                 state.flowReady = true;
                 state.flowLoading = false;
                 if (!state.flowDraft) state.flowDraft = cloneBook(state.flowBook);
-                if (state.view === 'settings' && state.schemaTab === 'portal') renderFrame();
+                if (state.moduleDialog === 'portal') refreshModuleDialog();
             }
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flow-graph', null, function (status, payload) {
                 if (state.projectKey !== projectKey) return;
@@ -10709,18 +13819,16 @@
         block.appendChild(tools);
         var error = el('div', 'asset-tree-form-error');
         error.hidden = true;
+        tools.appendChild(button(t('save'), 'asset-tree-btn primary asset-tree-flow-save', function () {
+            error.hidden = true;
+            saveFlowBook(error);
+        }));
         var board = el('div', 'asset-tree-flow-board');
         var canvas = el('div', 'asset-tree-flow-canvas');
         board.appendChild(canvas);
         block.appendChild(error);
         block.appendChild(board);
         paintFlow(canvas, process, error);
-        var actions = el('div', 'asset-tree-inline-actions');
-        actions.appendChild(button(t('save'), 'asset-tree-btn primary', function () {
-            error.hidden = true;
-            saveFlowBook(error);
-        }));
-        block.appendChild(actions);
         host.appendChild(block);
     }
 
@@ -11022,11 +14130,12 @@
                     state.portalRules = [];
                     notify((payload && payload.message) || t('errorTitle'));
                 }
-                if (state.schemaTab === 'portal') renderFrame();
+                if (state.moduleDialog === 'portal') refreshModuleDialog();
             });
             renderFlowSettings(layout);
             return;
         }
+        fields.appendChild(el('p', 'asset-tree-portal-rules-label', t('portalRulesTitle')));
         var list = el('div', 'asset-tree-portal-list');
         if (!state.portalRules.length) {
             list.appendChild(el('p', 'asset-tree-hint', t('portalRuleEmpty')));
@@ -11120,9 +14229,10 @@
         target.addEventListener('change', function () { draft.assetId = target.value; });
 
         var form = el('form', 'asset-tree-portal-add');
+        form.appendChild(el('h4', 'asset-tree-portal-form-title', editing ? t('portalEditRule') : t('portalNewRule')));
         form.appendChild(el('p', 'asset-tree-portal-lead', t('portalIf')));
         form.appendChild(conditionBox);
-        form.appendChild(button(t('portalAddCondition'), 'asset-tree-btn', function () {
+        form.appendChild(button('+ ' + t('portalAddCondition'), 'asset-tree-btn subtle', function () {
             if (draft.conditions.length >= 6) return;
             draft.conditions.push({ field: '', option: '' });
             paintConditions();

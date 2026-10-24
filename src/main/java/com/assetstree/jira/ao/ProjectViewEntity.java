@@ -32,4 +32,20 @@ public interface ProjectViewEntity extends Entity {
     String getColumnList();
 
     void setColumnList(String columnList);
+
+    /**
+     * Comma-separated module keys. Empty keeps every optional module off.
+     */
+    @StringLength(255)
+    String getModuleList();
+
+    void setModuleList(String moduleList);
+
+    /**
+     * Options for the optional modules. Empty keeps the built-in defaults.
+     */
+    @StringLength(StringLength.UNLIMITED)
+    String getOptionList();
+
+    void setOptionList(String optionList);
 }

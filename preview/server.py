@@ -492,6 +492,10 @@ STATE = {
     "comment_seq": 1, "file_seq": 1, "comments": {}, "files": {},
     "activity_seq": 1, "activities": {}, "statuses": {}, "grants": {},
     "plan_seq": 1, "plans": {}, "mails": [],
+    "duty_seq": 1, "duties": {},
+    "floor_seq": 1, "floors": {},
+    "report_seq": 1, "saved_reports": {},
+    "lives": {},
     "cards": {}, "card_images": {},
     "assetKeys": {}, "ready": False, "views": {},
 }
@@ -907,7 +911,7 @@ def ensure_statuses(project_key, text):
 
 def status_dtos(project_key, text):
     rows = ensure_statuses(project_key, text)
-    assets = project_assets(project_key)
+    assets = [asset for asset in project_assets(project_key) if not is_location_id(asset["id"])]
     result = []
     for row in rows:
         count = len([asset for asset in assets if canonical(asset.get("status")) == row["statusKey"]])
@@ -1023,11 +1027,82 @@ def next_object_key(project):
 
 
 VIEW_BASE = ("key", "type", "status", "custodian", "location", "description", "created", "updated")
+KNOWN_MODULES = ("service", "map", "reports", "life", "portal", "card")
+
+
+def stored_modules(project_key):
+    view = (STATE.get("views") or {}).get(project_key) or {}
+    present = {str(item or "").strip().lower() for item in (view.get("modules") or [])}
+    return [key for key in KNOWN_MODULES if key in present]
+
+
+def module_on(project_key, key):
+    return key in stored_modules(project_key)
+
+
+def reject_module(project_key, module, text):
+    if project_key not in {item["key"] for item in PROJECTS}:
+        return 400, {"message": text["asset-tree.error.project.required"]}
+    if not module_on(project_key, module):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    return None
+
+
+def module_setup(stored):
+    stored = stored or {}
+    kinds = [key for key in ("to", "kts", "verify") if key in str(stored.get("scheduleKinds") or "to,kts,verify").split(",")]
+    unit = stored.get("scheduleUnit") or "month"
+    if unit not in ("once", "day", "week", "month", "year"):
+        unit = "month"
+    hidden = [key for key in str(stored.get("reportHidden") or "").split(",") if key in REPORT_STANDARD]
+    grid = int(stored.get("mapGrid") or 24)
+    if grid not in (8, 12, 16, 24, 32):
+        grid = 24
+    currency = str(stored.get("lifeCurrency") or "RUB").strip().upper()
+    if len(currency) != 3 or not currency.isalpha():
+        currency = "RUB"
+    approver = str(stored.get("lifeApprover") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._@-]{0,80}", approver):
+        approver = ""
+    return {
+        "scheduleKinds": ",".join(kinds or ["to", "kts", "verify"]),
+        "scheduleUnit": unit,
+        "scheduleNotify": bool(stored.get("scheduleNotify")),
+        "mapWidth": plan_limit(stored.get("mapWidth"), 1200, 640, 2400),
+        "mapHeight": plan_limit(stored.get("mapHeight"), 760, 480, 1600),
+        "mapGrid": grid,
+        "mapSnap": stored.get("mapSnap") is not False,
+        "reportHidden": ",".join(hidden),
+        "lifeApproval": stored.get("lifeApproval") is not False,
+        "lifeApprover": approver,
+        "lifeCurrency": currency,
+        "lifeMonths": max(0, min(600, int(stored.get("lifeMonths") or 0))),
+    }
+
+
+def plan_limit(raw, default, low, high):
+    try:
+        value = int(raw or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value <= 0:
+        value = default
+    return max(low, min(high, value))
+
+
+def room_color(raw):
+    text = str(raw or "").strip().lower()
+    return text if re.fullmatch(r"#[0-9a-f]{6}", text) else ""
 
 
 def project_view(project_key):
     view = (STATE.get("views") or {}).get(project_key) or {}
-    return {"treeObjects": bool(view.get("treeObjects")), "columns": list(view.get("columns") or [])}
+    return {
+        "treeObjects": bool(view.get("treeObjects")),
+        "columns": list(view.get("columns") or []),
+        "modules": stored_modules(project_key),
+        "setup": module_setup(view.get("setup")),
+    }
 
 
 def save_project_view(project_key, body, text):
@@ -1045,6 +1120,15 @@ def save_project_view(project_key, body, text):
                 return 400, {"message": text.get("asset-tree.error.view.columns", "Columns")}
             picked.append(key)
         view["columns"] = picked
+    if body.get("modules") is not None:
+        present = set()
+        for raw in body.get("modules") or []:
+            key = str(raw or "").strip().lower()
+            if key in KNOWN_MODULES:
+                present.add(key)
+        view["modules"] = [key for key in KNOWN_MODULES if key in present]
+    if isinstance(body.get("setup"), dict):
+        view["setup"] = module_setup(body.get("setup"))
     return 200, project_view(project_key)
 
 
@@ -1540,22 +1624,51 @@ def plan_next(row):
     unit = row.get("everyUnit") or ""
     if not last or count < 1:
         return None
+    if unit == "once" and count == 1:
+        return last
     if unit == "day" and count <= 3650:
         return last + datetime.timedelta(days=count)
+    if unit == "week" and count <= 520:
+        return last + datetime.timedelta(days=7 * count)
     if unit == "month" and count <= 120:
         return add_months(last, count)
+    if unit == "year" and count <= 30:
+        return add_months(last, 12 * count)
     return None
+
+
+def plan_completed(row, nxt):
+    applied = row.get("appliedFor") or ""
+    if applied == "done":
+        return True
+    return (row.get("everyUnit") == "once") and bool(nxt) and applied == nxt.isoformat()
 
 
 def plan_due(row, today=None):
     nxt = plan_next(row)
-    if not nxt:
+    if not nxt or plan_completed(row, nxt):
         return False
     return nxt <= (today or datetime.date.today())
 
 
+def schedule_anchor(first, count, unit):
+    parsed = parse_plan_date(first)
+    if not parsed or unit == "once":
+        return first
+    if unit == "day":
+        return (parsed - datetime.timedelta(days=count)).isoformat()
+    if unit == "week":
+        return (parsed - datetime.timedelta(days=7 * count)).isoformat()
+    if unit == "year":
+        return add_months(parsed, -12 * count).isoformat()
+    if unit == "month":
+        return add_months(parsed, -count).isoformat()
+    return first
+
+
 def plan_dto(row):
     nxt = plan_next(row)
+    completed = plan_completed(row, nxt)
     return {
         "id": row["id"],
         "name": row.get("name") or "",
@@ -1566,11 +1679,668 @@ def plan_dto(row):
         "notify": bool(row.get("notify", True)),
         "nextDue": nxt.isoformat() if nxt else "",
         "due": plan_due(row),
+        "kind": row.get("kind") or "to",
+        "assigneeKey": row.get("assigneeKey") or "",
+        "assigneeName": (USERS.get(row.get("assigneeKey") or "") or {}).get("displayName") or "",
+        "note": row.get("note") or "",
+        "startTime": row.get("startTime") or "",
+        "endTime": row.get("endTime") or "",
+        "completedOn": row.get("completedOn") or "",
+        "completed": completed,
     }
 
 
 def plan_dtos(asset_id):
     return [plan_dto(row) for row in plan_rows(asset_id)]
+
+
+def schedule_item(plan, asset):
+    item = plan_dto(plan)
+    item.update({
+        "assetId": asset["id"],
+        "assetName": asset.get("name") or "",
+        "objectKey": asset.get("objectKey") or "",
+    })
+    return item
+
+
+def schedule_rows(project_key):
+    rows = []
+    for plan in STATE["plans"].values():
+        asset = STATE["assets"].get(plan["assetId"])
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset["id"]):
+            continue
+        rows.append(schedule_item(plan, asset))
+    return rows
+
+
+def staff_dto(row):
+    user = USERS.get(row.get("userKey") or "") or {}
+    return {
+        "id": row["id"],
+        "userKey": row.get("userKey") or "",
+        "userName": user.get("displayName") or row.get("userKey") or "",
+        "kind": row.get("kind") or "",
+        "weekdays": int(row.get("weekdays") or 0),
+        "hours": int(row.get("hours") or 0),
+        "startOn": row.get("startOn") or "",
+        "endOn": row.get("endOn") or "",
+    }
+
+
+def staff_list(project_key):
+    rows = [staff_dto(row) for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    rows.sort(key=lambda item: ((item.get("userName") or "").lower(), 0 if item.get("kind") == "hours" else 1, item.get("startOn") or "", item["id"]))
+    return rows
+
+
+def parse_staff_day(raw):
+    text_day = (raw or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text_day):
+        return None
+    try:
+        return datetime.date.fromisoformat(text_day)
+    except ValueError:
+        return None
+
+
+def save_staff(project_key, body, text):
+    body = body or {}
+    user_key = (body.get("userKey") or "").strip()
+    if user_key not in USERS:
+        return 400, {"message": text["asset-tree.error.user"]}
+    try:
+        weekdays = int(body.get("weekdays") or 0)
+        hours = int(body.get("hours") or 0)
+    except (TypeError, ValueError):
+        return 400, {"message": text["asset-tree.error.staff"]}
+    if weekdays < 1 or weekdays > 127 or hours < 1 or hours > 24:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    existing = None
+    owned = [row for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    for row in owned:
+        if row.get("userKey") == user_key and row.get("kind") == "hours":
+            existing = row
+            break
+    if existing is None and len(owned) >= 60:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    if existing is None:
+        duty_id = STATE["duty_seq"]
+        STATE["duty_seq"] += 1
+        existing = {"id": duty_id, "projectKey": project_key, "userKey": user_key, "kind": "hours"}
+        STATE["duties"][duty_id] = existing
+    existing["weekdays"] = weekdays
+    existing["hours"] = hours
+    existing["startOn"] = ""
+    existing["endOn"] = ""
+    return 200, staff_dto(existing)
+
+
+def add_staff_leave(project_key, body, text):
+    body = body or {}
+    user_key = (body.get("userKey") or "").strip()
+    if user_key not in USERS:
+        return 400, {"message": text["asset-tree.error.user"]}
+    start = parse_staff_day(body.get("startOn"))
+    end = parse_staff_day(body.get("endOn"))
+    if start is None or end is None or end < start or (end - start).days > 366:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    owned = [row for row in STATE["duties"].values() if row.get("projectKey") == project_key]
+    known = False
+    leaves = 0
+    for row in owned:
+        if row.get("userKey") != user_key:
+            continue
+        if row.get("kind") == "hours":
+            known = True
+        elif row.get("kind") == "leave":
+            leaves += 1
+    if not known or leaves >= 24 or len(owned) >= 60:
+        return 400, {"message": text["asset-tree.error.staff"]}
+    duty_id = STATE["duty_seq"]
+    STATE["duty_seq"] += 1
+    row = {
+        "id": duty_id, "projectKey": project_key, "userKey": user_key, "kind": "leave",
+        "weekdays": 0, "hours": 0, "startOn": start.isoformat(), "endOn": end.isoformat(),
+    }
+    STATE["duties"][duty_id] = row
+    return 201, staff_dto(row)
+
+
+def delete_staff(project_key, duty_id, text):
+    row = STATE["duties"].get(duty_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    if row.get("kind") == "hours":
+        person = row.get("userKey")
+        gone = [item["id"] for item in list(STATE["duties"].values()) if item.get("projectKey") == project_key and item.get("userKey") == person]
+        for item_id in gone:
+            STATE["duties"].pop(item_id, None)
+    else:
+        STATE["duties"].pop(duty_id, None)
+    return 204, None
+
+
+def create_schedule(project_key, body, text):
+    if not module_on(project_key, "service"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    body = body or {}
+    ids = body.get("assetIds") or []
+    if not ids or len(ids) > 40:
+        return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+    kind = (body.get("kind") or "to").strip().lower()
+    labels = {"to": "ТО", "kts": "КТС", "verify": "Поверка"}
+    if kind not in labels:
+        return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+    name = (body.get("name") or "").strip() or labels[kind]
+    staged = []
+    for raw in ids:
+        asset = STATE["assets"].get(int(raw))
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset["id"]):
+            return 400, {"message": text.get("asset-tree.error.service", "Schedule")}
+        if len(plan_rows(asset["id"])) >= 12:
+            return 400, {"message": text.get("asset-tree.error.service.limit", "Limit")}
+        row = {"assetId": asset["id"], "appliedFor": "", "notify": False}
+        payload = dict(body)
+        payload["name"] = name
+        payload["kind"] = kind
+        payload["lastDone"] = schedule_anchor(body.get("lastDone"), int(body.get("everyCount") or 0), (body.get("everyUnit") or "").strip().lower())
+        error = fill_plan(row, payload, True, project_key, text)
+        if error:
+            return 400, {"message": error}
+        staged.append((row, asset))
+    created = []
+    for row, asset in staged:
+        plan_id = STATE["plan_seq"]
+        STATE["plan_seq"] += 1
+        row["id"] = plan_id
+        STATE["plans"][plan_id] = row
+        created.append(schedule_item(row, asset))
+    return 201, created
+
+
+def floor_dto(row):
+    rooms = []
+    for room in row.get("rooms") or []:
+        rooms.append({
+            "id": room["id"], "name": room.get("name") or "", "kind": room.get("kind") or "room",
+            "color": room_color(room.get("color")), "x": room["x"], "y": room["y"], "w": room["w"], "h": room["h"],
+        })
+    pins = []
+    for pin in row.get("pins") or []:
+        asset = STATE["assets"].get(pin.get("assetId"))
+        pins.append({
+            "id": pin["id"], "assetId": pin.get("assetId") or 0,
+            "assetName": (asset or {}).get("name") or "",
+            "objectKey": (asset or {}).get("objectKey") or "",
+            "x": pin.get("x") or 0, "y": pin.get("y") or 0,
+        })
+    place = STATE["assets"].get(row.get("placeId"))
+    return {
+        "id": row["id"], "name": row.get("name") or "", "level": row.get("level") or 1,
+        "placeId": row.get("placeId") or 0, "placeName": (place or {}).get("name") or "",
+        "planW": plan_limit(row.get("planW"), 1200, 640, 2400),
+        "planH": plan_limit(row.get("planH"), 760, 480, 1600),
+        "rooms": rooms, "pins": pins,
+    }
+
+
+def project_floors(project_key):
+    rows = [row for row in STATE.setdefault("floors", {}).values() if row.get("projectKey") == project_key]
+    rows.sort(key=lambda item: (item.get("level") or 0, item["id"]))
+    return [floor_dto(row) for row in rows]
+
+
+def create_floor(project_key, body, text):
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    name = ((body or {}).get("name") or "").strip()
+    raw_level = (body or {}).get("level")
+    level = 1 if raw_level is None or raw_level == "" else int(raw_level)
+    if not name or len(name) > 80 or level < -20 or level > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    if len(project_floors(project_key)) >= 40:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    place_id = int((body or {}).get("placeId") or 0)
+    if place_id and (place_id not in STATE["assets"] or not is_location_id(place_id)):
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    floor_id = STATE["floor_seq"]
+    STATE["floor_seq"] += 1
+    STATE["floors"][floor_id] = {
+        "id": floor_id, "projectKey": project_key, "name": name, "level": level,
+        "placeId": place_id, "rooms": [], "pins": [], "room_seq": 1, "pin_seq": 1,
+        "planW": plan_limit((body or {}).get("planW"), 1200, 640, 2400),
+        "planH": plan_limit((body or {}).get("planH"), 760, 480, 1600),
+    }
+    return 201, floor_dto(STATE["floors"][floor_id])
+
+
+def save_floor(project_key, floor_id, body, text):
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    row = STATE.setdefault("floors", {}).get(floor_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    raw_level = body.get("level")
+    level = 0 if raw_level is None or raw_level == "" else int(raw_level)
+    if not name or len(name) > 80 or level < -20 or level > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    plan_w = plan_limit(body.get("planW"), 1200, 640, 2400)
+    plan_h = plan_limit(body.get("planH"), 760, 480, 1600)
+    rooms = body.get("rooms") or []
+    pins = body.get("pins") or []
+    if len(rooms) > 80 or len(pins) > 200:
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    place_id = int(body.get("placeId") or 0)
+    if place_id and (place_id not in STATE["assets"] or not is_location_id(place_id)):
+        return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+    stored_rooms = []
+    seq = 1
+    for room in rooms:
+        kind = (room.get("kind") or "room").strip().lower()
+        if kind not in ("room", "wall", "door", "window"):
+            kind = "room"
+        label = (room.get("name") or "").strip()
+        if not label and kind == "room":
+            label = "Комната"
+        minimum = 36 if kind == "room" else 6
+        x = max(0, min(plan_w - minimum, int(room.get("x") or 0)))
+        y = max(0, min(plan_h - minimum, int(room.get("y") or 0)))
+        w = max(minimum, int(room.get("w") or minimum))
+        h = max(minimum, int(room.get("h") or minimum))
+        if x + w > plan_w:
+            w = plan_w - x
+        if y + h > plan_h:
+            h = plan_h - y
+        stored_rooms.append({
+            "id": seq, "name": label[:80], "kind": kind, "color": room_color(room.get("color")),
+            "x": x, "y": y, "w": w, "h": h,
+        })
+        seq += 1
+    stored_pins = []
+    seen = set()
+    pin_seq = 1
+    for pin in pins:
+        asset_id = int(pin.get("assetId") or 0)
+        if asset_id in seen:
+            continue
+        asset = STATE["assets"].get(asset_id)
+        if not asset or asset.get("projectKey") != project_key or is_location_id(asset_id):
+            return 400, {"message": text.get("asset-tree.error.floor", "Floor")}
+        seen.add(asset_id)
+        stored_pins.append({
+            "id": pin_seq, "assetId": asset_id,
+            "x": max(0, min(plan_w, int(pin.get("x") or 0))),
+            "y": max(0, min(plan_h, int(pin.get("y") or 0))),
+        })
+        pin_seq += 1
+    row.update({
+        "name": name, "level": level, "placeId": place_id, "planW": plan_w, "planH": plan_h,
+        "rooms": stored_rooms, "pins": stored_pins,
+    })
+    return 200, floor_dto(row)
+
+
+def delete_floor(project_key, floor_id, text):
+    row = STATE.setdefault("floors", {}).get(floor_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    if not module_on(project_key, "map"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    STATE["floors"].pop(floor_id, None)
+    return 204, None
+
+
+REPORT_STANDARD = ("status", "type", "place", "holder", "receipts", "cost", "warranty", "age", "writeoff", "work")
+
+
+def parse_money(raw):
+    text = str(raw or "").strip().replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    if not text:
+        return 0
+    if not re.fullmatch(r"\d{1,12}(\.\d{1,2})?", text):
+        return None
+    rubles, _, fraction = text.partition(".")
+    kopecks = (fraction + "00")[:2]
+    return int(rubles) * 100 + int(kopecks or "0")
+
+
+def format_money(minor):
+    rubles, kopecks = divmod(int(minor), 100)
+    return str(rubles) if kopecks == 0 else "%s.%02d" % (rubles, kopecks)
+
+
+def life_row(asset_id):
+    return STATE.setdefault("lives", {}).get(asset_id)
+
+
+def life_dto(asset_id):
+    stored = life_row(asset_id)
+    row = stored or {}
+    price = int(row.get("priceMinor") or 0)
+    residual = int(row.get("residualMinor") or 0)
+    months = int(row.get("lifeMonths") or 0)
+    monthly = 0 if months <= 0 or price <= residual else (price - residual) // months
+    book = price
+    purchased = row.get("purchased") or ""
+    if purchased and monthly:
+        try:
+            start = datetime.date.fromisoformat(purchased)
+            today = datetime.date.today()
+            elapsed = (today.year - start.year) * 12 + today.month - start.month
+            if today.day < start.day:
+                elapsed -= 1
+            elapsed = max(0, elapsed)
+            book = max(residual, price - monthly * elapsed)
+        except ValueError:
+            book = price
+    warranty = row.get("warrantyUntil") or ""
+    active = False
+    if warranty:
+        try:
+            active = datetime.date.fromisoformat(warranty) >= datetime.date.today()
+        except ValueError:
+            active = False
+    approver = row.get("approverKey") or ""
+    requester = row.get("requesterKey") or ""
+    return {
+        "assetId": asset_id,
+        "purchased": purchased,
+        "supplier": row.get("supplier") or "",
+        "price": format_money(price) if stored else "",
+        "warrantyUntil": warranty,
+        "lifeMonths": months,
+        "residual": format_money(residual) if stored else "",
+        "monthly": format_money(monthly) if stored else "",
+        "book": format_money(book) if stored else "",
+        "warrantyActive": active,
+        "writeoffState": row.get("writeoffState") or "",
+        "writeoffReason": row.get("writeoffReason") or "",
+        "requesterKey": requester,
+        "requesterName": (USERS.get(requester) or {}).get("displayName") or "",
+        "approverKey": approver,
+        "approverName": (USERS.get(approver) or {}).get("displayName") or "",
+        "decidedAt": row.get("decidedAt") or "",
+        "document": row.get("document") or "",
+        "currency": row.get("currency") or "RUB",
+        "commissioned": row.get("commissioned") or "",
+        "warrantyService": row.get("warrantyService") or "",
+    }
+
+
+def save_life(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    if not asset or is_location_id(asset_id):
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if not module_on(asset["projectKey"], "life"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    row = STATE["lives"].setdefault(asset_id, {"assetId": asset_id})
+    if row.get("writeoffState") == "approved":
+        return 400, {"message": text.get("asset-tree.error.writeoff.closed", "Closed")}
+    body = body or {}
+    price = parse_money(body.get("price"))
+    residual = parse_money(body.get("residual"))
+    months = int(body.get("lifeMonths") or 0)
+    supplier = (body.get("supplier") or "").strip()
+    if price is None or residual is None or months < 0 or months > 600 or len(supplier) > 120 or residual > price:
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    currency = (body.get("currency") or "RUB").strip().upper() or "RUB"
+    document = (body.get("document") or "").strip()
+    service = (body.get("warrantyService") or "").strip()
+    if len(currency) != 3 or len(document) > 160 or len(service) > 160:
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    row.update({
+        "purchased": (body.get("purchased") or "").strip(),
+        "warrantyUntil": (body.get("warrantyUntil") or "").strip(),
+        "commissioned": (body.get("commissioned") or "").strip(),
+        "supplier": supplier,
+        "document": document,
+        "currency": currency,
+        "warrantyService": service,
+        "priceMinor": price,
+        "residualMinor": residual,
+        "lifeMonths": months,
+    })
+    if "approverKey" in body and row.get("writeoffState") != "pending":
+        approver = str(body.get("approverKey") or "").strip()
+        if approver and approver not in USERS:
+            return 400, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+        row["approverKey"] = approver
+    return 200, life_dto(asset_id)
+
+
+def request_writeoff(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    if not asset or is_location_id(asset_id):
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if not module_on(asset["projectKey"], "life"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    reason = ((body or {}).get("reason") or "").strip()
+    approver = ((body or {}).get("approverKey") or "").strip()
+    if not reason or len(reason) > 500:
+        return 400, {"message": text.get("asset-tree.error.life", "Life")}
+    if approver not in USERS:
+        return 400, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+    row = STATE["lives"].setdefault(asset_id, {"assetId": asset_id})
+    if row.get("writeoffState") in ("pending", "approved"):
+        return 400, {"message": text.get("asset-tree.error.writeoff", "Write-off")}
+    row.update({
+        "writeoffState": "pending", "writeoffReason": reason,
+        "requesterKey": "ivanov", "approverKey": approver, "decidedAt": "",
+    })
+    return 200, life_dto(asset_id)
+
+
+def decide_writeoff(asset_id, body, text):
+    asset = STATE["assets"].get(asset_id)
+    row = life_row(asset_id)
+    if not asset or not row or row.get("writeoffState") != "pending":
+        return 400, {"message": text.get("asset-tree.error.writeoff", "Write-off")}
+    if row.get("approverKey") != "ivanov":
+        return 403, {"message": text.get("asset-tree.error.writeoff.approver", "Approver")}
+    approve = bool((body or {}).get("approve"))
+    row["writeoffState"] = "approved" if approve else "rejected"
+    row["decidedAt"] = datetime.date.today().isoformat()
+    if approve:
+        asset["status"] = "written_off"
+    return 200, life_dto(asset_id)
+
+
+def report_group(key):
+    if key in ("status", "type", "place", "holder"):
+        return key
+    return {"cost": "type", "receipts": "month", "age": "age", "warranty": "warranty", "writeoff": "writeoff", "work": "kind"}.get(key, "")
+
+
+def report_catalog(project_key, text):
+    titles = {
+        "status": text.get("asset-tree.ui.reportStatusTitle", "Status"),
+        "type": text.get("asset-tree.ui.reportTypeTitle", "Type"),
+        "place": text.get("asset-tree.ui.reportPlaceTitle", "Place"),
+        "holder": text.get("asset-tree.ui.reportHolderTitle", "Custodians"),
+        "receipts": text.get("asset-tree.ui.reportReceipts", "Receipts"),
+        "warranty": text.get("asset-tree.ui.reportWarrantyTitle", "Warranty"),
+        "cost": text.get("asset-tree.ui.reportCostTitle", "Cost"),
+        "age": text.get("asset-tree.ui.reportAge", "Age"),
+        "writeoff": text.get("asset-tree.ui.reportWriteoffs", "Write-offs"),
+        "work": text.get("asset-tree.ui.reportWork", "Work"),
+    }
+    items = [{"id": key, "name": titles[key], "groupBy": report_group(key), "chart": "donut" if key == "status" else "bar", "metric": "count", "standard": True, "filterField": "", "filterValue": ""} for key in REPORT_STANDARD]
+    own = [row for row in STATE.setdefault("saved_reports", {}).values() if row.get("projectKey") == project_key]
+    own.sort(key=lambda item: item["id"])
+    for row in own:
+        items.append({"id": "s%s" % row["id"], "name": row["name"], "groupBy": row["groupBy"], "filterField": row.get("filterField") or "", "filterValue": row.get("filterValue") or "", "chart": row.get("chart") or "bar", "metric": row.get("metric") or "count", "standard": False})
+    return items
+
+
+def create_saved_report(project_key, body, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    group = (body.get("groupBy") or "").strip().lower()
+    filt = (body.get("filterField") or "").strip().lower()
+    value = (body.get("filterValue") or "").strip()
+    if group not in ("status", "type", "place", "holder") or not name or len(name) > 80:
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    if filt and filt not in ("status", "type", "holder", "mix"):
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    if bool(filt) != bool(value) or len(value) > 255:
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    chart = (body.get("chart") or "bar").strip().lower()
+    if chart not in ("bar", "donut"):
+        chart = "bar"
+    metric = (body.get("metric") or "count").strip().lower()
+    if metric not in ("count", "cost"):
+        metric = "count"
+    report_id = STATE["report_seq"]
+    STATE["report_seq"] += 1
+    STATE["saved_reports"][report_id] = {
+        "id": report_id, "projectKey": project_key, "name": name, "groupBy": group,
+        "filterField": filt, "filterValue": value, "chart": chart, "metric": metric,
+    }
+    return 201, {"id": "s%s" % report_id, "name": name, "groupBy": group, "filterField": filt, "filterValue": value, "chart": chart, "metric": metric, "standard": False}
+
+
+def delete_saved_report(project_key, report_key, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    if not str(report_key).startswith("s"):
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    try:
+        report_id = int(str(report_key)[1:])
+    except ValueError:
+        return 400, {"message": text.get("asset-tree.error.report", "Report")}
+    row = STATE.setdefault("saved_reports", {}).get(report_id)
+    if not row or row.get("projectKey") != project_key:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    STATE["saved_reports"].pop(report_id, None)
+    return 204, None
+
+
+def report_view(project_key, report_key, text):
+    if not module_on(project_key, "reports"):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    catalog = {item["id"]: item for item in report_catalog(project_key, text)}
+    spec = catalog.get(report_key)
+    if not spec:
+        return 404, {"message": text["asset-tree.error.notFound"]}
+    group = spec.get("groupBy") or "status"
+    assets = [asset for asset in project_assets(project_key) if not is_location_id(asset["id"])]
+    filt = spec.get("filterField") or ""
+    value = spec.get("filterValue") or ""
+
+    def token_hit(raw, token):
+        return (token or "") in [part for part in (raw or "").split(",") if part]
+
+    if filt == "status":
+        assets = [asset for asset in assets if token_hit(value, asset.get("status") or "")]
+    elif filt == "type":
+        assets = [asset for asset in assets if token_hit(value, asset.get("typeKey") or "")]
+    elif filt == "holder":
+        assets = [asset for asset in assets if token_hit(value, asset.get("custodianKey") or "")]
+    elif filt == "mix":
+        types = ""
+        statuses = ""
+        for part in value.split(";"):
+            if part.startswith("t="):
+                types = part[2:]
+            elif part.startswith("s="):
+                statuses = part[2:]
+        assets = [asset for asset in assets if (not types or token_hit(types, asset.get("typeKey") or "")) and (not statuses or token_hit(statuses, asset.get("status") or ""))]
+    buckets = {}
+    lines = []
+    total_book = 0
+    for asset in assets:
+        if report_key in ("service", "work") and not plan_rows(asset["id"]):
+            continue
+        life = life_row(asset["id"]) or {}
+        if report_key == "warranty" and not life.get("warrantyUntil"):
+            continue
+        if report_key == "cost" and not life.get("priceMinor"):
+            continue
+        if report_key in ("receipts", "age") and not life.get("purchased"):
+            continue
+        if report_key == "writeoff" and asset.get("status") != "written_off" and life.get("writeoffState") != "approved":
+            continue
+        if report_key in ("service", "work"):
+            plan = plan_rows(asset["id"])[0]
+            bucket = plan.get("kind") or "to"
+            label = {"to": "ТО", "kts": "КТС", "verify": "Поверка"}.get(bucket, bucket)
+            detail = label
+        elif report_key == "receipts":
+            bucket = (life.get("purchased") or "")[:7]
+            label = bucket
+            detail = bucket
+        elif report_key == "age":
+            bucket = "y0"
+            try:
+                start = datetime.date.fromisoformat(life.get("purchased") or "")
+                today = datetime.date.today()
+                months = (today.year - start.year) * 12 + today.month - start.month
+                if months >= 60:
+                    bucket = "y5"
+                elif months >= 36:
+                    bucket = "y3"
+                elif months >= 12:
+                    bucket = "y1"
+            except ValueError:
+                bucket = "y0"
+            label = text.get("asset-tree.ui.reportAge" + bucket[1:], bucket)
+            detail = life.get("purchased") or ""
+        elif report_key == "writeoff":
+            bucket = (life.get("decidedAt") or "")[:7] or "none"
+            label = bucket
+            detail = life.get("writeoffReason") or ""
+        elif report_key == "warranty":
+            bucket = "active"
+            label = life.get("warrantyUntil") or ""
+            detail = label
+        elif report_key == "cost":
+            bucket = asset.get("typeKey") or ""
+            label = (STATE["types"].get(bucket) or {}).get("label") or bucket
+            detail = format_money(life.get("priceMinor") or 0)
+            total_book += int(life.get("priceMinor") or 0)
+        elif group == "type":
+            bucket = asset.get("typeKey") or ""
+            label = (STATE["types"].get(bucket) or {}).get("label") or bucket
+            detail = ""
+        elif group == "holder":
+            bucket = asset.get("custodianKey") or ""
+            label = (USERS.get(bucket) or {}).get("displayName") or text.get("asset-tree.ui.reportUnassigned", "None")
+            detail = ""
+        elif group == "place":
+            parent = STATE["assets"].get(asset.get("parentId"))
+            bucket = str(parent["id"]) if parent else ""
+            label = parent.get("name") if parent else text.get("asset-tree.ui.root", "Root")
+            detail = ""
+        else:
+            bucket = asset.get("status") or ""
+            label = bucket
+            for status_row in ensure_statuses(project_key, text):
+                if status_row["statusKey"] == bucket:
+                    label = status_row["label"]
+                    break
+            detail = ""
+        color = "#0052CC"
+        if report_key == "status" or group == "status":
+            color = {"in_use": "#00875A", "active": "#00875A", "repair": "#FF8B00", "maintenance": "#FF8B00", "written_off": "#DE350B", "reserve": "#6554C0", "in_stock": "#6B778C"}.get(bucket, "#0052CC")
+        slot = buckets.setdefault(bucket, {"key": bucket, "label": label, "color": color, "count": 0})
+        slot["count"] += 1
+        if len(lines) < 300:
+            lines.append({"assetId": asset["id"], "objectKey": asset.get("objectKey") or "", "name": asset.get("name") or "", "detail": detail})
+    return 200, {
+        "id": report_key, "title": spec["name"], "hint": text.get("asset-tree.ui.reportHint", ""),
+        "total": sum(item["count"] for item in buckets.values()),
+        "sum": format_money(total_book) if report_key == "cost" else "",
+        "standard": bool(spec.get("standard")),
+        "groupBy": group,
+        "chart": spec.get("chart") or ("donut" if report_key == "status" else "bar"),
+        "rows": list(buckets.values()),
+        "lines": lines,
+    }
 
 
 def service_due_names(asset_id):
@@ -1585,6 +2355,10 @@ def apply_due(project_key=None):
         if not asset or is_location_id(asset["id"]):
             continue
         if project_key and asset["projectKey"] != project_key:
+            continue
+        if not module_on(asset["projectKey"], "service"):
+            continue
+        if row.get("appliedFor") == "done":
             continue
         nxt = plan_next(row)
         if not nxt or nxt > today:
@@ -1616,8 +2390,12 @@ def apply_due(project_key=None):
 def fill_plan(row, body, creating, project_key, text):
     body = body or {}
     if body.get("done") is True:
-        row["lastDone"] = datetime.date.today().isoformat()
-        row["appliedFor"] = ""
+        row["completedOn"] = datetime.date.today().isoformat()
+        if row.get("everyUnit") == "once":
+            row["appliedFor"] = "done"
+        else:
+            row["lastDone"] = datetime.date.today().isoformat()
+            row["appliedFor"] = ""
     elif body.get("lastDone") is not None or creating:
         parsed = parse_plan_date(body.get("lastDone"))
         if not parsed:
@@ -1635,14 +2413,20 @@ def fill_plan(row, body, creating, project_key, text):
     count = int(row.get("everyCount") or 0)
     if body.get("everyUnit") is not None or creating:
         unit = (body.get("everyUnit") or "").strip().lower()
-        if unit not in ("day", "month"):
+        if unit not in ("once", "day", "week", "month", "year"):
             unit = ""
     if body.get("everyCount") is not None or creating:
         try:
             count = int(body.get("everyCount") or 0)
         except (TypeError, ValueError):
             count = 0
-    allowed = (unit == "day" and 1 <= count <= 3650) or (unit == "month" and 1 <= count <= 120)
+    allowed = (
+        (unit == "once" and count == 1)
+        or (unit == "day" and 1 <= count <= 3650)
+        or (unit == "week" and 1 <= count <= 520)
+        or (unit == "month" and 1 <= count <= 120)
+        or (unit == "year" and 1 <= count <= 30)
+    )
     if (body.get("everyUnit") is not None or body.get("everyCount") is not None or creating) and not allowed:
         return text.get("asset-tree.error.service", "Schedule")
     if unit != (row.get("everyUnit") or "") or count != int(row.get("everyCount") or 0):
@@ -1656,6 +2440,25 @@ def fill_plan(row, body, creating, project_key, text):
         row["statusKey"] = status_key
     if body.get("notify") is not None or creating:
         row["notify"] = True if body.get("notify") is None else bool(body.get("notify"))
+    if body.get("kind") is not None or creating:
+        kind = (body.get("kind") or "to").strip().lower()
+        if kind not in ("to", "kts", "verify"):
+            return text.get("asset-tree.error.service", "Schedule")
+        row["kind"] = kind
+    if body.get("assigneeKey") is not None or creating:
+        assignee = (body.get("assigneeKey") or "").strip()
+        if assignee and assignee not in USERS:
+            return text.get("asset-tree.error.user", "User")
+        row["assigneeKey"] = assignee
+    if body.get("note") is not None or creating:
+        note = (body.get("note") or "").strip()
+        if len(note) > 2000:
+            return text.get("asset-tree.error.service", "Schedule")
+        row["note"] = note
+    if body.get("startTime") is not None or creating:
+        row["startTime"] = (body.get("startTime") or "").strip()
+    if body.get("endTime") is not None or creating:
+        row["endTime"] = (body.get("endTime") or "").strip()
     if not row.get("name") or not row.get("lastDone") or not row.get("everyUnit"):
         return text.get("asset-tree.error.service", "Schedule")
     return None
@@ -1950,7 +2753,35 @@ def column_name(index):
     return name
 
 
-def workbook_bytes(headers, rows):
+def sheet_title(raw, used=None):
+    cleaned = []
+    for ch in raw or "":
+        if ch in "\\/?*[]:" or ord(ch) < 32:
+            if cleaned and cleaned[-1] != " ":
+                cleaned.append(" ")
+            continue
+        if len("".join(cleaned)) >= 31:
+            break
+        cleaned.append(ch)
+    title = "".join(cleaned).strip().strip("'").strip()
+    if len(title) > 31:
+        title = title[:31].strip()
+    if not title:
+        title = "Sheet"
+    if used is None:
+        return title
+    candidate = title
+    number = 2
+    while candidate.lower() in used:
+        suffix = " (%d)" % number
+        stem = title[:31 - len(suffix)].strip() or "Sheet"
+        candidate = stem + suffix
+        number += 1
+    used.add(candidate.lower())
+    return candidate
+
+
+def sheet_xml(headers, rows):
     sheet = ["<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
              "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"]
     table = [headers] + rows
@@ -1961,37 +2792,102 @@ def workbook_bytes(headers, rows):
                          % (column_name(index), number, xml_text(cell)))
         sheet.append("</row>")
     sheet.append("</sheetData></worksheet>")
-    parts = {
-        "[Content_Types].xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    return "".join(sheet)
+
+
+def equipment_pages(project_key, text, day_first):
+    ensure_portal_demo()
+    common = equipment_headers(text)
+    statuses = {row["statusKey"]: row["label"] for row in status_dtos(project_key, text)}
+    kinds = [row for row in STATE["types"].values() if row["projectKey"] == project_key and not row.get("location")]
+    pages = []
+    used = set()
+    for kind in kinds:
+        headers = list(common)
+        seen = {header.strip().lower() for header in headers}
+        fields = []
+        for field in kind.get("fields") or []:
+            label = label_of(field["label"], text)
+            marker = label.strip().lower()
+            if not marker or marker in seen:
+                continue
+            seen.add(marker)
+            fields.append((field, label))
+            headers.append(label)
+        assets = [asset for asset in project_assets(project_key) if asset["typeKey"] == kind["typeKey"]]
+        assets.sort(key=lambda item: item["objectKey"])
+        lines = []
+        for asset in assets:
+            person = USERS.get(asset.get("custodianKey") or "")
+            line = [
+                asset["objectKey"],
+                asset["name"],
+                kind.get("label") or asset["typeKey"],
+                statuses.get(canonical(asset.get("status")), asset.get("status") or ""),
+                location_of(asset),
+                person["displayName"] if person else "",
+                asset.get("description") or "",
+            ]
+            values = asset.get("values") or {}
+            for field, _label in fields:
+                value = values.get(field["fieldKey"]) or ""
+                if field.get("kind") == "date" and value:
+                    value = display_date(value, day_first)
+                line.append(value)
+            lines.append(line)
+        pages.append((sheet_title(kind.get("label") or kind["typeKey"], used), headers, lines))
+    if not pages:
+        pages.append(("Equipment", common, []))
+    return pages
+
+
+def workbook_bytes(pages):
+    if not pages:
+        pages = [("Equipment", [], [])]
+    overrides = []
+    sheet_tags = []
+    relationships = []
+    parts = {}
+    for index, page in enumerate(pages, start=1):
+        name, headers, rows = page
+        overrides.append(
+            "<Override PartName=\"/xl/worksheets/sheet%d.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>" % index
+        )
+        sheet_tags.append("<sheet name=\"%s\" sheetId=\"%d\" r:id=\"rId%d\"/>" % (xml_text(name).replace("\"", "&quot;"), index, index))
+        relationships.append(
+            "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet%d.xml\"/>" % (index, index)
+        )
+        parts["xl/worksheets/sheet%d.xml" % index] = sheet_xml(headers, rows)
+    relationships.append(
+        "<Relationship Id=\"rId%d\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>" % (len(pages) + 1)
+    )
+    parts["[Content_Types].xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+%s
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
-</Types>""",
-        "_rels/.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+</Types>""" % "\n".join(overrides)
+    parts["_rels/.rels"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
-</Relationships>""",
-        "xl/workbook.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+</Relationships>"""
+    parts["xl/workbook.xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="Equipment" sheetId="1" r:id="rId1"/></sheets></workbook>""",
-        "xl/_rels/workbook.xml.rels": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sheets>%s</sheets></workbook>""" % "".join(sheet_tags)
+    parts["xl/_rels/workbook.xml.rels"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-</Relationships>""",
-        "xl/styles.xml": """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+%s
+</Relationships>""" % "\n".join(relationships)
+    parts["xl/styles.xml"] = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border/></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
 <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
-</styleSheet>""",
-        "xl/worksheets/sheet1.xml": "".join(sheet),
-    }
+</styleSheet>"""
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as book:
         for name, xml in parts.items():
@@ -2000,8 +2896,7 @@ def workbook_bytes(headers, rows):
 
 
 def equipment_xlsx(project_key, text, day_first):
-    headers, rows = equipment_table(project_key, text, day_first)
-    return workbook_bytes(headers, rows)
+    return workbook_bytes(equipment_pages(project_key, text, day_first))
 
 
 def xml_local(tag):
@@ -2038,31 +2933,34 @@ def excel_date(raw):
         return raw
 
 
-def parse_workbook(data):
-    with zipfile.ZipFile(BytesIO(data)) as book:
-        names = {}
-        for name in book.namelist():
-            names[name.replace("\\", "/").lstrip("/")] = name
-        shared = []
-        if "xl/sharedStrings.xml" in names:
-            root = ET.fromstring(book.read(names["xl/sharedStrings.xml"]))
-            for node in root:
-                if xml_local(node.tag) != "si":
-                    continue
-                parts = []
-                for child in node.iter():
-                    if xml_local(child.tag) == "t" and child.text:
-                        parts.append(child.text)
-                shared.append("".join(parts))
-        sheet_name = names.get("xl/worksheets/sheet1.xml")
-        if not sheet_name:
-            for key, original in names.items():
-                if key.startswith("xl/worksheets/") and key.endswith(".xml"):
-                    sheet_name = original
-                    break
-        if not sheet_name:
-            raise ValueError("sheet")
-        root = ET.fromstring(book.read(sheet_name))
+def workbook_targets(book, names):
+    if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+        return []
+    workbook = ET.fromstring(book.read(names["xl/workbook.xml"]))
+    rels = ET.fromstring(book.read(names["xl/_rels/workbook.xml.rels"]))
+    targets = {}
+    for node in rels.iter():
+        if xml_local(node.tag) != "Relationship":
+            continue
+        target = (node.attrib.get("Target") or "").replace("\\", "/").lstrip("/")
+        if target and not target.startswith("xl/"):
+            target = "xl/" + target
+        targets[node.attrib.get("Id")] = target
+    found = []
+    for node in workbook.iter():
+        if xml_local(node.tag) != "sheet":
+            continue
+        relation = ""
+        for key, value in node.attrib.items():
+            if xml_local(key) == "id":
+                relation = value
+        path = targets.get(relation)
+        if path and path in names:
+            found.append((node.attrib.get("name") or "", names[path]))
+    return found
+
+
+def parse_sheet_xml(root, shared):
     headers = []
     records = []
     for row in root.iter():
@@ -2092,6 +2990,42 @@ def parse_workbook(data):
                 number = 0
             records.append((number or len(records) + 2, line))
     return headers, records
+
+
+def parse_workbook(data):
+    with zipfile.ZipFile(BytesIO(data)) as book:
+        names = {}
+        for name in book.namelist():
+            names[name.replace("\\", "/").lstrip("/")] = name
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(book.read(names["xl/sharedStrings.xml"]))
+            for node in root:
+                if xml_local(node.tag) != "si":
+                    continue
+                parts = []
+                for child in node.iter():
+                    if xml_local(child.tag) == "t" and child.text:
+                        parts.append(child.text)
+                shared.append("".join(parts))
+        targets = workbook_targets(book, names)
+        if not targets:
+            sheet_name = names.get("xl/worksheets/sheet1.xml")
+            if not sheet_name:
+                for key, original in names.items():
+                    if key.startswith("xl/worksheets/") and key.endswith(".xml"):
+                        sheet_name = original
+                        break
+            if not sheet_name:
+                raise ValueError("sheet")
+            targets = [("", sheet_name)]
+        pages = []
+        for title, original in targets:
+            headers, records = parse_sheet_xml(ET.fromstring(book.read(original)), shared)
+            pages.append((title, headers, records))
+    if not pages:
+        raise ValueError("sheet")
+    return pages
 
 
 def workbook_cell(cell, shared):
@@ -2200,11 +3134,11 @@ def import_request(project_key, body, text):
             return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
         if data[:2] == b"PK":
             try:
-                headers, records = parse_workbook(data)
+                pages = parse_workbook(data)
             except Exception:
                 message = text.get("asset-tree.error.import.workbook", "Workbook")
                 return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
-            return import_rows(project_key, headers, records, text)
+            return import_book(project_key, pages, text)
         source = data.decode("utf-8", "replace")
     else:
         source = body.get("csv") or ""
@@ -2217,23 +3151,115 @@ def import_equipment(project_key, source, text):
     return import_rows(project_key, headers, records, text)
 
 
-def import_rows(project_key, headers, records, text):
+def import_book(project_key, pages, text):
+    types = [row for row in STATE["types"].values() if row["projectKey"] == project_key and not row.get("location")]
+    total = 0
+    for _name, _headers, records in pages:
+        total += len(records)
+    if total > 2000:
+        message = text.get("asset-tree.error.import.limit", "Limit").replace("{0}", "2000")
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": message}]}
+    created = 0
+    updated = 0
+    errors = []
+    seen = set()
+    any_rows = False
+    for name, headers, records in pages:
+        if not headers and not records:
+            continue
+        bound = bound_sheet_type(name, types)
+        headers, records, rejected = bind_sheet_type(name, headers, records, bound, text)
+        errors.extend(rejected)
+        if not records:
+            continue
+        any_rows = True
+        result = import_rows(project_key, headers, records, text, seen, name)
+        created += result["created"]
+        updated += result["updated"]
+        errors.extend(result["errors"])
+    if not any_rows and not errors:
+        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]}
+    return {"created": created, "updated": updated, "errors": errors}
+
+
+def bound_sheet_type(name, types):
+    marker = " ".join((name or "").strip().lower().replace("ё", "е").split())
+    if not marker:
+        return None
+    hits = []
+    for kind in types:
+        label = kind.get("label") or ""
+        names = {
+            " ".join(label.strip().lower().replace("ё", "е").split()),
+            " ".join((kind.get("typeKey") or "").strip().lower().replace("ё", "е").split()),
+            " ".join(sheet_title(label).strip().lower().replace("ё", "е").split()),
+        }
+        if marker in names:
+            hits.append(kind)
+    return hits[0] if len(hits) == 1 else None
+
+
+def bind_sheet_type(name, headers, records, bound, text):
+    if not bound:
+        return headers, records, []
+    type_index = None
+    for index, header in enumerate(headers):
+        if sheet_role(header) == "type":
+            type_index = index
+            break
+    label = bound.get("label") or bound.get("typeKey") or ""
+    keys = {label.strip().lower(), (bound.get("typeKey") or "").strip().lower()}
+    prepared = []
+    errors = []
+    message = text.get("asset-tree.error.import.sheet.type", "Type \"{0}\" does not belong on this sheet.")
+    for row_number, cells in records:
+        current = ""
+        if type_index is not None and type_index < len(cells):
+            current = cells[type_index].strip()
+        if current and current.lower() not in keys:
+            note = message.replace("{0}", current)
+            if name:
+                note = "%s: %s" % (name, note)
+            errors.append({"row": row_number, "message": note})
+            continue
+        copied = list(cells)
+        if not current:
+            if type_index is None:
+                copied.append(label)
+            else:
+                while len(copied) <= type_index:
+                    copied.append("")
+                copied[type_index] = label
+        prepared.append((row_number, copied))
+    if type_index is None:
+        headers = list(headers) + ["Type"]
+    return headers, prepared, errors
+
+
+def import_rows(project_key, headers, records, text, seen=None, sheet=""):
+    def finish(result):
+        if sheet:
+            for error in result["errors"]:
+                error["message"] = "%s: %s" % (sheet, error["message"])
+        return result
+
     roles = {}
     for index, header in enumerate(headers):
         role = sheet_role(header)
         if role:
             roles[role] = index
     if "name" not in roles:
-        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.header", "Header")}]}
+        return finish({"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.header", "Header")}]})
     if not records:
-        return {"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]}
+        return finish({"created": 0, "updated": 0, "errors": [{"row": 1, "message": text.get("asset-tree.error.import.empty", "Empty")}]})
     types = [row for row in STATE["types"].values() if row["projectKey"] == project_key]
     statuses = status_dtos(project_key, text)
     by_key = {asset["objectKey"].lower(): asset for asset in project_assets(project_key)}
     created = 0
     updated = 0
     errors = []
-    seen = set()
+    if seen is None:
+        seen = set()
 
     def cell(cells, role):
         index = roles.get(role)
@@ -2330,7 +3356,7 @@ def import_rows(project_key, headers, records, text):
             log_activity(asset_id, "created", "", "", name)
             log_place(place_container(parent), "place_add", STATE["assets"][asset_id])
             created += 1
-    return {"created": created, "updated": updated, "errors": errors}
+    return finish({"created": created, "updated": updated, "errors": errors})
 
 
 def bulk_parents(project_key):
@@ -2996,7 +4022,7 @@ class Handler(BaseHTTPRequestHandler):
         view = (query.get("view") or ["all"])[0]
         if view == "dashboard":
             view = "all"
-        if view not in ("all", "mine", "search", "settings"):
+        if view not in ("all", "mine", "search", "settings", "schedules", "reports", "map"):
             view = "all"
         html = (template
                 .replace("@@LANG@@", "ru" if self.lang() == "ru" else "en")
@@ -3202,7 +4228,7 @@ form.vp-request-form .select2-container .select2-chosen { position: relative; z-
         if (el.__auiBox && el.__auiBox.parentNode) el.__auiBox.parentNode.removeChild(el.__auiBox);
         el.__auiDrop = null;
         el.__auiBox = null;
-        el.className = (el.className || '').replace(/\bselect2-offscreen\b/g, '').replace(/\s+/g, ' ');
+        el.className = (el.className || '').replace(/\\bselect2-offscreen\\b/g, '').replace(/\\s+/g, ' ');
         el.__auiData = {};
     }
     function chosenText(el) {
@@ -3262,7 +4288,7 @@ form.vp-request-form .select2-container .select2-chosen { position: relative; z-
         }
         function close() {
             drop.hidden = true;
-            box.className = box.className.replace(/\bselect2-dropdown-open\b/g, '').replace(/\s+/g, ' ');
+            box.className = box.className.replace(/\\bselect2-dropdown-open\\b/g, '').replace(/\\s+/g, ' ');
         }
         function shrink() {
             drop.style.width = '190px';
@@ -3413,7 +4439,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.11",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.23",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -3448,6 +4474,8 @@ setTimeout(function () {
                 return 404, {"message": text["asset-tree.error.user"]}
             result = []
             for asset in STATE["assets"].values():
+                if is_location_id(asset["id"]):
+                    continue
                 role = text["asset-tree.ui.custodian"] if asset.get("custodianKey") == user_key else None
                 if role:
                     dto = asset_dto(asset, text, False)
@@ -3472,6 +4500,106 @@ setTimeout(function () {
                 return 400, {"message": text["asset-tree.error.project.required"]}
             body = self.read_json() or {}
             return 200, import_request(match.group(1), body, text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/schedule", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, schedule_rows(project_key)
+            if method == "POST":
+                return create_schedule(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, staff_list(project_key)
+            if method == "PUT":
+                return save_staff(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff/leave", path)
+        if match and method == "POST":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            return add_staff_leave(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/staff/(\d+)", path)
+        if match and method == "DELETE":
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "service"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            return delete_staff(project_key, int(match.group(2)), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/floors", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "map"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, project_floors(project_key)
+            if method == "POST":
+                return create_floor(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/floors/(\d+)", path)
+        if match:
+            project_key = match.group(1)
+            floor_id = int(match.group(2))
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "PUT":
+                return save_floor(project_key, floor_id, self.read_json(), text)
+            if method == "DELETE":
+                return delete_floor(project_key, floor_id, text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/reports", path)
+        if match:
+            project_key = match.group(1)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if not module_on(project_key, "reports"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, report_catalog(project_key, text)
+            if method == "POST":
+                return create_saved_report(project_key, self.read_json(), text)
+        match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/reports/([A-Za-z0-9]+)", path)
+        if match:
+            project_key = match.group(1)
+            report_key = match.group(2)
+            if project_key not in {item["key"] for item in PROJECTS}:
+                return 400, {"message": text["asset-tree.error.project.required"]}
+            if method == "GET":
+                return report_view(project_key, report_key, text)
+            if method == "DELETE":
+                return delete_saved_report(project_key, report_key, text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle", path)
+        if match:
+            asset_id = int(match.group(1))
+            asset = STATE["assets"].get(asset_id)
+            if not asset:
+                return 404, {"message": text["asset-tree.error.notFound"]}
+            if is_location_id(asset_id):
+                return 400, {"message": text.get("asset-tree.error.life", "Life")}
+            if not module_on(asset["projectKey"], "life"):
+                return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+            if method == "GET":
+                return 200, life_dto(asset_id)
+            if method == "PUT":
+                return save_life(asset_id, self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle/writeoff", path)
+        if match and method == "POST":
+            return request_writeoff(int(match.group(1)), self.read_json(), text)
+        match = re.fullmatch(r"/assets/(\d+)/lifecycle/decision", path)
+        if match and method == "POST":
+            return decide_writeoff(int(match.group(1)), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/report", path)
         if match and method == "GET":
             return 200, self.report(match.group(1), text)
@@ -3494,8 +4622,9 @@ setTimeout(function () {
             return save_project_view(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/card", path)
         if match and method in ("GET", "PUT"):
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "card", text)
+            if denied:
+                return denied
             if method == "GET":
                 return 200, card_for(match.group(1))
             layout = normalize_card(self.read_json() or {})
@@ -3504,8 +4633,9 @@ setTimeout(function () {
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flow-graph", path)
         if match and method in ("GET", "PUT"):
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             if method == "GET":
                 stored = STATE["flow_graphs"].get(project_key)
                 if stored:
@@ -3538,19 +4668,22 @@ setTimeout(function () {
             return 200, flow_book_named(book)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-statuses", path)
         if match and method == "GET":
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             return 200, [{"id": item["id"], "name": item["name"]} for item in ISSUE_STATUSES]
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-types", path)
         if match and method == "GET":
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             return 200, [{"id": item["id"], "name": item["name"]} for item in ISSUE_TYPES]
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows/(\d+)", path)
         if match and method == "DELETE":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             rule_id = int(match.group(2))
             bucket = STATE["flows"].setdefault(project_key, [])
             kept = [rule for rule in bucket if rule["id"] != rule_id]
@@ -3561,13 +4694,15 @@ setTimeout(function () {
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows", path)
         if match and method == "GET":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             return 200, [dict(rule) for rule in STATE["flows"].get(project_key, [])]
         if match and method == "POST":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             body = self.read_json() or {}
             type_id = (body.get("issueTypeId") or "").strip()
             found = None
@@ -3601,6 +4736,9 @@ setTimeout(function () {
             return 201, dict(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "PUT":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             rule_id = int(match.group(2))
             found = None
@@ -3631,6 +4769,9 @@ setTimeout(function () {
             found["conditions"] = conditions
             return 200, portal_rule_dto(found)
         if match and method == "DELETE":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             rule_id = int(match.group(2))
             before = len(STATE["portal_rules"])
@@ -3640,11 +4781,17 @@ setTimeout(function () {
             return 204, None
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules", path)
         if match and method == "GET":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             if match.group(1) != "TEST":
                 return 200, []
             return 200, [portal_rule_dto(rule) for rule in STATE["portal_rules"]]
         if match and method == "POST":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             body = self.read_json() or {}
             asset = STATE["assets"].get(int(body.get("assetId") or 0))
@@ -3796,6 +4943,34 @@ setTimeout(function () {
             for field in row["fields"]:
                 if field["fieldKey"] != match.group(2):
                     continue
+                if "label" in body:
+                    label = str(body.get("label") or "").strip()
+                    if not label or len(label) > 80:
+                        return 400, {"message": text.get("asset-tree.error.field.label", "Label")}
+                    field["label"] = label
+                if "kind" in body and body.get("kind"):
+                    kind = str(body.get("kind"))
+                    if kind not in FIELD_KINDS:
+                        return 400, {"message": text.get("asset-tree.error.field.kind", "Kind")}
+                    options = field.get("options") or []
+                    if kind in OPTION_KINDS:
+                        raw = body.get("options")
+                        if raw is None:
+                            raw = "\n".join(options) if isinstance(options, list) else options
+                        options = canonical_options(raw)
+                        if options is None:
+                            return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
+                    else:
+                        options = []
+                    field["kind"] = kind
+                    field["options"] = options
+                elif "options" in body and field.get("kind") in OPTION_KINDS:
+                    options = canonical_options(body.get("options"))
+                    if options is None:
+                        return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
+                    field["options"] = options
+                if "required" in body:
+                    field["required"] = bool(body.get("required"))
                 if "showOnIssue" in body:
                     field["showOnIssue"] = bool(body.get("showOnIssue"))
                 return 200, {
@@ -3898,7 +5073,10 @@ setTimeout(function () {
             row["category"] = category
         if "inSummary" in (body or {}) and (body or {}).get("inSummary") is not None:
             row["summaryMode"] = 1 if body.get("inSummary") else 2
-        count = len([asset for asset in project_assets(project_key) if canonical(asset.get("status")) == status_key])
+        count = len([
+            asset for asset in project_assets(project_key)
+            if canonical(asset.get("status")) == status_key and not is_location_id(asset["id"])
+        ])
         return 200, status_payload(row, count)
 
     def delete_status(self, project_key, status_key, text):
@@ -3908,9 +5086,17 @@ setTimeout(function () {
         row = next((item for item in rows if item["statusKey"] == status_key), None)
         if not row:
             return 404, {"message": text["asset-tree.error.status"]}
-        used = any(canonical(asset.get("status")) == status_key for asset in project_assets(project_key))
+        used = any(
+            canonical(asset.get("status")) == status_key and not is_location_id(asset["id"])
+            for asset in project_assets(project_key)
+        )
         if used:
             return 409, {"message": text["asset-tree.error.status.inUse"]}
+        fallback = next((item["statusKey"] for item in rows if item["statusKey"] != status_key), None)
+        if fallback:
+            for asset in project_assets(project_key):
+                if is_location_id(asset["id"]) and canonical(asset.get("status")) == status_key:
+                    asset["status"] = fallback
         STATE["statuses"][project_key] = [item for item in rows if item["statusKey"] != status_key]
         return 204, None
 
@@ -4053,6 +5239,8 @@ setTimeout(function () {
             return 404, {"message": text["asset-tree.error.notFound"]}
         if is_location_id(asset_id):
             return 400, {"message": text.get("asset-tree.error.service.place", "Equipment")}
+        if not module_on(asset["projectKey"], "service"):
+            return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
         if not (STATE["types"].get(asset["typeKey"]) or {}).get("service"):
             return 400, {"message": text.get("asset-tree.error.service.type", "Type")}
         if len(plan_rows(asset_id)) >= 12:
@@ -4219,6 +5407,9 @@ setTimeout(function () {
                 STATE["activities"].pop(activity_id, None)
             for plan_id in [row["id"] for row in plan_rows(current)]:
                 STATE["plans"].pop(plan_id, None)
+            STATE.setdefault("lives", {}).pop(current, None)
+            for floor in STATE.setdefault("floors", {}).values():
+                floor["pins"] = [pin for pin in floor.get("pins") or [] if pin.get("assetId") != current]
         return 204, None
 
     def move_asset(self, asset_id, body, text):

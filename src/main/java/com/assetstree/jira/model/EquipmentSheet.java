@@ -15,12 +15,22 @@ public final class EquipmentSheet {
     }
 
     public static final class Sheet {
+        private final String name;
         private final List<String> headers;
         private final List<Record> records;
 
         Sheet(List<String> headers, List<Record> records) {
+            this("", headers, records);
+        }
+
+        Sheet(String name, List<String> headers, List<Record> records) {
+            this.name = name == null ? "" : name;
             this.headers = headers;
             this.records = records;
+        }
+
+        public String getName() {
+            return name;
         }
 
         public List<String> getHeaders() {
@@ -43,6 +53,10 @@ public final class EquipmentSheet {
 
         public int getRow() {
             return row;
+        }
+
+        int width() {
+            return cells.size();
         }
 
         public String cell(int index) {
