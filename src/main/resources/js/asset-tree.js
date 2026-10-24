@@ -7491,6 +7491,7 @@
             fieldKind.addEventListener('change', function () {
                 fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
             });
+            var flags = el('div', 'asset-tree-field-flags');
             var requiredLabel = el('label', 'asset-tree-check');
             var required = el('input');
             required.type = 'checkbox';
@@ -7498,7 +7499,7 @@
             required.checked = editing ? !!existing.required : false;
             requiredLabel.appendChild(required);
             requiredLabel.appendChild(el('span', null, t('fieldRequired')));
-            form.appendChild(requiredLabel);
+            flags.appendChild(requiredLabel);
             var issueLabel = el('label', 'asset-tree-check');
             var issue = el('input');
             issue.type = 'checkbox';
@@ -7506,7 +7507,8 @@
             issue.checked = editing ? existing.showOnIssue !== false : true;
             issueLabel.appendChild(issue);
             issueLabel.appendChild(el('span', null, t('showOnIssue')));
-            form.appendChild(issueLabel);
+            flags.appendChild(issueLabel);
+            form.appendChild(flags);
             form.appendChild(el('p', 'asset-tree-hint', t('showOnIssueHint')));
             var error = el('div', 'asset-tree-form-error');
             error.hidden = true;
@@ -7896,7 +7898,7 @@
             return false;
         }
         (type.fields || []).forEach(function (fieldDef) {
-            var fieldRow = el('div', 'asset-tree-type-field');
+            var fieldRow = el('div', 'asset-tree-type-field' + (state.canConfigure ? ' is-editable' : ''));
             fieldRow.setAttribute('data-name', fieldDef.label || '');
             fieldRow.setAttribute('data-field', fieldDef.fieldKey);
             if (state.canConfigure) {
@@ -7956,27 +7958,6 @@
             }
             fieldRow.appendChild(el('span', 'asset-tree-field-label', fieldDef.label));
             fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
-            var issueLabel = el('label', 'asset-tree-check asset-tree-field-issue');
-            issueLabel.title = t('showOnIssueHint');
-            var issueBox = el('input');
-            issueBox.type = 'checkbox';
-            issueBox.checked = fieldDef.showOnIssue !== false;
-            issueBox.disabled = !state.canConfigure;
-            if (!state.canConfigure) issueBox.setAttribute('data-disabled', '1');
-            issueBox.addEventListener('change', function () {
-                ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), {
-                    showOnIssue: issueBox.checked
-                }, function (status, payload) {
-                    if (status >= 200 && status < 300) refreshSchema();
-                    else {
-                        issueBox.checked = !issueBox.checked;
-                        notify((payload && payload.message) || t('errorTitle'));
-                    }
-                });
-            });
-            issueLabel.appendChild(issueBox);
-            issueLabel.appendChild(el('span', null, t('showOnIssue')));
-            fieldRow.appendChild(issueLabel);
             if (state.canConfigure) {
                 var editField = button(t('editField'), 'asset-tree-btn', function () {
                     openFieldModal(type, null, fieldDef);

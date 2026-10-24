@@ -3717,7 +3717,15 @@ a.asset-tree-url {
 }
 
 .asset-tree-field-list .asset-tree-type-field {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.asset-tree-field-list .asset-tree-type-field.is-editable {
+    grid-template-columns: 16px minmax(0, 1fr) max-content auto auto;
 }
 
 .asset-tree-grant-list .asset-tree-status-row strong {
@@ -3726,19 +3734,58 @@ a.asset-tree-url {
 }
 
 .asset-tree-field-list .asset-tree-type-field > .asset-tree-field-label {
-    flex: 1 1 9em;
-    min-width: 7.5em;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .asset-tree-field-list .asset-tree-type-field > .asset-tree-key {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+#asset-tree-app .asset-tree-field-list .asset-tree-type-field > button.asset-tree-btn,
+.asset-tree-backdrop .asset-tree-field-list .asset-tree-type-field > button.asset-tree-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.asset-tree-dialog .asset-tree-field-flags,
+.asset-tree-backdrop .asset-tree-field-flags {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin: 4px 0 8px;
+}
+
+.asset-tree-dialog .asset-tree-field-flags .asset-tree-check,
+.asset-tree-backdrop .asset-tree-field-flags .asset-tree-check {
+    display: flex !important;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    width: 100% !important;
+    max-width: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    position: static !important;
+    float: none !important;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+.asset-tree-dialog .asset-tree-field-flags .asset-tree-check > span,
+.asset-tree-backdrop .asset-tree-field-flags .asset-tree-check > span {
+    position: static !important;
+    display: inline !important;
+    flex: 0 1 auto;
+    width: auto !important;
+    min-width: 0;
+    margin: 0 !important;
+    white-space: nowrap;
+    line-height: 1.4;
 }
 
 #asset-tree-app .asset-tree-field-grip,
@@ -3772,12 +3819,6 @@ a.asset-tree-url {
     box-shadow: inset 0 -2px 0 #0052cc;
 }
 
-.asset-tree-field-issue {
-    flex: 0 0 auto;
-    margin: 0;
-    font-size: 12px;
-    white-space: nowrap;
-}
 
 
 .asset-tree-grant {
