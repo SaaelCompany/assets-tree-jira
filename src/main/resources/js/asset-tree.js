@@ -411,6 +411,7 @@
         detail: null,
         typeGroup: null,
         schemaTab: 'project',
+        moduleDialog: '',
         importResult: null,
         schemaTypeKey: '',
         schemaAdding: false,
@@ -1997,6 +1998,7 @@
     }
 
     function mount() {
+        closeAllModals();
         app.innerHTML = '';
         var top = el('div', 'asset-tree-top');
         top.appendChild(viewTabs());
@@ -2186,8 +2188,7 @@
         }
         if (state.view === 'settings') {
             frame.appendChild(renderSettings());
-            var portalPanel = frame.querySelector('.asset-tree-report.is-portal');
-            if (portalPanel) fitPortalPanel(portalPanel);
+            refreshModuleDialog();
             return;
         }
         if (state.view === 'all' && needsAssetKey()) {
@@ -4520,11 +4521,13 @@
             if (onlyObjects) {
                 bar.appendChild(button(t('status'), 'asset-tree-btn', function () { openBulkStatus(); }));
                 bar.appendChild(button(t('custodian'), 'asset-tree-btn', function () { openBulkCustodian(); }));
-                bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
-                    printCards(items.map(function (item) {
-                        return item.asset || assetByAnyId(parseInt(item.key, 10));
+                if (moduleOn('card')) {
+                    bar.appendChild(button(t('printCards'), 'asset-tree-btn', function () {
+                        printCards(items.map(function (item) {
+                            return item.asset || assetByAnyId(parseInt(item.key, 10));
+                        }));
                     }));
-                }));
+                }
                 bar.appendChild(button(t('copy'), 'asset-tree-btn', function () { postBulk('copy'); }));
             }
             if (assetsOnly) {
@@ -6130,13 +6133,13 @@
                 ops.appendChild(toolButton(t('copy'), 'copy', function () { copyAsset(asset); }));
             }
         }
-        if (!isFolder(asset)) {
+        if (!isFolder(asset) && moduleOn('card')) {
             ops.appendChild(toolButton(t('printCard'), 'print', function () {
                 printCards([state.detail && state.detail.id === asset.id ? state.detail : asset]);
             }));
         }
         var extra = [];
-        if (mayEdit(asset) && !isFolder(asset)) {
+        if (mayEdit(asset) && !isFolder(asset) && moduleOn('card')) {
             var current = state.detail && state.detail.id === asset.id ? state.detail : asset;
             if (current.cardImage) {
                 extra.push({ label: t('cardQrRemove'), onClick: function () { deleteCardImage(current); } });
@@ -6670,12 +6673,142 @@
     }
 
     function optionsEditor(id, value) {
-        var area = el('textarea');
-        if (id) area.id = id;
-        area.rows = 4;
-        area.value = value || '';
-        area.placeholder = t('fieldOptionsHint');
-        return area;
+        var box = el('div', 'asset-tree-option-editor');
+        var hidden = el('input');
+        hidden.type = 'hidden';
+        if (id) hidden.id = id;
+        var items = optionLines(value);
+        var list = el('div', 'asset-tree-option-list');
+        var draft = el('input');
+        draft.type = 'text';
+        draft.className = 'asset-tree-option-draft';
+        draft.placeholder = t('fieldOptionPlaceholder');
+        draft.setAttribute('aria-label', t('fieldOptionPlaceholder'));
+        var add = button(t('fieldOptionAdd'), 'asset-tree-btn', function () {
+            commitDraft();
+        });
+        var addRow = el('div', 'asset-tree-option-add');
+        addRow.appendChild(draft);
+        addRow.appendChild(add);
+        var dragFrom = -1;
+
+        function notifyChange() {
+            var event;
+            try {
+                event = document.createEvent('Event');
+                event.initEvent('change', true, true);
+            } catch (error) {
+                return;
+            }
+            box.dispatchEvent(event);
+        }
+
+        function sync(notify) {
+            var lines = [];
+            items.forEach(function (item) {
+                var text = String(item || '').replace(/^\s+|\s+$/g, '');
+                if (text) lines.push(text);
+            });
+            hidden.value = lines.join('\n');
+            box.value = hidden.value;
+            if (notify) notifyChange();
+        }
+
+        function paint() {
+            list.innerHTML = '';
+            items.forEach(function (item, index) {
+                var row = el('div', 'asset-tree-option-row');
+                var grip = el('span', 'asset-tree-option-grip', '\u2807');
+                grip.setAttribute('aria-hidden', 'true');
+                grip.title = t('fieldDragHint');
+                var text = el('input');
+                text.type = 'text';
+                text.value = item;
+                text.addEventListener('input', function () {
+                    items[index] = text.value;
+                    sync(false);
+                });
+                text.addEventListener('change', function () {
+                    items[index] = text.value;
+                    sync(true);
+                });
+                text.addEventListener('keydown', function (event) {
+                    if (event.key === 'Enter') event.preventDefault();
+                });
+                var remove = button('\u00d7', 'asset-tree-btn slim asset-tree-option-remove', function () {
+                    items.splice(index, 1);
+                    paint();
+                    sync(true);
+                });
+                remove.title = t('delete');
+                remove.setAttribute('aria-label', t('delete'));
+                row.draggable = true;
+                grip.addEventListener('mousedown', function () { row.draggable = true; });
+                text.addEventListener('mousedown', function () { row.draggable = false; });
+                remove.addEventListener('mousedown', function () { row.draggable = false; });
+                row.addEventListener('dragstart', function (event) {
+                    dragFrom = index;
+                    if (event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try { event.dataTransfer.setData('text/plain', String(index)); } catch (error) { /* IE */ }
+                    }
+                    row.classList.add('is-dragging');
+                });
+                row.addEventListener('dragend', function () {
+                    row.classList.remove('is-dragging');
+                    dragFrom = -1;
+                });
+                row.addEventListener('dragover', function (event) {
+                    if (dragFrom < 0) return;
+                    event.preventDefault();
+                    row.classList.add('is-drop');
+                });
+                row.addEventListener('dragleave', function () {
+                    row.classList.remove('is-drop');
+                });
+                row.addEventListener('drop', function (event) {
+                    event.preventDefault();
+                    row.classList.remove('is-drop');
+                    var from = dragFrom;
+                    if (event.dataTransfer) {
+                        var raw = event.dataTransfer.getData('text/plain');
+                        if (raw) from = parseInt(raw, 10);
+                    }
+                    if (isNaN(from) || from === index || from < 0 || from >= items.length) return;
+                    var moved = items.splice(from, 1)[0];
+                    items.splice(index, 0, moved);
+                    paint();
+                    sync(true);
+                });
+                row.appendChild(grip);
+                row.appendChild(text);
+                row.appendChild(remove);
+                list.appendChild(row);
+            });
+            sync(false);
+        }
+
+        function commitDraft() {
+            var next = String(draft.value || '').replace(/^\s+|\s+$/g, '');
+            if (!next) return;
+            items.push(next);
+            draft.value = '';
+            paint();
+            sync(true);
+            draft.focus();
+        }
+
+        draft.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitDraft();
+            }
+        });
+        box.appendChild(hidden);
+        box.appendChild(list);
+        box.appendChild(addRow);
+        paint();
+        return box;
     }
 
     function singleSelect(options, value, disabled) {
@@ -7187,7 +7320,7 @@
                 requiredLabel.appendChild(required);
                 requiredLabel.appendChild(el('span', null, t('fieldRequired')));
                 var options = optionsEditor('', draft.options || '');
-                options.className = 'asset-tree-draft-options';
+                options.classList.add('asset-tree-draft-options');
                 options.addEventListener('change', function () {
                     drafts = readDrafts();
                     paintDrafts();
@@ -8110,7 +8243,7 @@
     }
 
 
-    function openModal(builder) {
+    function openModal(builder, root) {
         var backdrop = el('div', 'asset-tree-backdrop');
         var dialog = el('div', 'asset-tree-dialog');
         dialog.setAttribute('role', 'dialog');
@@ -8120,16 +8253,17 @@
         backdrop.addEventListener('click', function (event) {
             if (event.target === backdrop) closeModal();
         });
-        document.body.appendChild(backdrop);
-        var first = dialog.querySelector('input, select, button');
+        (root || document.body).appendChild(backdrop);
+        var first = dialog.querySelector('input:not([type="hidden"]), select, button');
         if (first) first.focus();
     }
 
     function closeModal() {
         var nodes = document.querySelectorAll('.asset-tree-backdrop');
-        if (nodes.length) {
-            nodes[nodes.length - 1].parentNode.removeChild(nodes[nodes.length - 1]);
-        }
+        if (!nodes.length) return;
+        var last = nodes[nodes.length - 1];
+        if (last.querySelector('#asset-tree-module-dialog')) state.moduleDialog = '';
+        last.parentNode.removeChild(last);
     }
 
     function closeAllModals() {
@@ -8137,6 +8271,7 @@
         for (var i = 0; i < nodes.length; i++) {
             nodes[i].parentNode.removeChild(nodes[i]);
         }
+        state.moduleDialog = '';
     }
 
     function reloadTree(done) {
@@ -10449,10 +10584,58 @@
         });
     }
 
+    function moduleTitleKey(moduleKey) {
+        if (moduleKey === 'service') return 'moduleService';
+        if (moduleKey === 'map') return 'moduleMap';
+        if (moduleKey === 'reports') return 'moduleReports';
+        if (moduleKey === 'life') return 'moduleLife';
+        if (moduleKey === 'portal') return 'modulePortal';
+        if (moduleKey === 'card') return 'moduleCard';
+        return 'setupTitle';
+    }
+
+    function paintModuleDialog(host, moduleKey) {
+        if (moduleKey === 'portal') {
+            renderPortalSettings(host);
+            if (host.parentNode) fitPortalPanel(host.parentNode);
+        } else if (moduleKey === 'card') {
+            renderCardSettings(host);
+        } else {
+            host.appendChild(moduleSetupPanel(moduleKey));
+        }
+    }
+
+    function refreshModuleDialog() {
+        var host = document.getElementById('asset-tree-module-dialog');
+        if (!host || !state.moduleDialog) return false;
+        host.innerHTML = '';
+        paintModuleDialog(host, state.moduleDialog);
+        return true;
+    }
+
+    function openModuleSetup(moduleKey) {
+        closeAllModals();
+        state.moduleDialog = moduleKey;
+        var root = document.getElementById('asset-tree-app') || document.body;
+        openModal(function (dialog) {
+            if (moduleKey === 'portal' || moduleKey === 'card') dialog.classList.add('is-module');
+            else dialog.classList.add('is-wide');
+            dialog.appendChild(el('h2', null, t(moduleTitleKey(moduleKey))));
+            var host = el('div');
+            host.id = 'asset-tree-module-dialog';
+            paintModuleDialog(host, moduleKey);
+            dialog.appendChild(host);
+        }, root);
+    }
+
     function moduleSetupPanel(moduleKey) {
         var setup = moduleSetup();
         var panel = el('div', 'asset-tree-module-setup');
-        panel.appendChild(el('h4', null, t('setupTitle')));
+        function saveSetup(next) {
+            saveProjectView({ setup: next }, function (ok) {
+                if (ok) closeModal();
+            });
+        }
         if (moduleKey === 'service') {
             var kinds = el('div', 'asset-tree-check-list');
             ['to', 'kts', 'verify'].forEach(function (key) {
@@ -10492,7 +10675,7 @@
                 next.scheduleKinds = picked.join(',');
                 next.scheduleUnit = unit.value;
                 next.scheduleNotify = notifyBox.checked;
-                saveProjectView({ setup: next });
+                saveSetup(next);
             }));
         }
         if (moduleKey === 'map') {
@@ -10530,7 +10713,7 @@
                 next.mapHeight = clampNum(height.value, 480, 1600);
                 next.mapGrid = Number(gridSize.value);
                 next.mapSnap = snapBox.checked;
-                saveProjectView({ setup: next });
+                saveSetup(next);
             }));
         }
         if (moduleKey === 'reports') {
@@ -10553,7 +10736,7 @@
                 for (var i = 0; i < boxes.length; i++) if (!boxes[i].checked) hidden.push(boxes[i].getAttribute('data-report'));
                 var next = moduleSetup();
                 next.reportHidden = hidden.join(',');
-                saveProjectView({ setup: next });
+                saveSetup(next);
             }));
         }
         if (moduleKey === 'life') {
@@ -10592,7 +10775,7 @@
                 next.lifeApprover = approver.value.trim();
                 next.lifeCurrency = currency.value;
                 next.lifeMonths = clampNum(months.value, 0, 600);
-                saveProjectView({ setup: next });
+                saveSetup(next);
             }));
         }
         return panel;
@@ -10625,7 +10808,7 @@
         var project = currentProject();
         var name = project ? (project.name || project.key) : state.projectKey;
         panel.appendChild(el('h2', null, t('settingsProject', name)));
-        if (state.schemaTab !== 'portal') panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
+        panel.appendChild(el('p', 'asset-tree-hint', t('settingsHint')));
         if (!state.canConfigure && !state.canGrant && !state.canObjects) {
             panel.appendChild(el('p', 'asset-tree-hint', t('settingsDenied')));
             return panel;
@@ -10640,8 +10823,6 @@
         if (state.canConfigure) {
             sections.push(['statuses', t('statusSection'), (state.statuses || []).length]);
             sections.push(['types', t('typesSection'), state.types.length]);
-            sections.push(['card', t('cardSection'), null]);
-            sections.push(['portal', t('portalSection'), state.portalRules ? state.portalRules.length : null]);
         }
         if (state.canGrant) {
             sections.push(['access', t('accessSection'), state.grants ? state.grants.length : null]);
@@ -10674,17 +10855,12 @@
             tabs.appendChild(tab);
         });
         panel.appendChild(tabs);
-        if (state.schemaTab === 'portal') panel.classList.add('is-portal');
         if (state.schemaTab === 'types') {
             var types = el('div', 'asset-tree-settings-block');
             panel.appendChild(types);
             appendConstructor(types, false);
-        } else if (state.schemaTab === 'card') {
-            renderCardSettings(panel);
         } else if (state.schemaTab === 'exchange') {
             renderExchangeSettings(panel);
-        } else if (state.schemaTab === 'portal') {
-            renderPortalSettings(panel);
         } else if (state.schemaTab === 'access') {
             renderAccessSettings(panel);
         } else if (state.schemaTab === 'project') {
@@ -10774,9 +10950,12 @@
             ['service', 'moduleService', 'moduleServiceHint', 'schedules'],
             ['map', 'moduleMap', 'moduleMapHint', 'map'],
             ['reports', 'moduleReports', 'moduleReportsHint', 'reports'],
-            ['life', 'moduleLife', 'moduleLifeHint', '']
+            ['life', 'moduleLife', 'moduleLifeHint', ''],
+            ['portal', 'modulePortal', 'modulePortalHint', ''],
+            ['card', 'moduleCard', 'moduleCardHint', '']
         ].forEach(function (item) {
-            var option = el('label', 'asset-tree-module-option');
+            var option = el('div', 'asset-tree-module-option');
+            var label = el('label');
             var box = el('input');
             box.type = 'checkbox';
             box.checked = moduleOn(item[0]);
@@ -10786,7 +10965,7 @@
             box.addEventListener('change', function () {
                 var want = box.checked;
                 var next = [];
-                var order = ['service', 'map', 'reports', 'life'];
+                var order = ['service', 'map', 'reports', 'life', 'portal', 'card'];
                 order.forEach(function (key) {
                     var on = key === item[0] ? want : moduleOn(key);
                     if (on) next.push(key);
@@ -10806,10 +10985,19 @@
             var text = el('span');
             text.appendChild(el('strong', null, t(item[1])));
             text.appendChild(el('span', 'asset-tree-hint', t(item[2])));
-            option.appendChild(box);
-            option.appendChild(text);
+            label.appendChild(box);
+            label.appendChild(text);
+            option.appendChild(label);
+            if (moduleOn(item[0]) && allowed) {
+                var pencil = button('', 'asset-tree-btn slim asset-tree-module-pencil', function () {
+                    openModuleSetup(item[0]);
+                });
+                pencil.title = t('setupTitle');
+                pencil.setAttribute('aria-label', t('setupTitle'));
+                pencil.appendChild(toolIcon('edit'));
+                option.appendChild(pencil);
+            }
             grid.appendChild(option);
-            if (moduleOn(item[0]) && allowed) grid.appendChild(moduleSetupPanel(item[0]));
         });
         modules.appendChild(grid);
         stack.appendChild(modules);
@@ -13121,7 +13309,7 @@
                 state.flowReady = true;
                 state.flowLoading = false;
                 if (!state.flowDraft) state.flowDraft = cloneBook(state.flowBook);
-                if (state.view === 'settings' && state.schemaTab === 'portal') renderFrame();
+                if (state.moduleDialog === 'portal') refreshModuleDialog();
             }
             ajax('GET', '/projects/' + encodeURIComponent(projectKey) + '/flow-graph', null, function (status, payload) {
                 if (state.projectKey !== projectKey) return;
@@ -13561,7 +13749,7 @@
                     state.portalRules = [];
                     notify((payload && payload.message) || t('errorTitle'));
                 }
-                if (state.schemaTab === 'portal') renderFrame();
+                if (state.moduleDialog === 'portal') refreshModuleDialog();
             });
             renderFlowSettings(layout);
             return;

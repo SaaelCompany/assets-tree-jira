@@ -24,5 +24,9 @@ public class ProjectModulesTest {
         assertFalse(ProjectModules.has(null, ProjectModules.SERVICE));
         assertTrue(ProjectModules.has("reports,service", ProjectModules.SERVICE));
         assertEquals(Collections.emptyList(), ProjectModules.clean(null));
+        assertTrue(ProjectModules.known().contains(ProjectModules.PORTAL));
+        assertTrue(ProjectModules.known().contains(ProjectModules.CARD));
+        assertFalse(ProjectModules.has(null, ProjectModules.PORTAL));
+        assertFalse(ProjectModules.has("service,map,reports,life", ProjectModules.CARD));
     }
 }

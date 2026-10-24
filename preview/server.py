@@ -1026,7 +1026,7 @@ def next_object_key(project):
 
 
 VIEW_BASE = ("key", "type", "status", "custodian", "location", "description", "created", "updated")
-KNOWN_MODULES = ("service", "map", "reports", "life")
+KNOWN_MODULES = ("service", "map", "reports", "life", "portal", "card")
 
 
 def stored_modules(project_key):
@@ -1037,6 +1037,14 @@ def stored_modules(project_key):
 
 def module_on(project_key, key):
     return key in stored_modules(project_key)
+
+
+def reject_module(project_key, module, text):
+    if project_key not in {item["key"] for item in PROJECTS}:
+        return 400, {"message": text["asset-tree.error.project.required"]}
+    if not module_on(project_key, module):
+        return 400, {"message": text.get("asset-tree.error.module.off", "Module")}
+    return None
 
 
 def module_setup(stored):
@@ -4323,7 +4331,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.20",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.21",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -4479,8 +4487,9 @@ setTimeout(function () {
             return save_project_view(match.group(1), self.read_json(), text)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/card", path)
         if match and method in ("GET", "PUT"):
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "card", text)
+            if denied:
+                return denied
             if method == "GET":
                 return 200, card_for(match.group(1))
             layout = normalize_card(self.read_json() or {})
@@ -4489,8 +4498,9 @@ setTimeout(function () {
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flow-graph", path)
         if match and method in ("GET", "PUT"):
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             if method == "GET":
                 stored = STATE["flow_graphs"].get(project_key)
                 if stored:
@@ -4523,19 +4533,22 @@ setTimeout(function () {
             return 200, flow_book_named(book)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-statuses", path)
         if match and method == "GET":
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             return 200, [{"id": item["id"], "name": item["name"]} for item in ISSUE_STATUSES]
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/issue-types", path)
         if match and method == "GET":
-            if match.group(1) not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             return 200, [{"id": item["id"], "name": item["name"]} for item in ISSUE_TYPES]
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows/(\d+)", path)
         if match and method == "DELETE":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             rule_id = int(match.group(2))
             bucket = STATE["flows"].setdefault(project_key, [])
             kept = [rule for rule in bucket if rule["id"] != rule_id]
@@ -4546,13 +4559,15 @@ setTimeout(function () {
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/flows", path)
         if match and method == "GET":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             return 200, [dict(rule) for rule in STATE["flows"].get(project_key, [])]
         if match and method == "POST":
             project_key = match.group(1)
-            if project_key not in {item["key"] for item in PROJECTS}:
-                return 400, {"message": text["asset-tree.error.project.required"]}
+            denied = reject_module(project_key, "portal", text)
+            if denied:
+                return denied
             body = self.read_json() or {}
             type_id = (body.get("issueTypeId") or "").strip()
             found = None
@@ -4586,6 +4601,9 @@ setTimeout(function () {
             return 201, dict(rule)
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules/(\d+)", path)
         if match and method == "PUT":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             rule_id = int(match.group(2))
             found = None
@@ -4616,6 +4634,9 @@ setTimeout(function () {
             found["conditions"] = conditions
             return 200, portal_rule_dto(found)
         if match and method == "DELETE":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             rule_id = int(match.group(2))
             before = len(STATE["portal_rules"])
@@ -4625,11 +4646,17 @@ setTimeout(function () {
             return 204, None
         match = re.fullmatch(r"/projects/([A-Za-z0-9]+)/portal-rules", path)
         if match and method == "GET":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             if match.group(1) != "TEST":
                 return 200, []
             return 200, [portal_rule_dto(rule) for rule in STATE["portal_rules"]]
         if match and method == "POST":
+            denied = reject_module(match.group(1), "portal", text)
+            if denied:
+                return denied
             ensure_portal_demo()
             body = self.read_json() or {}
             asset = STATE["assets"].get(int(body.get("assetId") or 0))

@@ -1906,6 +1906,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public List<PortalRuleDto> listPortalRules(ApplicationUser user, String projectKey) {
         final Project project = requireVisibleProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         return ao().executeInTransaction(new TransactionCallback<List<PortalRuleDto>>() {
             @Override
             public List<PortalRuleDto> doInTransaction() {
@@ -1917,6 +1918,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public PortalRuleDto addPortalRule(ApplicationUser user, String projectKey, PortalRuleDraft draft) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         if (draft == null || draft.getAssetId() <= 0) {
             throw new AssetException(400, "asset-tree.error.portal.target");
         }
@@ -1954,6 +1956,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public void deletePortalRule(ApplicationUser user, String projectKey, int ruleId) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
@@ -1971,6 +1974,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public PortalRuleDto updatePortalRule(ApplicationUser user, String projectKey, final int ruleId, PortalRuleDraft draft) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         if (draft == null || draft.getAssetId() <= 0) {
             throw new AssetException(400, "asset-tree.error.portal.target");
         }
@@ -2004,17 +2008,22 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public List<IssueTypeDto> listIssueTypes(ApplicationUser user, String projectKey) {
-        return issueTypesOf(requireConfigurableProject(user, projectKey));
+        Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
+        return issueTypesOf(project);
     }
 
     @Override
     public List<IssueTypeDto> listIssueStatuses(ApplicationUser user, String projectKey) {
-        return issueStatusesOf(issueStatusNames(requireConfigurableProject(user, projectKey)));
+        Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
+        return issueStatusesOf(issueStatusNames(project));
     }
 
     @Override
     public List<FlowRuleDto> listFlowRules(ApplicationUser user, String projectKey) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         final Map<String, String> names = issueTypeNames(project);
         return ao().executeInTransaction(new TransactionCallback<List<FlowRuleDto>>() {
             @Override
@@ -2027,6 +2036,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public FlowRuleDto saveFlowRule(ApplicationUser user, String projectKey, final FlowRuleDraft draft) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         if (draft == null || draft.getIssueTypeId() == null || draft.getIssueTypeId().trim().isEmpty()) {
             throw new AssetException(400, "asset-tree.error.flow.type");
         }
@@ -2073,6 +2083,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public void deleteFlowRule(ApplicationUser user, String projectKey, final int ruleId) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         ao().executeInTransaction(new TransactionCallback<Void>() {
             @Override
             public Void doInTransaction() {
@@ -2089,6 +2100,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public FlowBookDto flowGraph(ApplicationUser user, String projectKey) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         final Map<String, String> names = issueTypeNames(project);
         final Map<String, String> issueStatuses = issueStatusNames(project);
         return ao().executeInTransaction(new TransactionCallback<FlowBookDto>() {
@@ -2119,6 +2131,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public FlowBookDto saveFlowGraph(ApplicationUser user, String projectKey, FlowBookDto draft) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.PORTAL);
         final Map<String, String> names = issueTypeNames(project);
         final Map<String, String> issueStatuses = issueStatusNames(project);
         final FlowBookDto book = FlowBook.book(draft == null ? null : draft.getProcesses());
@@ -2180,6 +2193,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public CardLayout cardLayout(ApplicationUser user, String projectKey) {
         Project project = requireReadableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.CARD);
         return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
             @Override
             public CardLayout doInTransaction() {
@@ -2191,6 +2205,7 @@ public class AssetServiceImpl implements AssetService {
     @Override
     public CardLayout saveCardLayout(ApplicationUser user, String projectKey, final CardLayout draft) {
         final Project project = requireConfigurableProject(user, projectKey);
+        requireModule(project.getKey(), ProjectModules.CARD);
         final CardLayout layout = CardLayout.normalize(draft);
         return ao().executeInTransaction(new TransactionCallback<CardLayout>() {
             @Override
