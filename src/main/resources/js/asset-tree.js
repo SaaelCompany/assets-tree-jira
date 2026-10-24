@@ -437,6 +437,7 @@
         scheduleMode: 'calendar',
         scheduleKindFilter: '',
         schedulePersonFilter: '',
+        scheduleFocusAsset: 0,
         floors: null,
         floorId: 0,
         mapTool: 'select',
@@ -4263,11 +4264,34 @@
         return !!(type && type.service);
     }
 
+    function touchSchedule(iso) {
+        state.scheduleRows = null;
+        state.scheduleLoading = false;
+        var chosen = parseIsoDate(iso);
+        if (!chosen) return;
+        state.scheduleYear = chosen.getFullYear();
+        state.scheduleMonth = chosen.getMonth() + 1;
+    }
+
+    function openPlansOnSchedule(asset) {
+        var soon = '';
+        (asset.plans || []).forEach(function (plan) {
+            var day = plan.nextDue || plan.lastDone || '';
+            if (day && (!soon || day < soon)) soon = day;
+        });
+        state.scheduleKindFilter = '';
+        state.schedulePersonFilter = '';
+        state.scheduleFocusAsset = asset && asset.id ? asset.id : 0;
+        touchSchedule(soon);
+        showView('schedules');
+    }
+
     function serviceBlock(asset) {
         if (!moduleOn('service') || !asset || isFolder(asset) || !asset.plans) return null;
         var offered = typeOffersService(asset);
         if (!offered && !asset.plans.length) return null;
         var body = el('div', 'asset-tree-service');
+        body.appendChild(el('p', 'asset-tree-hint', t('serviceHint')));
         var due = asset.plans.filter(function (plan) { return plan.due; });
         if (due.length) {
             body.appendChild(el('div', 'asset-tree-service-banner', t('serviceDue') + ': ' + due.map(function (plan) {
@@ -4280,29 +4304,47 @@
         if (!asset.plans.length && state.serviceOpen !== asset.id) {
             body.appendChild(el('p', 'asset-tree-hint', t('serviceEmpty')));
         }
-        if (offered && mayEdit(asset)) {
-            if (state.serviceOpen === asset.id) {
-                body.appendChild(serviceEditor(asset, null));
-            } else {
-                body.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
-                    state.serviceOpen = asset.id;
-                    showDetail(state.detail || asset, false);
-                }));
-            }
+        if (offered && mayEdit(asset) && state.serviceOpen === asset.id) {
+            body.appendChild(serviceEditor(asset, null));
         }
-        return moduleBlock(t('serviceTitle'), body, true);
+        var tools = el('div', 'asset-tree-inline-actions');
+        if (asset.plans.length) {
+            tools.appendChild(button(t('serviceOpenSchedule'), 'asset-tree-btn', function () {
+                openPlansOnSchedule(asset);
+            }));
+        }
+        if (offered && mayEdit(asset) && state.serviceOpen !== asset.id) {
+            tools.appendChild(button(t('serviceAdd'), 'asset-tree-btn', function () {
+                state.serviceOpen = asset.id;
+                showDetail(state.detail || asset, false);
+            }));
+        }
+        if (tools.childNodes.length) body.appendChild(tools);
+        return moduleBlock(t('serviceTitle'), body, false);
+    }
+
+    function serviceUnitWord(unit) {
+        if (unit === 'day') return t('serviceUnitDay');
+        if (unit === 'week') return t('serviceUnitWeek');
+        if (unit === 'year') return t('serviceUnitYear');
+        return t('serviceUnitMonth');
+    }
+
+    function serviceRepeatText(plan) {
+        if (!plan || plan.everyUnit === 'once') return t('schedulesOnce');
+        return t('serviceEvery') + ' ' + (plan.everyCount || 1) + ' ' + serviceUnitWord(plan.everyUnit);
     }
 
     function serviceRead(plan) {
         var row = el('div', 'asset-tree-plan is-read' + (plan.due ? ' is-due' : ''));
         var title = el('div', 'asset-tree-plan-title');
         title.appendChild(el('strong', null, plan.name));
+        title.appendChild(el('span', null, kindName(plan.kind)));
         if (plan.due) title.appendChild(el('span', 'asset-tree-due-mark', t('serviceDueMark')));
         row.appendChild(title);
-        var unit = plan.everyUnit === 'day' ? t('serviceUnitDay') : t('serviceUnitMonth');
-        row.appendChild(el('p', 'asset-tree-plan-meta', t('serviceLast') + ' ' + formatFieldDate(plan.lastDone)
-            + ' · ' + t('serviceEvery') + ' ' + plan.everyCount + ' ' + unit
-            + ' · ' + t('serviceNext') + ' ' + formatFieldDate(plan.nextDue)));
+        var when = plan.nextDue || plan.lastDone || '';
+        row.appendChild(el('p', 'asset-tree-plan-meta', t('serviceOnSchedule') + ' ' + formatFieldDate(when)
+            + ' · ' + serviceRepeatText(plan)));
         if (plan.statusKey) row.appendChild(lozenge(plan.statusKey));
         return row;
     }
@@ -4323,19 +4365,32 @@
         name.setAttribute('aria-label', t('serviceName'));
         var last = document.createElement('input');
         last.type = 'date';
-        last.value = plan && plan.lastDone ? plan.lastDone : '';
+        last.value = plan ? (plan.nextDue || plan.lastDone || '') : isoDate(new Date());
         var every = document.createElement('input');
         every.type = 'number';
         every.min = '1';
         every.value = plan ? String(plan.everyCount || 1) : '1';
         var unit = document.createElement('select');
-        [['month', 'serviceUnitMonth'], ['day', 'serviceUnitDay']].forEach(function (pair) {
+        [['once', 'schedulesOnce'], ['day', 'serviceUnitDay'], ['week', 'serviceUnitWeek'], ['month', 'serviceUnitMonth'], ['year', 'serviceUnitYear']].forEach(function (pair) {
             var option = document.createElement('option');
             option.value = pair[0];
             option.textContent = t(pair[1]);
             unit.appendChild(option);
         });
-        unit.value = plan && plan.everyUnit === 'day' ? 'day' : 'month';
+        var knownUnits = { once: true, day: true, week: true, month: true, year: true };
+        var pickedUnit = plan && knownUnits[plan.everyUnit] ? plan.everyUnit : (moduleSetup().scheduleUnit || 'month');
+        if (!knownUnits[pickedUnit]) pickedUnit = 'month';
+        unit.value = pickedUnit;
+        function syncEvery() {
+            var once = unit.value === 'once';
+            every.style.display = once ? 'none' : '';
+            every.disabled = once;
+            if (once) every.value = '1';
+            var caps = { day: '3650', week: '520', month: '120', year: '30', once: '1' };
+            every.max = caps[unit.value] || '120';
+        }
+        unit.addEventListener('change', syncEvery);
+        syncEvery();
         var kind = document.createElement('select');
         kind.setAttribute('aria-label', t('schedulesKind'));
         enabledKinds().forEach(function (key) {
@@ -4345,7 +4400,8 @@
             option.textContent = t(labels[key]);
             kind.appendChild(option);
         });
-        kind.value = plan && (plan.kind === 'kts' || plan.kind === 'verify') ? plan.kind : 'to';
+        if (plan && plan.kind) kind.value = plan.kind;
+        if (!kind.value) kind.value = enabledKinds()[0] || 'to';
         var everyWrap = el('div', 'asset-tree-plan-every');
         everyWrap.appendChild(every);
         everyWrap.appendChild(unit);
@@ -4361,19 +4417,19 @@
             status.appendChild(option);
         });
         if (plan && plan.statusKey) status.value = plan.statusKey;
-        var notify = el('label', 'asset-tree-check asset-tree-plan-notify');
+        var notifyRow = el('label', 'asset-tree-check asset-tree-plan-notify');
         var box = document.createElement('input');
         box.type = 'checkbox';
         box.checked = !plan || !!plan.notify;
-        notify.appendChild(box);
-        notify.appendChild(document.createTextNode(t('serviceNotify')));
-        var next = el('div', 'asset-tree-plan-next', plan && plan.nextDue ? formatFieldDate(plan.nextDue) : '');
+        notifyRow.appendChild(box);
+        notifyRow.appendChild(document.createTextNode(t('serviceNotify')));
         function payload(done) {
+            var count = unit.value === 'once' ? 1 : (parseInt(every.value, 10) || 0);
             var body = {
                 name: name.value.trim(),
                 kind: kind.value,
-                lastDone: last.value,
-                everyCount: parseInt(every.value, 10) || 0,
+                lastDone: scheduleAnchor(last.value, count, unit.value),
+                everyCount: count,
                 everyUnit: unit.value,
                 statusKey: status.value,
                 notify: box.checked
@@ -4386,17 +4442,23 @@
             ajax(creating ? 'POST' : 'PUT', path, payload(done), function (statusCode, response) {
                 if (statusCode >= 200 && statusCode < 300) {
                     if (creating) state.serviceOpen = null;
+                    state.scheduleKindFilter = '';
+                    state.schedulePersonFilter = '';
+                    state.scheduleFocusAsset = asset.id;
+                    var shown = last.value;
+                    if (done && response && (response.nextDue || response.lastDone)) shown = response.nextDue || response.lastDone;
+                    touchSchedule(shown);
+                    if (!done) notify(t('serviceSame'));
                     reloadCard(asset.id);
                 } else notify((response && response.message) || t('errorTitle'));
             });
         }
         row.appendChild(planField(t('serviceName'), name));
         row.appendChild(planField(t('schedulesKind'), kind));
-        row.appendChild(planField(t('serviceLast'), last));
+        row.appendChild(planField(t('serviceOnSchedule'), last));
         row.appendChild(planField(t('serviceEvery'), everyWrap));
         row.appendChild(planField(t('status'), status));
-        if (!creating) row.appendChild(planField(t('serviceNext'), next));
-        row.appendChild(notify);
+        row.appendChild(notifyRow);
         var actions = el('div', 'asset-tree-plan-actions');
         actions.appendChild(button(creating ? t('serviceAdd') : t('save'), 'asset-tree-btn' + (creating ? ' primary' : ''), function () {
             send(false);
@@ -4406,8 +4468,11 @@
             actions.appendChild(button(t('delete'), 'asset-tree-btn', function () {
                 if (!window.confirm(t('serviceDeleteConfirm', plan.name))) return;
                 ajax('DELETE', '/assets/' + asset.id + '/plans/' + plan.id, null, function (statusCode, response) {
-                    if (statusCode >= 200 && statusCode < 300) reloadCard(asset.id);
-                    else notify((response && response.message) || t('errorTitle'));
+                    if (statusCode >= 200 && statusCode < 300) {
+                        state.scheduleRows = null;
+                        state.scheduleLoading = false;
+                        reloadCard(asset.id);
+                    } else notify((response && response.message) || t('errorTitle'));
                 });
             }));
         }
@@ -11055,6 +11120,17 @@
         return next;
     }
 
+    function scheduleAnchor(first, count, unit) {
+        var parsed = parseIsoDate(first);
+        var clean = unit || '';
+        if (!parsed || clean === 'once' || count < 1) return first || '';
+        if (clean === 'day' && count <= 3650) return isoDate(shiftDays(parsed, -count));
+        if (clean === 'week' && count <= 520) return isoDate(shiftDays(parsed, -count * 7));
+        if (clean === 'month' && count <= 120) return isoDate(shiftMonths(parsed, -count));
+        if (clean === 'year' && count <= 30) return isoDate(shiftMonths(parsed, -count * 12));
+        return first || '';
+    }
+
     function planNextDate(lastDone, count, unit) {
         var last = parseIsoDate(lastDone);
         if (!last || count < 1) return null;
@@ -11389,7 +11465,10 @@
             if (inMonth) {
                 (byDay[iso] || []).forEach(function (plan) {
                     var day = iso;
-                    var chip = button(kindName(plan.kind), 'asset-tree-bar-event', function () { openPlanEvent(plan, day); });
+                    var focused = state.scheduleFocusAsset && plan.assetId === state.scheduleFocusAsset;
+                    var label = kindName(plan.kind);
+                    if (plan.name) label += ' · ' + plan.name;
+                    var chip = button(label, 'asset-tree-bar-event' + (focused ? ' is-focus' : ''), function () { openPlanEvent(plan, day); });
                     chip.style.background = kindColor(plan.kind);
                     chip.title = (plan.name || kindLong(plan.kind)) + (plan.assetName ? ' · ' + plan.assetName : '');
                     cell.appendChild(chip);

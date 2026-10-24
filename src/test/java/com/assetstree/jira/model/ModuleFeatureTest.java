@@ -25,6 +25,17 @@ public class ModuleFeatureTest {
     }
 
     @Test
+    public void cardDateLandsOnTheSchedule() {
+        String chosen = "2026-10-24";
+        String stored = ScheduleAnchor.before(chosen, 1, "month");
+        assertEquals(LocalDate.parse(chosen), ServiceDue.next(stored, 1, "month"));
+        List<LocalDate> days = ScheduleOccurrences.inMonth(stored, 1, "month", 2026, 10);
+        assertEquals(LocalDate.parse(chosen), days.get(0));
+        assertEquals(LocalDate.parse(chosen), ServiceDue.next(ScheduleAnchor.before(chosen, 1, "once"), 1, "once"));
+        assertEquals(LocalDate.parse(chosen), ServiceDue.next(ScheduleAnchor.before(chosen, 1, "week"), 1, "week"));
+    }
+
+    @Test
     public void straightLineStopsAtTheResidual() {
         assertEquals(1000L, Depreciation.monthlyMinor(13000L, 1000L, 12));
         assertEquals(1000L, Depreciation.bookMinor(13000L, 1000L, 12, 40));
