@@ -145,10 +145,13 @@ public class JiraJsonVisibilityTest {
         assertEquals("ОС", field.getLabel());
         assertEquals("text", field.getKind());
         assertFalse(field.isRequired());
+        assertEquals(Boolean.FALSE, field.getRequired());
         assertNull(field.getShowOnIssue());
         FieldDraft hidden = mapper.readValue(
                 "{\"label\":\"ОС\",\"kind\":\"text\",\"showOnIssue\":false}",
                 FieldDraft.class);
+        assertNull(hidden.getRequired());
+        assertFalse(hidden.isRequired());
         assertEquals(Boolean.FALSE, hidden.getShowOnIssue());
         FieldDto shown = new FieldDto();
         shown.setFieldKey("serial");

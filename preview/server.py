@@ -4323,7 +4323,7 @@ setTimeout(function () {
         if path == "/meta" and method == "GET":
             i18n = {key[len("asset-tree.ui."):]: value for key, value in text.items() if key.startswith("asset-tree.ui.")}
             return 200, {
-                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.18",
+                "canEdit": True, "canConfigure": True, "canGrant": True, "version": "1.3.19",
                 "baseUrl": "http://127.0.0.1:47121",
                 "locale": "ru-RU" if self.lang() == "ru" else "en-US",
                 "displayName": USERS["ivanov"]["displayName"],
@@ -4781,6 +4781,34 @@ setTimeout(function () {
             for field in row["fields"]:
                 if field["fieldKey"] != match.group(2):
                     continue
+                if "label" in body:
+                    label = str(body.get("label") or "").strip()
+                    if not label or len(label) > 80:
+                        return 400, {"message": text.get("asset-tree.error.field.label", "Label")}
+                    field["label"] = label
+                if "kind" in body and body.get("kind"):
+                    kind = str(body.get("kind"))
+                    if kind not in FIELD_KINDS:
+                        return 400, {"message": text.get("asset-tree.error.field.kind", "Kind")}
+                    options = field.get("options") or []
+                    if kind in OPTION_KINDS:
+                        raw = body.get("options")
+                        if raw is None:
+                            raw = "\n".join(options) if isinstance(options, list) else options
+                        options = canonical_options(raw)
+                        if options is None:
+                            return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
+                    else:
+                        options = []
+                    field["kind"] = kind
+                    field["options"] = options
+                elif "options" in body and field.get("kind") in OPTION_KINDS:
+                    options = canonical_options(body.get("options"))
+                    if options is None:
+                        return 400, {"message": text.get("asset-tree.error.field.options", "Choices")}
+                    field["options"] = options
+                if "required" in body:
+                    field["required"] = bool(body.get("required"))
                 if "showOnIssue" in body:
                     field["showOnIssue"] = bool(body.get("showOnIssue"))
                 return 200, {

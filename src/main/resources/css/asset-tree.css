@@ -3716,10 +3716,60 @@ a.asset-tree-url {
     border-bottom: 1px solid #f4f5f7;
 }
 
-.asset-tree-field-list .asset-tree-type-field > span:first-child,
+.asset-tree-field-list .asset-tree-type-field {
+    flex-wrap: wrap;
+}
+
 .asset-tree-grant-list .asset-tree-status-row strong {
     flex: 1;
     min-width: 0;
+}
+
+.asset-tree-field-list .asset-tree-type-field > .asset-tree-field-label {
+    flex: 1 1 9em;
+    min-width: 7.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.asset-tree-field-list .asset-tree-type-field > .asset-tree-key {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#asset-tree-app .asset-tree-field-grip,
+.asset-tree-backdrop .asset-tree-field-grip {
+    flex: 0 0 auto;
+    width: 16px;
+    color: #6b778c;
+    cursor: grab;
+    user-select: none;
+    font-size: 14px;
+    line-height: 1;
+}
+
+#asset-tree-app .asset-tree-field-list .asset-tree-type-field[draggable="true"],
+.asset-tree-backdrop .asset-tree-field-list .asset-tree-type-field[draggable="true"] {
+    cursor: grab;
+}
+
+#asset-tree-app .asset-tree-type-field.is-dragging,
+.asset-tree-backdrop .asset-tree-type-field.is-dragging {
+    opacity: 0.45;
+}
+
+#asset-tree-app .asset-tree-type-field.is-drop-before,
+.asset-tree-backdrop .asset-tree-type-field.is-drop-before {
+    box-shadow: inset 0 2px 0 #0052cc;
+}
+
+#asset-tree-app .asset-tree-type-field.is-drop-after,
+.asset-tree-backdrop .asset-tree-type-field.is-drop-after {
+    box-shadow: inset 0 -2px 0 #0052cc;
 }
 
 .asset-tree-field-issue {
@@ -3729,12 +3779,6 @@ a.asset-tree-url {
     white-space: nowrap;
 }
 
-.asset-tree-field-list .asset-tree-field-move {
-    flex: 0 0 auto;
-    min-width: 30px;
-    padding-left: 6px;
-    padding-right: 6px;
-}
 
 .asset-tree-grant {
     display: flex;

@@ -7,7 +7,7 @@ import javax.xml.bind.annotation.XmlAccessorType;
 public class FieldDraft {
     private String label;
     private String kind;
-    private boolean required;
+    private Boolean required;
     private Boolean showOnIssue;
     private String options;
 
@@ -28,10 +28,14 @@ public class FieldDraft {
     }
 
     public boolean isRequired() {
+        return Boolean.TRUE.equals(required);
+    }
+
+    public Boolean getRequired() {
         return required;
     }
 
-    public void setRequired(boolean required) {
+    public void setRequired(Boolean required) {
         this.required = required;
     }
 

@@ -7474,18 +7474,19 @@
         });
     }
 
-    function openFieldModal(type, done) {
+    function openFieldModal(type, done, existing) {
+        var editing = !!(existing && existing.fieldKey);
         openModal(function (dialog) {
-            dialog.appendChild(el('h2', null, t('addFieldTitle')));
+            dialog.appendChild(el('h2', null, editing ? t('editFieldTitle') : t('addFieldTitle')));
             dialog.appendChild(el('p', 'asset-tree-hint', type.label));
             var form = el('form');
-            form.appendChild(field(t('fieldLabel'), input('field-label', '', false), true));
-            var fieldKind = kindSelect('field-kind', 'text');
+            form.appendChild(field(t('fieldLabel'), input('field-label', editing ? (existing.label || '') : '', false), true));
+            var fieldKind = kindSelect('field-kind', editing ? (existing.kind || 'text') : 'text');
             form.appendChild(field(t('fieldKind'), fieldKind, true));
-            var fieldOptionsBox = optionsEditor('field-options', '');
+            var fieldOptionsBox = optionsEditor('field-options', editing ? fieldOptions(existing).join('\n') : '');
             var fieldOptionsWrap = field(t('fieldOptions'), fieldOptionsBox, true);
             fieldOptionsWrap.appendChild(el('p', 'asset-tree-hint', t('fieldOptionsHint')));
-            fieldOptionsWrap.hidden = true;
+            fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
             form.appendChild(fieldOptionsWrap);
             fieldKind.addEventListener('change', function () {
                 fieldOptionsWrap.hidden = !needsOptions(fieldKind.value);
@@ -7494,6 +7495,7 @@
             var required = el('input');
             required.type = 'checkbox';
             required.id = 'field-required';
+            required.checked = editing ? !!existing.required : false;
             requiredLabel.appendChild(required);
             requiredLabel.appendChild(el('span', null, t('fieldRequired')));
             form.appendChild(requiredLabel);
@@ -7501,7 +7503,7 @@
             var issue = el('input');
             issue.type = 'checkbox';
             issue.id = 'field-issue';
-            issue.checked = true;
+            issue.checked = editing ? existing.showOnIssue !== false : true;
             issueLabel.appendChild(issue);
             issueLabel.appendChild(el('span', null, t('showOnIssue')));
             form.appendChild(issueLabel);
@@ -7522,13 +7524,16 @@
                     error.textContent = t('fieldOptionsRequired');
                     return;
                 }
-                ajax('POST', '/types/' + encodeURIComponent(type.typeKey) + '/fields', {
+                var body = {
                     label: label.trim(),
                     kind: kind,
                     required: document.getElementById('field-required').checked,
                     showOnIssue: document.getElementById('field-issue').checked,
                     options: document.getElementById('field-options').value
-                }, function (status, payload) {
+                };
+                var path = '/types/' + encodeURIComponent(type.typeKey) + '/fields';
+                if (editing) path += '/' + encodeURIComponent(existing.fieldKey);
+                ajax(editing ? 'PUT' : 'POST', path, body, function (status, payload) {
                     if (status >= 200 && status < 300) {
                         if (done) {
                             closeModal();
@@ -7545,7 +7550,7 @@
             }
             var actions = el('div', 'asset-tree-dialog-actions');
             actions.appendChild(button(t('cancel'), 'asset-tree-btn subtle', closeModal));
-            actions.appendChild(button(t('addField'), 'asset-tree-btn primary', saveField));
+            actions.appendChild(button(editing ? t('save') : t('addField'), 'asset-tree-btn primary', saveField));
             form.appendChild(actions);
             form.addEventListener('submit', function (event) {
                 event.preventDefault();
@@ -7869,21 +7874,87 @@
         wrap.appendChild(fieldTools);
         var fields = el('div', 'asset-tree-schema-scroll asset-tree-field-list');
         var fieldOrder = (type.fields || []).map(function (fieldDef) { return fieldDef.fieldKey; });
-        function moveField(index, delta) {
-            var target = index + delta;
-            if (target < 0 || target >= fieldOrder.length) return;
-            var next = fieldOrder.slice();
-            var moved = next.splice(index, 1)[0];
-            next.splice(target, 0, moved);
+        function reorderFields(movingKey, targetKey, after) {
+            if (!movingKey || movingKey === targetKey) return;
+            var next = fieldOrder.filter(function (key) { return key !== movingKey; });
+            var at = next.indexOf(targetKey);
+            if (at < 0) return;
+            next.splice(after ? at + 1 : at, 0, movingKey);
             ajax('PUT', '/types/' + encodeURIComponent(type.typeKey) + '/field-order', { fieldKeys: next }, function (status, payload) {
                 if (status >= 200 && status < 300) refreshSchema();
                 else notify((payload && payload.message) || t('errorTitle'));
             });
         }
-        (type.fields || []).forEach(function (fieldDef, fieldIndex) {
+        function fieldControlTarget(node) {
+            while (node && node !== fields) {
+                var tag = node.tagName;
+                if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'LABEL' || tag === 'A' || tag === 'SELECT' || tag === 'TEXTAREA') {
+                    return true;
+                }
+                node = node.parentNode;
+            }
+            return false;
+        }
+        (type.fields || []).forEach(function (fieldDef) {
             var fieldRow = el('div', 'asset-tree-type-field');
             fieldRow.setAttribute('data-name', fieldDef.label || '');
-            fieldRow.appendChild(el('span', null, fieldDef.label));
+            fieldRow.setAttribute('data-field', fieldDef.fieldKey);
+            if (state.canConfigure) {
+                fieldRow.draggable = true;
+                var grip = el('span', 'asset-tree-field-grip', '\u2807');
+                grip.title = t('fieldDragHint');
+                fieldRow.appendChild(grip);
+                fieldRow.addEventListener('mousedown', function (event) {
+                    fieldRow.draggable = !fieldControlTarget(event.target);
+                });
+                fieldRow.addEventListener('mouseup', function () {
+                    fieldRow.draggable = true;
+                });
+                fieldRow.addEventListener('dragstart', function (event) {
+                    if (!fieldRow.draggable || fieldControlTarget(event.target)) {
+                        event.preventDefault();
+                        return;
+                    }
+                    state.fieldDrag = fieldDef.fieldKey;
+                    fieldRow.classList.add('is-dragging');
+                    if (event.dataTransfer) {
+                        event.dataTransfer.effectAllowed = 'move';
+                        try { event.dataTransfer.setData('text/plain', fieldDef.fieldKey); } catch (ignore) {}
+                    }
+                });
+                fieldRow.addEventListener('dragend', function () {
+                    state.fieldDrag = null;
+                    fieldRow.classList.remove('is-dragging');
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                    fieldRow.draggable = true;
+                });
+                fieldRow.addEventListener('dragover', function (event) {
+                    if (!state.fieldDrag || state.fieldDrag === fieldDef.fieldKey) return;
+                    event.preventDefault();
+                    var box = fieldRow.getBoundingClientRect();
+                    var after = event.clientY > box.top + box.height / 2;
+                    fieldRow.classList.toggle('is-drop-after', after);
+                    fieldRow.classList.toggle('is-drop-before', !after);
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                });
+                fieldRow.addEventListener('dragleave', function (event) {
+                    var next = event.relatedTarget;
+                    if (next && fieldRow.contains && fieldRow.contains(next)) return;
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                });
+                fieldRow.addEventListener('drop', function (event) {
+                    event.preventDefault();
+                    var moving = state.fieldDrag;
+                    var after = fieldRow.classList.contains('is-drop-after');
+                    state.fieldDrag = null;
+                    fieldRow.classList.remove('is-drop-before');
+                    fieldRow.classList.remove('is-drop-after');
+                    reorderFields(moving, fieldDef.fieldKey, after);
+                });
+            }
+            fieldRow.appendChild(el('span', 'asset-tree-field-label', fieldDef.label));
             fieldRow.appendChild(el('span', 'asset-tree-key', kindLabel(fieldDef.kind) + (fieldDef.required ? ' · ' + t('requiredMark') : '')));
             var issueLabel = el('label', 'asset-tree-check asset-tree-field-issue');
             issueLabel.title = t('showOnIssueHint');
@@ -7907,16 +7978,11 @@
             issueLabel.appendChild(el('span', null, t('showOnIssue')));
             fieldRow.appendChild(issueLabel);
             if (state.canConfigure) {
-                var fieldUp = button('\u2191', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, -1); });
-                fieldUp.title = t('moveUp');
-                fieldUp.setAttribute('aria-label', t('moveUp'));
-                fieldUp.disabled = fieldIndex === 0;
-                var fieldDown = button('\u2193', 'asset-tree-btn asset-tree-field-move', function () { moveField(fieldIndex, 1); });
-                fieldDown.title = t('moveDown');
-                fieldDown.setAttribute('aria-label', t('moveDown'));
-                fieldDown.disabled = fieldIndex === fieldOrder.length - 1;
-                fieldRow.appendChild(fieldUp);
-                fieldRow.appendChild(fieldDown);
+                var editField = button(t('editField'), 'asset-tree-btn', function () {
+                    openFieldModal(type, null, fieldDef);
+                });
+                editField.title = t('editFieldTitle');
+                fieldRow.appendChild(editField);
                 fieldRow.appendChild(button(t('deleteField'), 'asset-tree-btn', function () {
                     ajax('DELETE', '/types/' + encodeURIComponent(type.typeKey) + '/fields/' + encodeURIComponent(fieldDef.fieldKey), null, function (status, payload) {
                         if (status >= 200 && status < 300) refreshSchema();

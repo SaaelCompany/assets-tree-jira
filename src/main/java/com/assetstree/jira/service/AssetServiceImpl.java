@@ -1146,8 +1146,15 @@ public class AssetServiceImpl implements AssetService {
 
     @Override
     public FieldDto updateField(ApplicationUser user, final String typeKey, final String fieldKey, final FieldDraft draft) {
-        if (draft == null || draft.getShowOnIssue() == null) {
+        if (draft == null || (draft.getShowOnIssue() == null && draft.getLabel() == null && draft.getKind() == null
+                && draft.getRequired() == null && draft.getOptions() == null)) {
             throw new AssetException(400, "asset-tree.error.field.label");
+        }
+        if (draft.getLabel() != null && AssetValidator.validateTypeLabel(draft.getLabel()) != null) {
+            throw new AssetException(400, "asset-tree.error.field.label");
+        }
+        if (draft.getKind() != null && !FieldKinds.isKind(draft.getKind())) {
+            throw new AssetException(400, "asset-tree.error.field.kind");
         }
         return ao().executeInTransaction(new TransactionCallback<FieldDto>() {
             @Override
@@ -1161,7 +1168,30 @@ public class AssetServiceImpl implements AssetService {
                 if (field == null) {
                     throw new AssetException(404, "asset-tree.error.field.notFound");
                 }
-                field.setIssueHidden(!draft.getShowOnIssue().booleanValue());
+                if (draft.getLabel() != null) {
+                    field.setLabel(draft.getLabel().trim());
+                }
+                String kind = draft.getKind() != null ? draft.getKind() : field.getKind();
+                if (draft.getKind() != null || draft.getOptions() != null) {
+                    String storedOptions = "";
+                    if (FieldChoices.needsOptions(kind)) {
+                        String raw = draft.getOptions() != null ? draft.getOptions() : field.getOptions();
+                        storedOptions = FieldChoices.canonicalOptions(raw);
+                        if (storedOptions == null) {
+                            throw new AssetException(400, "asset-tree.error.field.options");
+                        }
+                    }
+                    if (draft.getKind() != null) {
+                        field.setKind(draft.getKind());
+                    }
+                    field.setOptions(storedOptions);
+                }
+                if (draft.getShowOnIssue() != null) {
+                    field.setIssueHidden(!draft.getShowOnIssue().booleanValue());
+                }
+                if (draft.getRequired() != null) {
+                    field.setRequired(draft.getRequired().booleanValue());
+                }
                 field.save();
                 return toFieldDto(field, i18n());
             }
