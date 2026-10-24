@@ -2,8 +2,6 @@
 
 Дерево активов для Jira Service Management **4.21.1** (платформа Jira **8.21.1**, байткод **Java 8**). Экран встроен в страницу Jira. Готовых макетов нет: в списке только ваши проекты, типы объектов и активы вы создаёте сами. Чужой проект в дереве не появляется.
 
-Поддержка: [niouti@yandex.ru](mailto:niouti@yandex.ru), [nioutistudio@gmail.com](mailto:nioutistudio@gmail.com).
-
 ## Скриншоты
 
 ![Все активы: сводка, дерево и список](docs/all-assets.png)
